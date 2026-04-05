@@ -94,14 +94,72 @@ function decodeJwt(token: string): SupabaseJwtPayload | null {
  * Verify JWT signature using Supabase JWT secret.
  * Uses Node's built-in crypto for HMAC-SHA256 verification.
  */
-async function verifyJwtSignature(_token: string): Promise<boolean> {
-  // JWT signature verification is handled by Supabase itself.
-  // The token was issued by Supabase and validated on their end.
-  // Our middleware validates structure and expiration (decodeJwt above).
-  // For a private app with authenticated Supabase users, this is sufficient.
-  // The service_role key on server-side Supabase calls provides the real
-  // security boundary — Express routes only return data we explicitly query.
-  return true;
+/**
+ * Normalize a base64url string for comparison.
+ * JWT signatures use base64url encoding (RFC 4648 §5) with no padding.
+ * Node's digest('base64url') may or may not include trailing '=' depending
+ * on version. Strip padding and normalize +/ vs -_ to ensure consistent
+ * comparison regardless of source.
+ */
+function normalizeBase64url(str: string): string {
+  return str
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+/**
+ * Verify JWT signature using Supabase JWT secret.
+ *
+ * Supabase signs JWTs with HS256 (HMAC-SHA256). The JWT secret from
+ * the Supabase dashboard is a raw string used directly as the HMAC key.
+ *
+ * Uses Node's built-in crypto — no external dependencies. Performs
+ * timing-safe comparison to prevent timing attacks.
+ */
+async function verifyJwtSignature(token: string): Promise<boolean> {
+  const secret = process.env.SUPABASE_JWT_SECRET;
+  if (!secret) {
+    console.warn('[auth] SUPABASE_JWT_SECRET not set — skipping signature verification');
+    return true;
+  }
+
+  try {
+    const { createHmac, timingSafeEqual } = await import('crypto');
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+
+    const signatureInput = `${parts[0]}.${parts[1]}`;
+    const tokenSignature = normalizeBase64url(parts[2]);
+
+    // Supabase JWT secret is a raw UTF-8 string (not base64-encoded)
+    const computed = normalizeBase64url(
+      createHmac('sha256', secret.trim())
+        .update(signatureInput)
+        .digest('base64url')
+    );
+
+    // Timing-safe comparison requires equal-length buffers
+    const a = Buffer.from(computed, 'utf-8');
+    const b = Buffer.from(tokenSignature, 'utf-8');
+    if (a.length !== b.length) {
+      // Length mismatch — try with base64-decoded secret as fallback.
+      // Some Supabase configurations use base64-encoded JWT secrets.
+      const computedB64 = normalizeBase64url(
+        createHmac('sha256', Buffer.from(secret.trim(), 'base64'))
+          .update(signatureInput)
+          .digest('base64url')
+      );
+      const c = Buffer.from(computedB64, 'utf-8');
+      if (c.length !== b.length) return false;
+      return timingSafeEqual(c, b);
+    }
+
+    return timingSafeEqual(a, b);
+  } catch (err) {
+    console.error('[auth] JWT signature verification error:', err);
+    return false;
+  }
 }
 
 // ─── Express Middleware ─────────────────────────────────────────────────────
@@ -156,6 +214,13 @@ export async function requireAuth(
   // Verify signature
   const signatureValid = await verifyJwtSignature(token);
   if (!signatureValid) {
+    console.error(
+      '[auth] Signature verification failed for user %s. ' +
+      'JWT_SECRET length: %d, token header: %s',
+      payload.sub,
+      (process.env.SUPABASE_JWT_SECRET || '').length,
+      token.split('.')[0]
+    );
     res.status(401).json({ error: 'Invalid token signature' });
     return;
   }
