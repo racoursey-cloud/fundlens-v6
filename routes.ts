@@ -1,0 +1,643 @@
+/**
+ * FundLens v6 — Express API Routes
+ *
+ * All the endpoints the React client uses to get data.
+ * Every route that returns user-specific data requires authentication
+ * (the requireAuth middleware checks the user's JWT token).
+ *
+ * Route overview:
+ *
+ *   PUBLIC (no auth):
+ *     GET  /health                    — server health check
+ *
+ *   AUTHENTICATED (require valid JWT):
+ *     GET  /api/funds                 — list active 401(k) funds
+ *     GET  /api/funds/:ticker         — single fund detail
+ *     GET  /api/scores                — latest raw scores for all funds
+ *     GET  /api/scores/:ticker        — scores for a specific fund
+ *     GET  /api/profile               — current user's profile
+ *     PUT  /api/profile               — update user's profile (weights, risk, etc.)
+ *     POST /api/profile/setup         — complete setup wizard
+ *     GET  /api/pipeline/status       — latest pipeline run status
+ *     POST /api/pipeline/run          — trigger a fresh pipeline run
+ *     GET  /api/briefs                — user's Investment Brief history
+ *     GET  /api/briefs/:id            — specific Brief by ID
+ *     POST /api/briefs/generate       — trigger on-demand Brief generation
+ *     GET  /api/thesis/latest         — latest macro thesis
+ *
+ * Session 5 deliverable. Destination: src/routes/index.ts
+ * References: Master Reference §5, §7, §8, §10.
+ */
+
+import { Router, Request, Response } from 'express';
+import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
+import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../services/supabase.js';
+import { DEFAULT_FACTOR_WEIGHTS } from '../engine/constants.js';
+import type {
+  FundRow,
+  FundScoresRow,
+  PipelineRunRow,
+  UserProfileRow,
+  InvestmentBriefRow,
+} from '../engine/types.js';
+
+export const router = Router();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNDS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/funds
+ * Returns all active funds in the 401(k) menu.
+ * The fund list is the same for everyone — it's the TerrAscend plan menu.
+ */
+router.get('/api/funds', requireAuth, async (req: Request, res: Response) => {
+  const { data, error } = await supaSelect<FundRow[]>('funds', {
+    is_active: 'eq.true',
+    order: 'ticker.asc',
+  });
+
+  if (error) {
+    res.status(500).json({ error: `Failed to fetch funds: ${error}` });
+    return;
+  }
+
+  res.json({ funds: data || [] });
+});
+
+/**
+ * GET /api/funds/:ticker
+ * Returns a single fund by ticker symbol.
+ */
+router.get('/api/funds/:ticker', requireAuth, async (req: Request, res: Response) => {
+  const ticker = req.params.ticker as string;
+
+  const { data, error } = await supaFetch<FundRow>('funds', {
+    params: { ticker: `eq.${ticker.toUpperCase()}`, select: '*' },
+    single: true,
+  });
+
+  if (error) {
+    res.status(404).json({ error: `Fund not found: ${ticker}` });
+    return;
+  }
+
+  res.json({ fund: data });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SCORES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/scores
+ * Returns the latest raw factor scores for all active funds.
+ *
+ * These are RAW scores — the same for every user. The React client
+ * applies the user's custom factor weights client-side to produce
+ * personalized composite scores and rankings.
+ */
+router.get('/api/scores', requireAuth, async (req: Request, res: Response) => {
+  // Get the latest pipeline run
+  const { data: latestRun } = await supaFetch<PipelineRunRow>('pipeline_runs', {
+    params: {
+      status: 'eq.completed',
+      order: 'completed_at.desc',
+      limit: '1',
+    },
+    single: true,
+  });
+
+  if (!latestRun) {
+    res.json({ scores: [], pipelineRun: null, message: 'No completed pipeline runs yet' });
+    return;
+  }
+
+  // Get all scores from that run
+  const { data: scores, error } = await supaSelect<FundScoresRow[]>('fund_scores', {
+    pipeline_run_id: `eq.${latestRun.id}`,
+    select: '*, funds(ticker, name, expense_ratio)',
+    order: 'composite_default.desc',
+  });
+
+  if (error) {
+    res.status(500).json({ error: `Failed to fetch scores: ${error}` });
+    return;
+  }
+
+  res.json({
+    scores: scores || [],
+    pipelineRun: {
+      id: latestRun.id,
+      completedAt: latestRun.completed_at,
+      fundsProcessed: latestRun.funds_processed,
+      fundsSucceeded: latestRun.funds_succeeded,
+    },
+  });
+});
+
+/**
+ * GET /api/scores/:ticker
+ * Returns the latest scores for a specific fund, including factor detail.
+ */
+router.get('/api/scores/:ticker', requireAuth, async (req: Request, res: Response) => {
+  const ticker = req.params.ticker as string;
+
+  // Find the fund
+  const { data: fund } = await supaFetch<FundRow>('funds', {
+    params: { ticker: `eq.${ticker.toUpperCase()}` },
+    single: true,
+  });
+
+  if (!fund) {
+    res.status(404).json({ error: `Fund not found: ${ticker}` });
+    return;
+  }
+
+  // Get the latest score for this fund
+  const { data: score, error } = await supaFetch<FundScoresRow>('fund_scores', {
+    params: {
+      fund_id: `eq.${fund.id}`,
+      order: 'scored_at.desc',
+      limit: '1',
+    },
+    single: true,
+  });
+
+  if (error || !score) {
+    res.status(404).json({ error: `No scores found for ${ticker}` });
+    return;
+  }
+
+  // Also fetch the fund's current holdings for the detail view
+  const { data: holdings } = await supaSelect('holdings_cache', {
+    fund_id: `eq.${fund.id}`,
+    order: 'pct_of_nav.desc',
+    limit: '50',
+  });
+
+  res.json({
+    fund,
+    score,
+    holdings: holdings || [],
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// USER PROFILE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/profile
+ * Returns the authenticated user's profile (factor weights, risk tolerance,
+ * setup status, etc.).
+ *
+ * If the profile doesn't exist yet (shouldn't happen if the auth trigger
+ * is working, but just in case), creates one with defaults.
+ */
+router.get('/api/profile', requireAuth, async (req: Request, res: Response) => {
+  const { userId, userEmail } = req as AuthenticatedRequest;
+
+  let { data: profile, error } = await supaFetch<UserProfileRow>('user_profiles', {
+    params: { id: `eq.${userId}` },
+    single: true,
+  });
+
+  // Auto-create profile if it doesn't exist (safety net)
+  if (!profile && !error) {
+    const { data: created } = await supaInsert<UserProfileRow>('user_profiles', {
+      id: userId,
+      email: userEmail,
+      display_name: userEmail ? userEmail.split('@')[0] : null,
+    }, { single: true });
+
+    profile = created;
+  }
+
+  if (!profile) {
+    res.status(500).json({ error: 'Could not load or create profile' });
+    return;
+  }
+
+  res.json({ profile });
+});
+
+/**
+ * PUT /api/profile
+ * Update the authenticated user's profile.
+ *
+ * Accepts partial updates — only send the fields you want to change.
+ * The client sends this when the user adjusts factor weight sliders,
+ * changes risk tolerance, or updates their name.
+ */
+router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = req as AuthenticatedRequest;
+  const updates = req.body;
+
+  // Whitelist allowed fields (prevent someone from changing their ID, etc.)
+  const allowed: Record<string, unknown> = {};
+  const allowedFields = [
+    'display_name',
+    'weight_cost',
+    'weight_quality',
+    'weight_positioning',
+    'weight_momentum',
+    'risk_tolerance',
+    'briefs_enabled',
+    'selected_fund_ids',
+  ];
+
+  for (const field of allowedFields) {
+    if (updates[field] !== undefined) {
+      allowed[field] = updates[field];
+    }
+  }
+
+  if (Object.keys(allowed).length === 0) {
+    res.status(400).json({ error: 'No valid fields to update' });
+    return;
+  }
+
+  // Validate weights if any weight field is being updated
+  const weightFields = ['weight_cost', 'weight_quality', 'weight_positioning', 'weight_momentum'];
+  const hasWeightUpdate = weightFields.some(f => allowed[f] !== undefined);
+
+  if (hasWeightUpdate) {
+    // Fetch current profile to fill in unchanged weights
+    const { data: current } = await supaFetch<UserProfileRow>('user_profiles', {
+      params: { id: `eq.${userId}` },
+      single: true,
+    });
+
+    if (current) {
+      const finalWeights = {
+        weight_cost: (allowed.weight_cost ?? current.weight_cost) as number,
+        weight_quality: (allowed.weight_quality ?? current.weight_quality) as number,
+        weight_positioning: (allowed.weight_positioning ?? current.weight_positioning) as number,
+        weight_momentum: (allowed.weight_momentum ?? current.weight_momentum) as number,
+      };
+
+      const sum = finalWeights.weight_cost + finalWeights.weight_quality +
+        finalWeights.weight_positioning + finalWeights.weight_momentum;
+
+      if (Math.abs(sum - 1.0) >= 0.02) {
+        res.status(400).json({
+          error: `Factor weights must sum to 1.0 (got ${sum.toFixed(4)})`,
+        });
+        return;
+      }
+    }
+  }
+
+  // Validate risk tolerance if being updated
+  if (allowed.risk_tolerance !== undefined) {
+    const valid = ['conservative', 'moderate', 'aggressive'];
+    if (!valid.includes(allowed.risk_tolerance as string)) {
+      res.status(400).json({
+        error: `Invalid risk_tolerance. Must be one of: ${valid.join(', ')}`,
+      });
+      return;
+    }
+  }
+
+  const { data, error } = await supaUpdate<UserProfileRow>(
+    'user_profiles',
+    allowed,
+    { id: `eq.${userId}` }
+  );
+
+  if (error) {
+    res.status(500).json({ error: `Failed to update profile: ${error}` });
+    return;
+  }
+
+  res.json({ profile: data });
+});
+
+/**
+ * POST /api/profile/setup
+ * Complete the setup wizard. Sets factor weights, risk tolerance,
+ * and selected funds in one call, then marks setup as complete.
+ */
+router.post('/api/profile/setup', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { weights, riskTolerance, selectedFundIds } = req.body;
+
+  // Validate
+  if (!weights || !riskTolerance || !selectedFundIds) {
+    res.status(400).json({
+      error: 'Missing required fields: weights, riskTolerance, selectedFundIds',
+    });
+    return;
+  }
+
+  const valid = ['conservative', 'moderate', 'aggressive'];
+  if (!valid.includes(riskTolerance)) {
+    res.status(400).json({ error: `Invalid riskTolerance. Must be: ${valid.join(', ')}` });
+    return;
+  }
+
+  const sum = (weights.costEfficiency || 0) + (weights.holdingsQuality || 0) +
+    (weights.positioning || 0) + (weights.momentum || 0);
+
+  if (Math.abs(sum - 1.0) >= 0.02) {
+    res.status(400).json({ error: `Weights must sum to 1.0 (got ${sum.toFixed(4)})` });
+    return;
+  }
+
+  const { data, error } = await supaUpdate<UserProfileRow>(
+    'user_profiles',
+    {
+      weight_cost: weights.costEfficiency ?? DEFAULT_FACTOR_WEIGHTS.costEfficiency,
+      weight_quality: weights.holdingsQuality ?? DEFAULT_FACTOR_WEIGHTS.holdingsQuality,
+      weight_positioning: weights.positioning ?? DEFAULT_FACTOR_WEIGHTS.positioning,
+      weight_momentum: weights.momentum ?? DEFAULT_FACTOR_WEIGHTS.momentum,
+      risk_tolerance: riskTolerance,
+      selected_fund_ids: selectedFundIds,
+      setup_completed: true,
+    },
+    { id: `eq.${userId}` }
+  );
+
+  if (error) {
+    res.status(500).json({ error: `Failed to save setup: ${error}` });
+    return;
+  }
+
+  res.json({ profile: data, message: 'Setup complete' });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PIPELINE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/pipeline/status
+ * Returns the most recent pipeline run status.
+ * Used by the UI to show "Scores last updated: 2 hours ago" and
+ * whether a run is currently in progress.
+ */
+router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Response) => {
+  const { data: runs, error } = await supaSelect<PipelineRunRow[]>('pipeline_runs', {
+    order: 'started_at.desc',
+    limit: '5',
+  });
+
+  if (error) {
+    res.status(500).json({ error: `Failed to fetch pipeline status: ${error}` });
+    return;
+  }
+
+  const latestRun = runs && runs.length > 0 ? runs[0] : null;
+  const isRunning = latestRun?.status === 'running';
+
+  res.json({
+    latestRun,
+    isRunning,
+    recentRuns: runs || [],
+  });
+});
+
+/**
+ * POST /api/pipeline/run
+ * Trigger a fresh pipeline run.
+ *
+ * This is the "Run Pipeline Now" button in the UI. It kicks off
+ * the full scoring pipeline (Steps 1–14 from Master Reference §8).
+ *
+ * The pipeline runs asynchronously — this endpoint returns immediately
+ * with the pipeline_run_id so the client can poll /api/pipeline/status.
+ *
+ * NOTE: The actual pipeline execution is wired up in persist.ts (Session 5).
+ * This route creates the run record and calls the pipeline.
+ */
+router.post('/api/pipeline/run', requireAuth, async (req: Request, res: Response) => {
+  // Check if a pipeline is already running
+  const { data: running } = await supaFetch<PipelineRunRow>('pipeline_runs', {
+    params: {
+      status: 'eq.running',
+      limit: '1',
+    },
+    single: true,
+  });
+
+  if (running) {
+    res.status(409).json({
+      error: 'A pipeline run is already in progress',
+      runId: running.id,
+      startedAt: running.started_at,
+    });
+    return;
+  }
+
+  // Create pipeline_runs record
+  const { data: run, error } = await supaInsert<PipelineRunRow>('pipeline_runs', {
+    status: 'running',
+  }, { single: true });
+
+  if (error || !run) {
+    res.status(500).json({ error: `Failed to create pipeline run: ${error}` });
+    return;
+  }
+
+  // Kick off pipeline asynchronously (don't await — let it run in background)
+  // The persist module handles updating the pipeline_runs record when done.
+  runPipelineAsync(run.id).catch(err => {
+    console.error(`[routes] Pipeline run ${run.id} failed:`, err);
+  });
+
+  res.status(202).json({
+    message: 'Pipeline run started',
+    runId: run.id,
+    startedAt: run.started_at,
+  });
+});
+
+/**
+ * Async wrapper that runs the pipeline and persists results.
+ * Called from POST /api/pipeline/run — runs in background.
+ */
+async function runPipelineAsync(runId: string): Promise<void> {
+  // Import dynamically to avoid circular dependencies
+  const { persistPipelineResults } = await import('../engine/persist.js');
+  const { runFullPipeline } = await import('../engine/pipeline.js');
+
+  try {
+    // Get active funds
+    const { data: funds } = await supaSelect<FundRow[]>('funds', {
+      is_active: 'eq.true',
+    });
+
+    if (!funds || funds.length === 0) {
+      await supaUpdate('pipeline_runs', {
+        status: 'failed',
+        error_message: 'No active funds found',
+        completed_at: new Date().toISOString(),
+      }, { id: `eq.${runId}` });
+      return;
+    }
+
+    // Run the full pipeline
+    const result = await runFullPipeline(funds);
+
+    // Persist results to Supabase
+    await persistPipelineResults(runId, result, funds);
+
+    console.log(`[routes] Pipeline run ${runId} completed successfully`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[routes] Pipeline run ${runId} failed: ${msg}`);
+
+    await supaUpdate('pipeline_runs', {
+      status: 'failed',
+      error_message: msg,
+      completed_at: new Date().toISOString(),
+    }, { id: `eq.${runId}` });
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INVESTMENT BRIEFS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/briefs
+ * Returns the authenticated user's Investment Brief history (newest first).
+ * This is the Brief archive tab in the UI.
+ */
+router.get('/api/briefs', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = req as AuthenticatedRequest;
+
+  const { data, error } = await supaSelect<InvestmentBriefRow[]>('investment_briefs', {
+    user_id: `eq.${userId}`,
+    order: 'generated_at.desc',
+    // Don't include full content in list view — just metadata
+    select: 'id,title,status,generated_at,model_used',
+  });
+
+  if (error) {
+    res.status(500).json({ error: `Failed to fetch briefs: ${error}` });
+    return;
+  }
+
+  res.json({ briefs: data || [] });
+});
+
+/**
+ * GET /api/briefs/:id
+ * Returns a specific Investment Brief with full content.
+ * Only returns briefs that belong to the authenticated user.
+ */
+router.get('/api/briefs/:id', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { id } = req.params;
+
+  const { data: brief, error } = await supaFetch<InvestmentBriefRow>('investment_briefs', {
+    params: {
+      id: `eq.${id}`,
+      user_id: `eq.${userId}`,
+    },
+    single: true,
+  });
+
+  if (error || !brief) {
+    res.status(404).json({ error: 'Brief not found' });
+    return;
+  }
+
+  res.json({ brief });
+});
+
+/**
+ * POST /api/briefs/generate
+ * Trigger on-demand Investment Brief generation for the authenticated user.
+ *
+ * This is the "Generate Brief Now" button. Uses the latest pipeline scores
+ * to create a personalized Brief. Runs asynchronously — returns immediately
+ * with a 202 so the client can poll GET /api/briefs for the result.
+ *
+ * Query param: ?sendEmail=true to also email the Brief (default: false for on-demand)
+ */
+router.post('/api/briefs/generate', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = req as AuthenticatedRequest;
+  const sendEmail = req.query.sendEmail === 'true';
+
+  // Check that we have scores to base the Brief on
+  const { data: latestRun } = await supaFetch<PipelineRunRow>('pipeline_runs', {
+    params: {
+      status: 'eq.completed',
+      order: 'completed_at.desc',
+      limit: '1',
+    },
+    single: true,
+  });
+
+  if (!latestRun) {
+    res.status(400).json({
+      error: 'No scored data available. Run the pipeline first before generating a Brief.',
+    });
+    return;
+  }
+
+  // Kick off Brief generation asynchronously
+  generateBriefAsync(userId, latestRun.id, sendEmail).catch(err => {
+    console.error(`[routes] Brief generation failed for user ${userId}:`, err);
+  });
+
+  res.status(202).json({
+    message: 'Brief generation started',
+    basedOnRun: latestRun.id,
+    sendEmail,
+  });
+});
+
+/**
+ * Async wrapper for Brief generation from the API route.
+ */
+async function generateBriefAsync(
+  userId: string,
+  pipelineRunId: string,
+  sendEmail: boolean
+): Promise<void> {
+  const { generateBriefForUser } = await import('../engine/brief-scheduler.js');
+  const result = await generateBriefForUser(userId, pipelineRunId, sendEmail);
+
+  if (result.error) {
+    console.error(`[routes] Brief generation error: ${result.error}`);
+  } else {
+    console.log(`[routes] Brief ${result.briefId} generated for user ${userId}` +
+      (result.sent ? ' and emailed' : ''));
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MACRO THESIS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/thesis/latest
+ * Returns the most recent macro thesis.
+ * This is shared context — the same thesis for all users.
+ */
+router.get('/api/thesis/latest', requireAuth, async (req: Request, res: Response) => {
+  const { data, error } = await supaFetch('thesis_cache', {
+    params: {
+      order: 'generated_at.desc',
+      limit: '1',
+    },
+    single: true,
+  });
+
+  if (error || !data) {
+    res.status(404).json({ error: 'No thesis available yet' });
+    return;
+  }
+
+  res.json({ thesis: data });
+});
