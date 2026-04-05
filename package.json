@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc && vite build",
+    "build": "tsc",
+    "build:client": "vite build",
     "start": "node dist/server.js",
     "type-check": "tsc --noEmit"
   },
