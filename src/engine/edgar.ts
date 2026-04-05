@@ -59,10 +59,10 @@ export async function fetchEdgarHoldings(
 
     await delay(PIPELINE.API_CALL_DELAY_MS);
 
-    // Step 2: Find the latest NPORT-P filing for this fund
-    const filing = await findLatestNportFiling(tickerEntry.cik.toString());
-    if (!filing) {
-      console.error(`[edgar] ${ticker}: no NPORT-P filing found for CIK ${tickerEntry.cik}`);
+    // Step 2: Find NPORT-P filing candidates for this CIK
+    const candidates = await findNportFilingCandidates(tickerEntry.cik.toString());
+    if (candidates.length === 0) {
+      console.error(`[edgar] ${ticker}: no NPORT-P filings found for CIK ${tickerEntry.cik}`);
       return {
         success: false,
         data: null,
@@ -70,29 +70,53 @@ export async function fetchEdgarHoldings(
         durationMs: Date.now() - start,
       };
     }
-    console.log(`[edgar] ${ticker}: found ${filing.form} filed ${filing.filingDate}, primaryDoc=${filing.primaryDoc}`);
+    console.log(`[edgar] ${ticker}: found ${candidates.length} NPORT-P candidate(s) for CIK ${tickerEntry.cik}`);
 
-    await delay(PIPELINE.API_CALL_DELAY_MS);
+    // Step 3: Fetch each candidate's XML and verify seriesId matches this fund.
+    // The SEC submissions index doesn't include seriesId, so we must check the
+    // XML itself. For single-series CIKs this matches on the first try. For
+    // large families (Fidelity, Vanguard) we may need to check a few filings.
+    let matchedFiling: FilingIndexEntry | null = null;
+    let matchedXml: string | null = null;
 
-    // Step 3: Fetch the actual XML filing
-    const xml = await fetchFilingXml(
-      tickerEntry.cik.toString(),
-      filing.accessionNumber,
-      filing.primaryDoc
-    );
-    if (!xml) {
-      console.error(`[edgar] ${ticker}: failed to fetch XML (accession: ${filing.accessionNumber})`);
+    for (const candidate of candidates) {
+      await delay(PIPELINE.API_CALL_DELAY_MS);
+
+      const xml = await fetchFilingXml(
+        tickerEntry.cik.toString(),
+        candidate.accessionNumber,
+        candidate.primaryDoc
+      );
+      if (!xml) {
+        console.warn(`[edgar] ${ticker}: failed to fetch XML for candidate ${candidate.accessionNumber}, skipping`);
+        continue;
+      }
+
+      // Quick seriesId check on the raw XML header (avoids full parse)
+      const filingSeriesId = extractSeriesIdFromXml(xml);
+      if (filingSeriesId && tickerEntry.seriesId && filingSeriesId !== tickerEntry.seriesId) {
+        console.log(`[edgar] ${ticker}: candidate ${candidate.accessionNumber} is series ${filingSeriesId}, need ${tickerEntry.seriesId} — skipping`);
+        continue;
+      }
+
+      console.log(`[edgar] ${ticker}: matched filing ${candidate.accessionNumber} (series ${filingSeriesId || 'unknown'}), ${xml.length} chars`);
+      matchedFiling = candidate;
+      matchedXml = xml;
+      break;
+    }
+
+    if (!matchedFiling || !matchedXml) {
+      console.error(`[edgar] ${ticker}: none of ${candidates.length} NPORT-P candidates matched series ${tickerEntry.seriesId}`);
       return {
         success: false,
         data: null,
-        error: `Failed to fetch NPORT-P XML for ${ticker} (accession: ${filing.accessionNumber})`,
+        error: `No NPORT-P filing matched series ${tickerEntry.seriesId} for ${ticker} (CIK ${tickerEntry.cik}, checked ${candidates.length} candidates)`,
         durationMs: Date.now() - start,
       };
     }
-    console.log(`[edgar] ${ticker}: XML fetched, ${xml.length} chars`);
 
-    // Step 4: Parse XML into structured data
-    const result = await parseNportXml(xml, tickerEntry, filing);
+    // Step 4: Parse the matched XML into structured data
+    const result = await parseNportXml(matchedXml, tickerEntry, matchedFiling);
 
     return {
       success: true,
@@ -181,15 +205,22 @@ interface FilingIndexEntry {
 }
 
 /**
- * Queries EDGAR's submissions API to find the most recent NPORT-P filing
- * for a given CIK. Uses the data.sec.gov JSON API (no rate-limited EFTS).
+ * Queries EDGAR's submissions API to find NPORT-P filing candidates for a
+ * given CIK, ordered most-recent-first.
+ *
+ * Returns up to `maxCandidates` filings because the submissions index does
+ * NOT include a seriesId field. Large fund families (e.g. Fidelity, Vanguard)
+ * file multiple NPORT-Ps under the same CIK — one per series. The caller
+ * must fetch each candidate's XML and check genInfo > seriesId to find the
+ * correct fund.
  *
  * The submissions endpoint returns the fund's filing history as columnar
  * arrays (accessionNumber[], form[], filingDate[], primaryDocument[]).
  */
-async function findLatestNportFiling(
-  cik: string
-): Promise<FilingIndexEntry | null> {
+async function findNportFilingCandidates(
+  cik: string,
+  maxCandidates: number = 10
+): Promise<FilingIndexEntry[]> {
   // Pad CIK to 10 digits with leading zeros (SEC requires this format)
   const paddedCik = cik.padStart(10, '0');
   const url = `https://data.sec.gov/submissions/CIK${paddedCik}.json`;
@@ -204,60 +235,77 @@ async function findLatestNportFiling(
 
   const data = await response.json();
 
+  const candidates: FilingIndexEntry[] = [];
+
   // Recent filings are in data.filings.recent (columnar format)
   const recent = data.filings?.recent;
-  if (!recent || !recent.form) {
-    return null;
-  }
-
-  // Walk the filings array to find the most recent NPORT-P or NPORT-P/A
-  // (NPORT-P/A is an amended filing — use it if it's newer than NPORT-P)
-  for (let i = 0; i < recent.form.length; i++) {
-    const form: string = recent.form[i];
-    if (form === 'NPORT-P' || form === 'NPORT-P/A') {
-      return {
-        accessionNumber: recent.accessionNumber[i],
-        filingDate: recent.filingDate[i],
-        reportDate: recent.reportDate[i] || recent.filingDate[i],
-        primaryDoc: recent.primaryDocument[i],
-        form,
-      };
+  if (recent?.form) {
+    // Walk the filings array to collect NPORT-P or NPORT-P/A entries
+    // (NPORT-P/A is an amended filing — treat it the same)
+    for (let i = 0; i < recent.form.length && candidates.length < maxCandidates; i++) {
+      const form: string = recent.form[i];
+      if (form === 'NPORT-P' || form === 'NPORT-P/A') {
+        candidates.push({
+          accessionNumber: recent.accessionNumber[i],
+          filingDate: recent.filingDate[i],
+          reportDate: recent.reportDate[i] || recent.filingDate[i],
+          primaryDoc: recent.primaryDocument[i],
+          form,
+        });
+      }
     }
   }
 
-  // If not found in recent, check the older filings files
-  // (EDGAR paginate large histories into separate JSON files)
-  const olderFiles = data.filings?.files;
-  if (olderFiles && olderFiles.length > 0) {
-    for (const file of olderFiles) {
-      const olderUrl = `https://data.sec.gov/submissions/${file.name}`;
+  // If we haven't filled our candidates from recent, check the older filings
+  // (EDGAR paginates large histories into separate JSON files)
+  if (candidates.length < maxCandidates) {
+    const olderFiles = data.filings?.files;
+    if (olderFiles && olderFiles.length > 0) {
+      for (const file of olderFiles) {
+        if (candidates.length >= maxCandidates) break;
 
-      await delay(PIPELINE.API_CALL_DELAY_MS);
+        const olderUrl = `https://data.sec.gov/submissions/${file.name}`;
 
-      const olderResponse = await fetch(olderUrl, {
-        headers: { 'User-Agent': EDGAR.USER_AGENT },
-      });
+        await delay(PIPELINE.API_CALL_DELAY_MS);
 
-      if (!olderResponse.ok) continue;
+        const olderResponse = await fetch(olderUrl, {
+          headers: { 'User-Agent': EDGAR.USER_AGENT },
+        });
 
-      const olderData = await olderResponse.json();
+        if (!olderResponse.ok) continue;
 
-      for (let i = 0; i < (olderData.form?.length || 0); i++) {
-        const form: string = olderData.form[i];
-        if (form === 'NPORT-P' || form === 'NPORT-P/A') {
-          return {
-            accessionNumber: olderData.accessionNumber[i],
-            filingDate: olderData.filingDate[i],
-            reportDate: olderData.reportDate[i] || olderData.filingDate[i],
-            primaryDoc: olderData.primaryDocument[i],
-            form,
-          };
+        const olderData = await olderResponse.json();
+
+        for (let i = 0; i < (olderData.form?.length || 0) && candidates.length < maxCandidates; i++) {
+          const form: string = olderData.form[i];
+          if (form === 'NPORT-P' || form === 'NPORT-P/A') {
+            candidates.push({
+              accessionNumber: olderData.accessionNumber[i],
+              filingDate: olderData.filingDate[i],
+              reportDate: olderData.reportDate[i] || olderData.filingDate[i],
+              primaryDoc: olderData.primaryDocument[i],
+              form,
+            });
+          }
         }
       }
     }
   }
 
-  return null;
+  return candidates;
+}
+
+/**
+ * Extract the seriesId from raw NPORT-P XML without a full parse.
+ * The seriesId lives in <genInfo><seriesId>S000006027</seriesId></genInfo>.
+ * Using a regex on the first 5KB is much cheaper than parsing multi-MB XML
+ * just to check if it's the right fund.
+ */
+function extractSeriesIdFromXml(xml: string): string | null {
+  // Only need to search the header area — seriesId is in genInfo near the top
+  const header = xml.substring(0, 5000);
+  const match = header.match(/<seriesId>\s*(S\d+)\s*<\/seriesId>/);
+  return match ? match[1] : null;
 }
 
 // ─── Step 3: Fetch Filing XML ───────────────────────────────────────────────
