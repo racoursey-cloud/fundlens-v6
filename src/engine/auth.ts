@@ -95,71 +95,200 @@ function decodeJwt(token: string): SupabaseJwtPayload | null {
  * Uses Node's built-in crypto for HMAC-SHA256 verification.
  */
 /**
- * Normalize a base64url string for comparison.
- * JWT signatures use base64url encoding (RFC 4648 §5) with no padding.
- * Node's digest('base64url') may or may not include trailing '=' depending
- * on version. Strip padding and normalize +/ vs -_ to ensure consistent
- * comparison regardless of source.
+ * In-memory cache for Supabase JWKS (JSON Web Key Set).
+ * Keys are fetched once and cached for 1 hour to avoid hitting
+ * Supabase on every request.
  */
-function normalizeBase64url(str: string): string {
-  return str
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+let jwksCache: { keys: JsonWebKey[]; fetchedAt: number } | null = null;
+const JWKS_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+interface JsonWebKey {
+  kty: string;
+  crv?: string;
+  x?: string;
+  y?: string;
+  kid?: string;
+  alg?: string;
+  use?: string;
+  // HS256 fallback
+  k?: string;
 }
 
 /**
- * Verify JWT signature using Supabase JWT secret.
- *
- * Supabase signs JWTs with HS256 (HMAC-SHA256). The JWT secret from
- * the Supabase dashboard is a raw string used directly as the HMAC key.
- *
- * Uses Node's built-in crypto — no external dependencies. Performs
- * timing-safe comparison to prevent timing attacks.
+ * Fetch the JWKS (JSON Web Key Set) from Supabase.
+ * Endpoint: {SUPABASE_URL}/auth/v1/.well-known/jwks.json
+ * Caches keys for 1 hour to minimize network calls.
  */
-async function verifyJwtSignature(token: string): Promise<boolean> {
-  const secret = process.env.SUPABASE_JWT_SECRET;
-  if (!secret) {
-    console.warn('[auth] SUPABASE_JWT_SECRET not set — skipping signature verification');
-    return true;
+async function fetchJwks(): Promise<JsonWebKey[]> {
+  const now = Date.now();
+  if (jwksCache && (now - jwksCache.fetchedAt) < JWKS_CACHE_TTL) {
+    return jwksCache.keys;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL;
+  if (!supabaseUrl) {
+    console.error('[auth] SUPABASE_URL not set — cannot fetch JWKS');
+    return [];
   }
 
   try {
-    const { createHmac, timingSafeEqual } = await import('crypto');
+    const resp = await fetch(`${supabaseUrl}/auth/v1/.well-known/jwks.json`);
+    if (!resp.ok) {
+      console.error(`[auth] JWKS fetch failed: ${resp.status} ${resp.statusText}`);
+      return jwksCache?.keys ?? [];
+    }
+    const data = await resp.json() as { keys: JsonWebKey[] };
+    jwksCache = { keys: data.keys, fetchedAt: now };
+    console.log(`[auth] JWKS fetched: ${data.keys.length} key(s), alg(s): ${data.keys.map(k => k.alg || k.kty).join(', ')}`);
+    return data.keys;
+  } catch (err) {
+    console.error('[auth] JWKS fetch error:', err);
+    return jwksCache?.keys ?? [];
+  }
+}
+
+/**
+ * Verify JWT signature using Supabase's published keys.
+ *
+ * Supabase can sign JWTs with either:
+ *   - ES256 (ECDSA with P-256 and SHA-256) — newer projects
+ *   - HS256 (HMAC-SHA256) — legacy projects
+ *
+ * This function detects the algorithm from the token header and verifies
+ * accordingly. For ES256, it fetches the public key from Supabase's JWKS
+ * endpoint. For HS256, it uses the SUPABASE_JWT_SECRET env var.
+ *
+ * Uses Node's built-in crypto — no external dependencies.
+ */
+async function verifyJwtSignature(token: string): Promise<boolean> {
+  try {
     const parts = token.split('.');
     if (parts.length !== 3) return false;
 
+    // Decode the header to determine the algorithm
+    const header = JSON.parse(
+      Buffer.from(parts[0], 'base64url').toString('utf-8')
+    ) as { alg: string; kid?: string; typ?: string };
+
     const signatureInput = `${parts[0]}.${parts[1]}`;
-    const tokenSignature = normalizeBase64url(parts[2]);
+    const signatureBytes = Buffer.from(parts[2], 'base64url');
 
-    // Supabase JWT secret is a raw UTF-8 string (not base64-encoded)
-    const computed = normalizeBase64url(
-      createHmac('sha256', secret.trim())
-        .update(signatureInput)
-        .digest('base64url')
-    );
-
-    // Timing-safe comparison requires equal-length buffers
-    const a = Buffer.from(computed, 'utf-8');
-    const b = Buffer.from(tokenSignature, 'utf-8');
-    if (a.length !== b.length) {
-      // Length mismatch — try with base64-decoded secret as fallback.
-      // Some Supabase configurations use base64-encoded JWT secrets.
-      const computedB64 = normalizeBase64url(
-        createHmac('sha256', Buffer.from(secret.trim(), 'base64'))
-          .update(signatureInput)
-          .digest('base64url')
-      );
-      const c = Buffer.from(computedB64, 'utf-8');
-      if (c.length !== b.length) return false;
-      return timingSafeEqual(c, b);
+    if (header.alg === 'ES256') {
+      return await verifyES256(signatureInput, signatureBytes, header.kid);
+    } else if (header.alg === 'HS256') {
+      return verifyHS256(signatureInput, signatureBytes);
+    } else {
+      console.error(`[auth] Unsupported JWT algorithm: ${header.alg}`);
+      return false;
     }
-
-    return timingSafeEqual(a, b);
   } catch (err) {
     console.error('[auth] JWT signature verification error:', err);
     return false;
   }
+}
+
+/**
+ * Verify an ES256 (ECDSA P-256 + SHA-256) JWT signature.
+ * Fetches the matching public key from Supabase's JWKS endpoint.
+ */
+async function verifyES256(
+  signatureInput: string,
+  signatureBytes: Buffer,
+  kid?: string
+): Promise<boolean> {
+  const crypto = await import('crypto');
+  const keys = await fetchJwks();
+
+  // Find the key matching the token's kid (key ID)
+  const jwk = kid
+    ? keys.find(k => k.kid === kid)
+    : keys.find(k => k.kty === 'EC' && k.crv === 'P-256');
+
+  if (!jwk || !jwk.x || !jwk.y) {
+    console.error(`[auth] No matching EC key found in JWKS for kid: ${kid}`);
+    return false;
+  }
+
+  // Import the JWK as a Node.js KeyObject
+  const keyObject = crypto.createPublicKey({
+    key: {
+      kty: jwk.kty,
+      crv: jwk.crv,
+      x: jwk.x,
+      y: jwk.y,
+    },
+    format: 'jwk',
+  });
+
+  // ES256 JWT signatures use raw R||S format (64 bytes for P-256).
+  // Node's crypto.verify expects DER-encoded ECDSA signatures.
+  // Convert raw R||S to DER.
+  const derSignature = rawToDer(signatureBytes);
+
+  return crypto.verify(
+    'sha256',
+    Buffer.from(signatureInput, 'utf-8'),
+    { key: keyObject, dsaEncoding: 'der' },
+    derSignature
+  );
+}
+
+/**
+ * Convert a raw ECDSA signature (R||S, 64 bytes for P-256) to DER format.
+ * JWTs use raw format; Node's crypto.verify expects DER.
+ */
+function rawToDer(raw: Buffer): Buffer {
+  const r = raw.subarray(0, 32);
+  const s = raw.subarray(32, 64);
+
+  // DER encoding: each integer is prefixed with 0x00 if high bit is set
+  const rDer = r[0] & 0x80 ? Buffer.concat([Buffer.from([0x00]), r]) : r;
+  const sDer = s[0] & 0x80 ? Buffer.concat([Buffer.from([0x00]), s]) : s;
+
+  // Strip leading zeros (but keep at least one byte)
+  const rTrimmed = trimLeadingZeros(rDer);
+  const sTrimmed = trimLeadingZeros(sDer);
+
+  const rLen = rTrimmed.length;
+  const sLen = sTrimmed.length;
+  const totalLen = 2 + rLen + 2 + sLen;
+
+  return Buffer.from([
+    0x30, totalLen,          // SEQUENCE
+    0x02, rLen, ...rTrimmed, // INTEGER r
+    0x02, sLen, ...sTrimmed, // INTEGER s
+  ]);
+}
+
+/** Trim leading zero bytes from a DER integer, preserving sign byte. */
+function trimLeadingZeros(buf: Buffer): Buffer {
+  let i = 0;
+  while (i < buf.length - 1 && buf[i] === 0x00 && !(buf[i + 1] & 0x80)) {
+    i++;
+  }
+  return buf.subarray(i);
+}
+
+/**
+ * Verify an HS256 (HMAC-SHA256) JWT signature.
+ * Uses the SUPABASE_JWT_SECRET env var as the HMAC key.
+ * Performs timing-safe comparison to prevent timing attacks.
+ */
+function verifyHS256(signatureInput: string, signatureBytes: Buffer): boolean {
+  const crypto = require('crypto') as typeof import('crypto');
+  const secret = process.env.SUPABASE_JWT_SECRET;
+  if (!secret) {
+    console.warn('[auth] SUPABASE_JWT_SECRET not set — cannot verify HS256');
+    return false;
+  }
+
+  const expected = crypto
+    .createHmac('sha256', secret.trim())
+    .update(signatureInput)
+    .digest();
+
+  if (expected.length !== signatureBytes.length) return false;
+  return crypto.timingSafeEqual(expected, signatureBytes);
 }
 
 // ─── Express Middleware ─────────────────────────────────────────────────────
@@ -214,13 +343,6 @@ export async function requireAuth(
   // Verify signature
   const signatureValid = await verifyJwtSignature(token);
   if (!signatureValid) {
-    console.error(
-      '[auth] Signature verification failed for user %s. ' +
-      'JWT_SECRET length: %d, token header: %s',
-      payload.sub,
-      (process.env.SUPABASE_JWT_SECRET || '').length,
-      token.split('.')[0]
-    );
     res.status(401).json({ error: 'Invalid token signature' });
     return;
   }
