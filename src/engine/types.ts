@@ -239,7 +239,7 @@ export interface PipelineRunRow {
   coverage_stats: Record<string, unknown> | null;
 }
 
-// ─── Scoring Types (Preview — full implementation in Session 3) ─────────────
+// ─── Scoring Types (Full — Session 3) ───────────────────────────────────────
 
 /** Raw factor scores for a fund (before user weighting) */
 export interface RawFactorScores {
@@ -255,6 +255,20 @@ export interface UserFactorWeights {
   holdingsQuality: number;
   positioning: number;
   momentum: number;
+}
+
+/** Row in the `fund_scores` table — persisted raw scores per fund per run */
+export interface FundScoresRow {
+  id: string;
+  fund_id: string;
+  pipeline_run_id: string;
+  cost_efficiency: number;
+  holdings_quality: number;
+  positioning: number;
+  momentum: number;
+  /** JSON blob with per-factor detail (CostEfficiencyResult, QualityFactorResult, etc.) */
+  factor_details: Record<string, unknown>;
+  scored_at: string;
 }
 
 // ─── Utility Types ──────────────────────────────────────────────────────────
