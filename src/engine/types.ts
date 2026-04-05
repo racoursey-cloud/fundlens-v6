@@ -228,15 +228,21 @@ export interface CusipCacheRow {
 /** Row in the `pipeline_runs` table — tracks pipeline execution history */
 export interface PipelineRunRow {
   id: string;
-  fund_id: string;
   started_at: string;
   completed_at: string | null;
   status: 'running' | 'completed' | 'failed';
   /** Which pipeline step failed (null if success) */
   failed_step: string | null;
   error_message: string | null;
-  /** Coverage stats as JSON */
-  coverage_stats: Record<string, unknown> | null;
+  /** Pipeline stats */
+  funds_processed: number;
+  funds_succeeded: number;
+  funds_failed: number;
+  total_holdings: number;
+  duration_ms: number | null;
+  /** JSON array of { fund, step, error } for detailed debugging */
+  errors: Array<{ fund: string; step: string; error: string }>;
+  created_at: string;
 }
 
 // ─── Scoring Types (Full — Session 3) ───────────────────────────────────────
@@ -266,9 +272,87 @@ export interface FundScoresRow {
   holdings_quality: number;
   positioning: number;
   momentum: number;
+  /** Composite score using default weights (25/30/25/20) */
+  composite_default: number;
   /** JSON blob with per-factor detail (CostEfficiencyResult, QualityFactorResult, etc.) */
   factor_details: Record<string, unknown>;
   scored_at: string;
+}
+
+// ─── User & Brief Types (Session 5) ────────────────────────────────────────
+
+/** Row in the `user_profiles` table */
+export interface UserProfileRow {
+  /** Same UUID as auth.users(id) */
+  id: string;
+  display_name: string | null;
+  email: string | null;
+
+  /** Factor weights (must sum to 1.0) */
+  weight_cost: number;
+  weight_quality: number;
+  weight_positioning: number;
+  weight_momentum: number;
+
+  /** Risk tolerance: 'conservative' | 'moderate' | 'aggressive' */
+  risk_tolerance: 'conservative' | 'moderate' | 'aggressive';
+
+  /** Setup wizard tracking */
+  setup_completed: boolean;
+  /** JSON array of fund UUIDs the user selected */
+  selected_fund_ids: string[];
+
+  /** Brief scheduling */
+  signup_date: string;
+  last_brief_sent_at: string | null;
+  briefs_enabled: boolean;
+
+  created_at: string;
+  updated_at: string;
+}
+
+/** Row in the `investment_briefs` table */
+export interface InvestmentBriefRow {
+  id: string;
+  user_id: string;
+  pipeline_run_id: string | null;
+  title: string;
+  /** Brief content as Markdown */
+  content_md: string;
+  /** Structured data fed to Claude for this Brief (for auditability) */
+  data_packet: Record<string, unknown>;
+  model_used: string;
+  generation_ms: number | null;
+  thesis_narrative: string | null;
+  /** 'generated' | 'sent' | 'failed' */
+  status: 'generated' | 'sent' | 'failed';
+  generated_at: string;
+  created_at: string;
+}
+
+/** Row in the `brief_deliveries` table */
+export interface BriefDeliveryRow {
+  id: string;
+  brief_id: string;
+  user_id: string;
+  email_to: string;
+  resend_id: string | null;
+  /** 'pending' | 'sent' | 'failed' | 'bounced' */
+  status: 'pending' | 'sent' | 'failed' | 'bounced';
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
+/** Row in the `thesis_cache` table */
+export interface ThesisCacheRow {
+  id: string;
+  pipeline_run_id: string | null;
+  narrative: string;
+  sector_preferences: Array<{ sector: string; preference: number }>;
+  key_themes: string[];
+  model_used: string;
+  generated_at: string;
 }
 
 // ─── Utility Types ──────────────────────────────────────────────────────────
