@@ -20,12 +20,19 @@
  *     POST /api/profile/setup         — complete setup wizard
  *     GET  /api/pipeline/status       — latest pipeline run status
  *     POST /api/pipeline/run          — trigger a fresh pipeline run
+ *     POST /api/pipeline/retry        — retry a failed pipeline run
+ *     GET  /api/pipeline/history      — pipeline run history
  *     GET  /api/briefs                — user's Investment Brief history
  *     GET  /api/briefs/:id            — specific Brief by ID
  *     POST /api/briefs/generate       — trigger on-demand Brief generation
  *     GET  /api/thesis/latest         — latest macro thesis
+ *     GET  /api/monitor/health        — system health report
+ *     GET  /api/monitor/data-quality  — data quality metrics
+ *     GET  /api/monitor/cron          — cron job status
  *
- * Session 5 deliverable. Destination: src/routes/index.ts
+ * Session 5 deliverable. Updated in Session 6 (Brief engine wiring).
+ * Updated in Session 7 (monitoring + retry + cron status endpoints).
+ * Destination: src/routes/routes.ts
  * References: Master Reference §5, §7, §8, §10.
  */
 
@@ -500,6 +507,53 @@ async function runPipelineAsync(runId: string): Promise<void> {
   }
 }
 
+/**
+ * POST /api/pipeline/retry
+ * Retry a failed pipeline run.
+ *
+ * Creates a new pipeline run (does NOT reuse the failed record) and
+ * re-runs the full pipeline. Returns the new run ID immediately.
+ *
+ * Body: { failedRunId: string }
+ */
+router.post('/api/pipeline/retry', requireAuth, async (req: Request, res: Response) => {
+  const { failedRunId } = req.body;
+
+  if (!failedRunId) {
+    res.status(400).json({ error: 'Missing required field: failedRunId' });
+    return;
+  }
+
+  // Dynamic import to avoid circular dependencies
+  const { retryPipelineRun } = await import('../engine/monitor.js');
+  const result = await retryPipelineRun(failedRunId);
+
+  if (!result.success) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+
+  res.status(202).json({
+    message: 'Pipeline retry started',
+    newRunId: result.newRunId,
+    retriedFrom: failedRunId,
+  });
+});
+
+/**
+ * GET /api/pipeline/history
+ * Returns the last 10 pipeline runs with outcome summaries.
+ * Used by the monitoring UI to show a run timeline.
+ */
+router.get('/api/pipeline/history', requireAuth, async (req: Request, res: Response) => {
+  const limit = parseInt(req.query.limit as string) || 10;
+
+  const { getPipelineHistory } = await import('../engine/monitor.js');
+  const history = await getPipelineHistory(Math.min(limit, 50));
+
+  res.json({ runs: history });
+});
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INVESTMENT BRIEFS
@@ -558,13 +612,14 @@ router.get('/api/briefs/:id', requireAuth, async (req: Request, res: Response) =
  * Trigger on-demand Investment Brief generation for the authenticated user.
  *
  * This is the "Generate Brief Now" button. Uses the latest pipeline scores
- * to create a personalized Brief.
+ * to create a personalized Brief. Runs asynchronously — returns immediately
+ * with a 202 so the client can poll GET /api/briefs for the result.
  *
- * NOTE: Brief generation logic is built in Session 6. This endpoint
- * validates the request and delegates to the brief engine.
+ * Query param: ?sendEmail=true to also email the Brief (default: false for on-demand)
  */
 router.post('/api/briefs/generate', requireAuth, async (req: Request, res: Response) => {
   const { userId } = req as AuthenticatedRequest;
+  const sendEmail = req.query.sendEmail === 'true';
 
   // Check that we have scores to base the Brief on
   const { data: latestRun } = await supaFetch<PipelineRunRow>('pipeline_runs', {
@@ -583,14 +638,36 @@ router.post('/api/briefs/generate', requireAuth, async (req: Request, res: Respo
     return;
   }
 
-  // Brief generation will be wired up in Session 6 (Investment Brief Engine).
-  // For now, return a placeholder response.
+  // Kick off Brief generation asynchronously
+  generateBriefAsync(userId, latestRun.id, sendEmail).catch(err => {
+    console.error(`[routes] Brief generation failed for user ${userId}:`, err);
+  });
+
   res.status(202).json({
     message: 'Brief generation started',
-    note: 'Brief engine will be wired up in Session 6',
     basedOnRun: latestRun.id,
+    sendEmail,
   });
 });
+
+/**
+ * Async wrapper for Brief generation from the API route.
+ */
+async function generateBriefAsync(
+  userId: string,
+  pipelineRunId: string,
+  sendEmail: boolean
+): Promise<void> {
+  const { generateBriefForUser } = await import('../engine/brief-scheduler.js');
+  const result = await generateBriefForUser(userId, pipelineRunId, sendEmail);
+
+  if (result.error) {
+    console.error(`[routes] Brief generation error: ${result.error}`);
+  } else {
+    console.log(`[routes] Brief ${result.briefId} generated for user ${userId}` +
+      (result.sent ? ' and emailed' : ''));
+  }
+}
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -617,4 +694,50 @@ router.get('/api/thesis/latest', requireAuth, async (req: Request, res: Response
   }
 
   res.json({ thesis: data });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MONITORING (Session 7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/monitor/health
+ * System health report.
+ *
+ * Returns a traffic-light status (healthy / degraded / unhealthy) with
+ * details about score freshness, pipeline success, and thesis state.
+ * The UI shows this as a colored indicator in the Pipeline Status area.
+ */
+router.get('/api/monitor/health', requireAuth, async (req: Request, res: Response) => {
+  const { getSystemHealth } = await import('../engine/monitor.js');
+  const report = await getSystemHealth();
+  res.json(report);
+});
+
+/**
+ * GET /api/monitor/data-quality
+ * Detailed data quality metrics.
+ *
+ * Deeper than /health — shows per-factor score distribution, fund
+ * coverage gaps, holdings sector coverage, and error details from
+ * the latest pipeline run. Used for debugging and tuning.
+ */
+router.get('/api/monitor/data-quality', requireAuth, async (req: Request, res: Response) => {
+  const { getDataQualityMetrics } = await import('../engine/monitor.js');
+  const report = await getDataQualityMetrics();
+  res.json(report);
+});
+
+/**
+ * GET /api/monitor/cron
+ * Cron job status.
+ *
+ * Shows whether pipeline and Brief delivery jobs are currently running
+ * and their schedule. Useful for debugging "why didn't my scores update?"
+ */
+router.get('/api/monitor/cron', requireAuth, async (req: Request, res: Response) => {
+  const { getCronStatus } = await import('../engine/cron.js');
+  const status = getCronStatus();
+  res.json(status);
 });
