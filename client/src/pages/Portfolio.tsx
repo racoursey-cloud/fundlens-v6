@@ -296,7 +296,7 @@ export function Portfolio() {
     }
     return [...sectorMap.entries()]
       .sort((a, b) => b[1] - a[1])
-      .map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i % DONUT_COLORS.length] }));
+      .map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i % DONUT_COLORS.length] ?? '#71717a' }));
   }, [scores]);
 
   // Fund allocation donut (by composite score weight)
@@ -306,7 +306,7 @@ export function Portfolio() {
     return top.map((s, i) => ({
       label: s.funds?.ticker || s.fund_id.slice(0, 6),
       value: Math.max(0, s.userComposite),
-      color: DONUT_COLORS[i % DONUT_COLORS.length],
+      color: DONUT_COLORS[i % DONUT_COLORS.length] ?? '#71717a',
     }));
   }, [rankedScores]);
 
