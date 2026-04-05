@@ -40,8 +40,10 @@ export type RiskLevel = typeof RISK_LEVELS[keyof typeof RISK_LEVELS];
 export const CLAUDE = {
   /** Model for sector classification of holdings */
   CLASSIFICATION_MODEL: 'claude-haiku-4-5-20251001',
-  /** Model for macro thesis generation and Investment Brief writing */
+  /** Model for macro thesis generation */
   THESIS_MODEL: 'claude-sonnet-4-5-20241022',
+  /** Model for Investment Brief writing — Opus for natural voice and stronger reasoning */
+  BRIEF_MODEL: 'claude-opus-4-20250514',
   /** Minimum delay between sequential Claude API calls (milliseconds) */
   CALL_DELAY_MS: 1200,
   /** All Claude calls route through this proxy endpoint */
