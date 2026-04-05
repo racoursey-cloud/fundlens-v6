@@ -266,7 +266,13 @@ async function fetchFilingXml(
 ): Promise<string | null> {
   // Remove dashes from accession number for the URL path
   const accessionPath = accessionNumber.replace(/-/g, '');
-  const url = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionPath}/${primaryDoc}`;
+
+  // The SEC submissions API sometimes returns primaryDocument as an XSL-transformed
+  // HTML path (e.g. "xslFormNPORT-P_X01/primary_doc.xml") instead of the raw XML.
+  // Strip any leading directory prefix to get just the filename (e.g. "primary_doc.xml"),
+  // which lives at the filing root and contains the actual parseable NPORT-P XML.
+  const xmlFilename = primaryDoc.includes('/') ? primaryDoc.split('/').pop()! : primaryDoc;
+  const url = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionPath}/${xmlFilename}`;
 
   const response = await fetch(url, {
     headers: { 'User-Agent': EDGAR.USER_AGENT },
