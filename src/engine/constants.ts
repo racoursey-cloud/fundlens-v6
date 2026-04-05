@@ -90,12 +90,6 @@ export const FMP = {
   },
 } as const;
 
-/** OpenFIGI — CUSIP-to-ticker resolution (free) */
-export const OPENFIGI = {
-  BASE_URL: 'https://api.openfigi.com/v3/mapping',
-  /** Max items per batch request */
-  BATCH_SIZE: 100,
-} as const;
 
 /** FRED — macroeconomic indicators (free) */
 export const FRED = {
@@ -192,6 +186,6 @@ export const ENV_KEYS = [
   'FMP_API_KEY',
   'TINNGO_KEY',        // Intentional typo — NEVER correct or mention it
   'FRED_API_KEY',
-  'OPENFIGI_API_KEY',
+
   'RESEND_API_KEY',
 ] as const;

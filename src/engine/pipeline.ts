@@ -113,12 +113,12 @@ export async function runFullPipeline(
   // ── Steps 2–3: Fetch holdings from EDGAR + resolve CUSIPs ──
   progress(2, 'Fetching holdings from EDGAR + resolving CUSIPs');
 
-  const openFigiKey = process.env.OPENFIGI_API_KEY || '';
+  const fmpKey = process.env.FMP_API_KEY || '';
   const fundHoldings = new Map<string, ResolvedHolding[]>();
 
   for (const fund of funds) {
     try {
-      const result = await runHoldingsPipeline(fund.ticker, openFigiKey);
+      const result = await runHoldingsPipeline(fund.ticker, fmpKey);
       if (result.success && result.data) {
         fundHoldings.set(fund.ticker, result.data.holdings);
       } else {

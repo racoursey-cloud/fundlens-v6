@@ -79,34 +79,15 @@ export interface MutualFundTickerEntry {
   symbol: string;
 }
 
-// ─── OpenFIGI Types ─────────────────────────────────────────────────────────
+// ─── CUSIP Resolution Types ─────────────────────────────────────────────────
 
-/** Single job in an OpenFIGI batch request */
-export interface FigiMappingJob {
-  idType: 'ID_CUSIP';
-  idValue: string;
-}
-
-/** Single result from OpenFIGI mapping response */
-export interface FigiResult {
-  figi: string;
-  ticker: string;
-  name: string;
-  securityType: string;
-  securityType2?: string;
-  exchCode: string;
-  compositeFigi?: string;
-  shareClassFigi?: string;
-  marketSector: string;
-}
-
-/** Resolved CUSIP→ticker mapping */
+/** Resolved CUSIP→ticker mapping (resolved via FMP CUSIP API) */
 export interface CusipResolution {
   cusip: string;
   ticker: string | null;
   name: string | null;
   securityType: string | null;
-  /** True if OpenFIGI returned a match */
+  /** True if FMP returned a match */
   resolved: boolean;
   /** Warning message if resolution failed */
   warning: string | null;

@@ -1,29 +1,26 @@
 /**
- * FundLens v6 — OpenFIGI CUSIP-to-Ticker Resolver
+ * FundLens v6 — FMP CUSIP-to-Ticker Resolver
  *
  * Takes CUSIPs from EDGAR holdings and resolves them to stock tickers
- * via the OpenFIGI API. Tickers are what FMP needs to fetch company
+ * via the FMP CUSIP API. Tickers are what FMP needs to fetch company
  * fundamentals (income statements, balance sheets, ratios, etc.).
  *
- * OpenFIGI v3 API:
- * - POST https://api.openfigi.com/v3/mapping
- * - Max 100 jobs per request (with API key)
- * - Auth via X-OPENFIGI-APIKEY header
- * - Response array is index-matched to request array
- * - Failed lookups return { warning: "No identifier found" }
+ * FMP CUSIP API:
+ * - GET https://financialmodelingprep.com/api/v3/cusip/{CUSIP}?apikey=KEY
+ * - Returns array with { symbol, name, price, ... } or empty array
+ * - One CUSIP per request — we batch sequentially with delays
  *
  * This module also maintains a persistent cache in Supabase (cusip_cache
- * table) so we only call OpenFIGI once per CUSIP across all pipeline runs.
+ * table) so we only call FMP once per CUSIP across all pipeline runs.
  *
- * Session 2 deliverable. References: Master Reference §5 (OpenFIGI),
- * §8 step 3.
+ * Session 2 deliverable (updated Session 8 to use FMP instead of OpenFIGI).
+ * References: Master Reference §5, §8 step 3.
+ * Destination: src/engine/cusip.ts
  */
 
-import { OPENFIGI, PIPELINE } from './constants.js';
+import { FMP, PIPELINE } from './constants.js';
 import {
   CusipResolution,
-  FigiMappingJob,
-  FigiResult,
   PipelineStepResult,
   delay,
 } from './types.js';
@@ -31,13 +28,13 @@ import {
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Resolve an array of CUSIPs to tickers via OpenFIGI.
+ * Resolve an array of CUSIPs to tickers via FMP.
  *
  * Checks the Supabase cache first (if a cache lookup function is provided),
- * then batches uncached CUSIPs to OpenFIGI in groups of 100.
+ * then resolves uncached CUSIPs one at a time through FMP's CUSIP endpoint.
  *
  * @param cusips - Array of 9-character CUSIP strings
- * @param apiKey - OpenFIGI API key (from OPENFIGI_API_KEY env var)
+ * @param apiKey - FMP API key (from FMP_API_KEY env var)
  * @param cacheLookup - Optional function to check Supabase cache
  * @param cacheSave - Optional function to persist new resolutions to Supabase
  */
@@ -75,31 +72,27 @@ export async function resolveCusips(
       `[cusip] ${uniqueCusips.length} unique CUSIPs: ${cached.size} cached, ${uncached.length} to resolve`
     );
 
-    // Resolve uncached CUSIPs via OpenFIGI in batches
+    // Resolve uncached CUSIPs via FMP one at a time (sequential with delays)
     const newResolutions: CusipResolution[] = [];
 
-    if (uncached.length > 0) {
-      const batches = chunkArray(uncached, OPENFIGI.BATCH_SIZE);
-
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
-        console.log(
-          `[cusip] Resolving batch ${i + 1}/${batches.length} (${batch.length} CUSIPs)`
-        );
-
-        const batchResults = await callOpenFigi(batch, apiKey);
-        newResolutions.push(...batchResults);
-
-        // Delay between batches to respect rate limits
-        if (i < batches.length - 1) {
-          await delay(PIPELINE.API_CALL_DELAY_MS);
-        }
+    for (let i = 0; i < uncached.length; i++) {
+      const cusip = uncached[i];
+      if (i > 0 && i % 25 === 0) {
+        console.log(`[cusip] Resolving ${i}/${uncached.length} CUSIPs...`);
       }
 
-      // Persist new resolutions to cache
-      if (cacheSave && newResolutions.length > 0) {
-        await cacheSave(newResolutions);
+      const resolution = await callFmpCusip(cusip, apiKey);
+      newResolutions.push(resolution);
+
+      // Delay between calls to respect FMP rate limits
+      if (i < uncached.length - 1) {
+        await delay(PIPELINE.API_CALL_DELAY_MS);
       }
+    }
+
+    // Persist new resolutions to cache
+    if (cacheSave && newResolutions.length > 0) {
+      await cacheSave(newResolutions);
     }
 
     // Merge cached + new into final result map
@@ -132,141 +125,108 @@ export async function resolveCusips(
   }
 }
 
-// ─── OpenFIGI API Call ──────────────────────────────────────────────────────
+// ─── FMP CUSIP API Call ───────────────────────────────────────────────────
 
 /**
- * Call the OpenFIGI v3 mapping API for a batch of CUSIPs (max 100).
+ * Call the FMP CUSIP endpoint for a single CUSIP.
  *
- * Request: POST array of { idType: "ID_CUSIP", idValue: "..." }
- * Response: array of { data: [...] } or { warning: "No identifier found" }
- * Response array is index-matched to request array.
+ * GET /api/v3/cusip/{CUSIP}?apikey=KEY
+ * Returns: [{ symbol, name, price, changesPercentage, change,
+ *            dayLow, dayHigh, yearHigh, yearLow, ... }]
+ * Empty array if no match.
  */
-async function callOpenFigi(
-  cusips: string[],
+async function callFmpCusip(
+  cusip: string,
   apiKey: string
-): Promise<CusipResolution[]> {
-  const jobs: FigiMappingJob[] = cusips.map(cusip => ({
-    idType: 'ID_CUSIP',
-    idValue: cusip,
-  }));
+): Promise<CusipResolution> {
+  try {
+    const url = `${FMP.BASE_URL}/cusip/${encodeURIComponent(cusip)}?apikey=${apiKey}`;
 
-  const response = await fetch(OPENFIGI.BASE_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-OPENFIGI-APIKEY': apiKey,
-    },
-    body: JSON.stringify(jobs),
-  });
+    const response = await fetch(url);
 
-  if (!response.ok) {
-    // Handle rate limiting specifically
-    if (response.status === 429) {
-      console.warn('[cusip] OpenFIGI rate limit hit, waiting 10s before retry...');
-      await delay(10_000);
-      // Retry once
-      const retryResponse = await fetch(OPENFIGI.BASE_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-OPENFIGI-APIKEY': apiKey,
-        },
-        body: JSON.stringify(jobs),
-      });
-      if (!retryResponse.ok) {
-        throw new Error(`OpenFIGI API returned HTTP ${retryResponse.status} on retry`);
+    if (!response.ok) {
+      // Handle rate limiting
+      if (response.status === 429) {
+        console.warn('[cusip] FMP rate limit hit, waiting 10s before retry...');
+        await delay(10_000);
+        const retryResponse = await fetch(url);
+        if (!retryResponse.ok) {
+          return {
+            cusip,
+            ticker: null,
+            name: null,
+            securityType: null,
+            resolved: false,
+            warning: `FMP returned HTTP ${retryResponse.status} on retry`,
+          };
+        }
+        return parseFmpResponse(cusip, await retryResponse.json());
       }
-      return parseOpenFigiResponse(cusips, await retryResponse.json());
+      return {
+        cusip,
+        ticker: null,
+        name: null,
+        securityType: null,
+        resolved: false,
+        warning: `FMP returned HTTP ${response.status}`,
+      };
     }
-    throw new Error(`OpenFIGI API returned HTTP ${response.status}`);
-  }
 
-  const responseData = await response.json();
-  return parseOpenFigiResponse(cusips, responseData);
+    const data = await response.json();
+    return parseFmpResponse(cusip, data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      cusip,
+      ticker: null,
+      name: null,
+      securityType: null,
+      resolved: false,
+      warning: `FMP call failed: ${message}`,
+    };
+  }
 }
 
 /**
- * Parse the OpenFIGI response array. Each element at index i corresponds
- * to the CUSIP at index i in the request.
- *
- * Successful: { data: [{ figi, ticker, name, securityType, ... }] }
- * Failed:     { warning: "No identifier found" }
+ * Parse the FMP CUSIP response.
+ * FMP returns an array — empty means no match, otherwise first entry has the symbol.
  */
-function parseOpenFigiResponse(
-  cusips: string[],
-  responseData: Record<string, unknown>[]
-): CusipResolution[] {
-  const resolutions: CusipResolution[] = [];
-
-  for (let i = 0; i < cusips.length; i++) {
-    const cusip = cusips[i];
-    const entry = responseData[i] as Record<string, unknown> | undefined;
-
-    if (!entry) {
-      resolutions.push({
-        cusip,
-        ticker: null,
-        name: null,
-        securityType: null,
-        resolved: false,
-        warning: 'No response entry from OpenFIGI',
-      });
-      continue;
-    }
-
-    // Check for warning (v3 uses "warning", not "error")
-    if (entry.warning) {
-      resolutions.push({
-        cusip,
-        ticker: null,
-        name: null,
-        securityType: null,
-        resolved: false,
-        warning: entry.warning as string,
-      });
-      continue;
-    }
-
-    // Extract the best match from data array
-    const data = entry.data as FigiResult[] | undefined;
-    if (!data || data.length === 0) {
-      resolutions.push({
-        cusip,
-        ticker: null,
-        name: null,
-        securityType: null,
-        resolved: false,
-        warning: 'Empty data array from OpenFIGI',
-      });
-      continue;
-    }
-
-    // Prefer US-listed equities; fall back to first result
-    const bestMatch =
-      data.find(d => d.exchCode === 'US' && d.marketSector === 'Equity') ||
-      data.find(d => d.exchCode === 'US') ||
-      data[0];
-
-    resolutions.push({
+function parseFmpResponse(
+  cusip: string,
+  data: Record<string, unknown>[]
+): CusipResolution {
+  if (!Array.isArray(data) || data.length === 0) {
+    return {
       cusip,
-      ticker: bestMatch.ticker || null,
-      name: bestMatch.name || null,
-      securityType: bestMatch.securityType || null,
-      resolved: true,
-      warning: null,
-    });
+      ticker: null,
+      name: null,
+      securityType: null,
+      resolved: false,
+      warning: 'No match found in FMP',
+    };
   }
 
-  return resolutions;
-}
+  const entry = data[0];
+  const symbol = entry.symbol as string | undefined;
+  const name = entry.name as string | undefined;
 
-// ─── Utility ────────────────────────────────────────────────────────────────
-
-/** Split an array into chunks of a given size. */
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
+  if (!symbol) {
+    return {
+      cusip,
+      ticker: null,
+      name: name || null,
+      securityType: null,
+      resolved: false,
+      warning: 'FMP returned entry without symbol',
+    };
   }
-  return chunks;
+
+  return {
+    cusip,
+    ticker: symbol,
+    name: name || null,
+    securityType: null,
+    resolved: true,
+    warning: null,
+  };
 }

@@ -1,7 +1,7 @@
 /**
  * FundLens v6 — Holdings Pipeline Orchestrator
  *
- * Ties together EDGAR (fetch holdings) + OpenFIGI (resolve CUSIPs) and
+ * Ties together EDGAR (fetch holdings) + FMP CUSIP resolution and
  * applies the dynamic coverage cutoff and fund-of-funds look-through.
  *
  * Coverage cutoff (from Master Reference §4):
@@ -53,17 +53,17 @@ const MIN_SUBFUND_WEIGHT = 0.01;
  * 1. Fetch all holdings from EDGAR NPORT-P filing
  * 2. Detect fund-of-funds and recursively look through sub-funds
  * 3. Apply the 65%/50-holding coverage cutoff
- * 4. Resolve CUSIPs to tickers via OpenFIGI
+ * 4. Resolve CUSIPs to tickers via FMP
  * 5. Return the ready-to-score holdings array
  *
  * @param fundTicker - Mutual fund ticker (e.g. "VFIAX")
- * @param openFigiApiKey - API key for OpenFIGI
+ * @param fmpApiKey - API key for FMP CUSIP resolution
  * @param cacheLookup - Optional Supabase cache lookup for CUSIPs
  * @param cacheSave - Optional Supabase cache save for new CUSIP resolutions
  */
 export async function runHoldingsPipeline(
   fundTicker: string,
-  openFigiApiKey: string,
+  fmpApiKey: string,
   cacheLookup?: (cusips: string[]) => Promise<Map<string, CusipResolution>>,
   cacheSave?: (resolutions: CusipResolution[]) => Promise<void>
 ): Promise<PipelineStepResult<HoldingsPipelineResult>> {
@@ -109,11 +109,11 @@ export async function runHoldingsPipeline(
 
     // ── Step 4: Resolve CUSIPs to tickers ──
     const cusips = included.map(h => h.cusip).filter(Boolean);
-    console.log(`[holdings] Resolving ${cusips.length} CUSIPs via OpenFIGI...`);
+    console.log(`[holdings] Resolving ${cusips.length} CUSIPs via FMP...`);
 
     const cusipResult = await resolveCusips(
       cusips,
-      openFigiApiKey,
+      fmpApiKey,
       cacheLookup,
       cacheSave
     );
