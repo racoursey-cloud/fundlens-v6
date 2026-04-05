@@ -47,6 +47,7 @@ export async function fetchEdgarHoldings(
     // Step 1: Resolve ticker to CIK and series ID
     const tickerEntry = await lookupTickerCik(ticker);
     if (!tickerEntry) {
+      console.error(`[edgar] ${ticker}: not found in SEC mutual fund ticker list`);
       return {
         success: false,
         data: null,
@@ -54,12 +55,14 @@ export async function fetchEdgarHoldings(
         durationMs: Date.now() - start,
       };
     }
+    console.log(`[edgar] ${ticker}: CIK ${tickerEntry.cik}, series ${tickerEntry.seriesId}`);
 
     await delay(PIPELINE.API_CALL_DELAY_MS);
 
     // Step 2: Find the latest NPORT-P filing for this fund
     const filing = await findLatestNportFiling(tickerEntry.cik.toString());
     if (!filing) {
+      console.error(`[edgar] ${ticker}: no NPORT-P filing found for CIK ${tickerEntry.cik}`);
       return {
         success: false,
         data: null,
@@ -67,6 +70,7 @@ export async function fetchEdgarHoldings(
         durationMs: Date.now() - start,
       };
     }
+    console.log(`[edgar] ${ticker}: found ${filing.form} filed ${filing.filingDate}, primaryDoc=${filing.primaryDoc}`);
 
     await delay(PIPELINE.API_CALL_DELAY_MS);
 
@@ -77,6 +81,7 @@ export async function fetchEdgarHoldings(
       filing.primaryDoc
     );
     if (!xml) {
+      console.error(`[edgar] ${ticker}: failed to fetch XML (accession: ${filing.accessionNumber})`);
       return {
         success: false,
         data: null,
@@ -84,6 +89,7 @@ export async function fetchEdgarHoldings(
         durationMs: Date.now() - start,
       };
     }
+    console.log(`[edgar] ${ticker}: XML fetched, ${xml.length} chars`);
 
     // Step 4: Parse XML into structured data
     const result = await parseNportXml(xml, tickerEntry, filing);
@@ -96,6 +102,7 @@ export async function fetchEdgarHoldings(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    console.error(`[edgar] ${ticker}: CAUGHT ERROR — ${message}`);
     return {
       success: false,
       data: null,
@@ -118,9 +125,11 @@ async function loadTickerLookup(): Promise<Map<string, MutualFundTickerEntry>> {
   if (tickerLookupCache) return tickerLookupCache;
 
   const url = 'https://www.sec.gov/files/company_tickers_mf.json';
+  console.log(`[edgar] Fetching SEC ticker lookup from ${url}`);
   const response = await fetch(url, {
     headers: { 'User-Agent': EDGAR.USER_AGENT },
   });
+  console.log(`[edgar] SEC ticker lookup response: HTTP ${response.status}`);
 
   if (!response.ok) {
     throw new Error(`Failed to fetch mutual fund tickers: HTTP ${response.status}`);
