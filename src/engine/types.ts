@@ -355,6 +355,12 @@ export interface ThesisCacheRow {
   generated_at: string;
 }
 
+// ─── Monitoring Types (Session 7) ──────────────────────────────────────────
+// Note: SystemHealthReport, DataQualityReport, CronStatus, and
+// PipelineHistoryEntry are defined in their source modules (monitor.ts,
+// cron.ts) because they are only used by routes.ts via dynamic imports.
+// This avoids circular dependencies and keeps types co-located with logic.
+
 // ─── Utility Types ──────────────────────────────────────────────────────────
 
 /** Standard result wrapper for pipeline operations */
