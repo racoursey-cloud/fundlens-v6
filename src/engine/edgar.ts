@@ -126,20 +126,23 @@ async function loadTickerLookup(): Promise<Map<string, MutualFundTickerEntry>> {
     throw new Error(`Failed to fetch mutual fund tickers: HTTP ${response.status}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as {
+    fields: string[];
+    data: Array<[number, string, string, string]>;
+  };
 
-  // The file is structured as { "0": {...}, "1": {...}, ... }
-  // Each entry has: cik, seriesId, classId, symbol
+  // SEC file is columnar: fields = ["cik","seriesId","classId","symbol"]
+  // data = [[cik, seriesId, classId, symbol], ...]
   const map = new Map<string, MutualFundTickerEntry>();
 
-  for (const key of Object.keys(data)) {
-    const entry = data[key];
-    if (entry.symbol) {
-      map.set(entry.symbol.toUpperCase(), {
-        cik: entry.cik,
-        seriesId: entry.seriesId || '',
-        classId: entry.classId || '',
-        symbol: entry.symbol.toUpperCase(),
+  for (const row of data.data) {
+    const symbol = row[3];
+    if (symbol) {
+      map.set(symbol.toUpperCase(), {
+        cik: row[0],
+        seriesId: row[1] || '',
+        classId: row[2] || '',
+        symbol: symbol.toUpperCase(),
       });
     }
   }
