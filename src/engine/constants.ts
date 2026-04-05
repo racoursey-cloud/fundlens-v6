@@ -18,8 +18,10 @@ export const DEFAULT_FACTOR_WEIGHTS = {
 // ─── Holdings Coverage Thresholds ────────────────────────────────────────────
 // Walk down holdings by weight (largest first). Stop when either threshold hit.
 export const HOLDINGS_COVERAGE = {
-  /** Stop when cumulative weight reaches this percentage */
-  TARGET_WEIGHT_PCT: 0.65,
+  /** Stop when cumulative weight reaches this percentage.
+   *  NPORT-P pctVal is reported as whole percentages (e.g. 4.89 = 4.89%),
+   *  so this threshold must also be in whole-percentage units. */
+  TARGET_WEIGHT_PCT: 65,
   /** Hard cap on number of holdings to analyze per fund */
   MAX_HOLDINGS: 50,
 } as const;

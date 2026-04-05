@@ -219,7 +219,7 @@ interface FilingIndexEntry {
  */
 async function findNportFilingCandidates(
   cik: string,
-  maxCandidates: number = 10
+  maxCandidates: number = 30
 ): Promise<FilingIndexEntry[]> {
   // Pad CIK to 10 digits with leading zeros (SEC requires this format)
   const paddedCik = cik.padStart(10, '0');

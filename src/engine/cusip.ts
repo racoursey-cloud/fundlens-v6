@@ -146,6 +146,7 @@ async function callFmpCusip(
     const url = `https://financialmodelingprep.com/api/v3/cusip/${encodeURIComponent(cusip)}?apikey=${apiKey}`;
 
     const response = await fetch(url);
+    console.log(`[cusip] FMP ${cusip}: HTTP ${response.status}`);
 
     if (!response.ok) {
       // Handle rate limiting
@@ -176,6 +177,8 @@ async function callFmpCusip(
     }
 
     const data = await response.json();
+    const preview = JSON.stringify(data).substring(0, 200);
+    console.log(`[cusip] FMP ${cusip}: response preview: ${preview}`);
     return parseFmpResponse(cusip, data);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
