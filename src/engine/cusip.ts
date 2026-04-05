@@ -140,7 +140,10 @@ async function callFmpCusip(
   apiKey: string
 ): Promise<CusipResolution> {
   try {
-    const url = `${FMP.BASE_URL}/cusip/${encodeURIComponent(cusip)}?apikey=${apiKey}`;
+    // FMP's CUSIP endpoint was NOT migrated to /stable/ with the other endpoints.
+    // It still lives at /api/v3/cusip/. Using /stable/cusip/ returns empty results.
+    // See: https://site.financialmodelingprep.com/developer/docs/stable/search-cusip
+    const url = `https://financialmodelingprep.com/api/v3/cusip/${encodeURIComponent(cusip)}?apikey=${apiKey}`;
 
     const response = await fetch(url);
 
