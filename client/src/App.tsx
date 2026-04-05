@@ -12,10 +12,13 @@
  *   /auth/callback    — Supabase redirect handler
  *   /setup            — protected, setup wizard
  *   /                 — protected, Portfolio (default)
- *   /briefs           — protected, Investment Brief (Session 10)
- *   /pipeline         — protected, Pipeline status (Session 10)
+ *   /briefs           — protected, Investment Brief
+ *   /pipeline         — protected, Pipeline status
  *
- * Session 8 deliverable. Destination: client/src/App.tsx
+ * Updated in Session 10: replaced BriefsPlaceholder and PipelinePlaceholder
+ * with full implementations.
+ *
+ * Destination: client/src/App.tsx
  */
 
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
@@ -26,8 +29,8 @@ import { Login } from './pages/Login';
 import { SetupWizard } from './pages/SetupWizard';
 import { AuthCallback } from './pages/AuthCallback';
 import { Portfolio } from './pages/Portfolio';
-import { BriefsPlaceholder } from './pages/BriefsPlaceholder';
-import { PipelinePlaceholder } from './pages/PipelinePlaceholder';
+import { Briefs } from './pages/Briefs';
+import { Pipeline } from './pages/Pipeline';
 
 export function App() {
   return (
@@ -52,8 +55,8 @@ export function App() {
             </ProtectedRoute>
           }>
             <Route index element={<Portfolio />} />
-            <Route path="/briefs" element={<BriefsPlaceholder />} />
-            <Route path="/pipeline" element={<PipelinePlaceholder />} />
+            <Route path="/briefs" element={<Briefs />} />
+            <Route path="/pipeline" element={<Pipeline />} />
           </Route>
 
           {/* Catch-all → redirect to home */}
