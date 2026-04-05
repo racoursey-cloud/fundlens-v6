@@ -21,7 +21,6 @@ import { theme } from '../theme';
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 type Step = 1 | 2 | 3;
-type Risk = 'conservative' | 'moderate' | 'aggressive';
 
 interface Weights {
   costEfficiency: number;
@@ -37,6 +36,31 @@ const DEFAULT_WEIGHTS: Weights = {
   momentum: 0.20,
 };
 
+/** Labels for the 1–9 risk tolerance scale */
+const RISK_LABELS: Record<number, string> = {
+  1: 'Very Conservative',
+  2: 'Conservative',
+  3: 'Moderately Conservative',
+  4: 'Moderate-Low',
+  5: 'Moderate',
+  6: 'Moderate-High',
+  7: 'Moderately Aggressive',
+  8: 'Aggressive',
+  9: 'Very Aggressive',
+};
+
+const RISK_DESCRIPTIONS: Record<number, string> = {
+  1: 'Maximum diversification. Include nearly all funds to spread risk as widely as possible.',
+  2: 'Broad diversification. Include most above-average funds.',
+  3: 'Lean toward safety. Include funds with solid scores, favoring breadth over concentration.',
+  4: 'Slightly conservative. Balanced with a tilt toward more fund inclusion.',
+  5: 'Balanced approach. Include funds that clearly stand out without over-concentrating.',
+  6: 'Slightly aggressive. Balanced with a tilt toward higher-conviction picks.',
+  7: 'Lean toward concentration. Favor higher-scoring funds, accept narrower exposure.',
+  8: 'Concentrated. Only clearly above-average funds make the cut.',
+  9: 'Maximum conviction. Only statistical outliers. Highly concentrated in top scorers.',
+};
+
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export function SetupWizard() {
@@ -44,7 +68,7 @@ export function SetupWizard() {
   const [step, setStep] = useState<Step>(1);
   const [funds, setFunds] = useState<Fund[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [risk, setRisk] = useState<Risk>('moderate');
+  const [risk, setRisk] = useState<number>(5);
   const [weights, setWeights] = useState<Weights>({ ...DEFAULT_WEIGHTS });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -272,50 +296,88 @@ export function SetupWizard() {
             Higher risk means fewer, higher-conviction picks.
           </p>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '24px' }}>
-            {([
-              {
-                value: 'conservative' as Risk,
-                label: 'Conservative',
-                desc: 'Include all above-average funds. Broader diversification across more funds.',
-              },
-              {
-                value: 'moderate' as Risk,
-                label: 'Moderate',
-                desc: 'Include funds that clearly stand out. Balanced concentration.',
-              },
-              {
-                value: 'aggressive' as Risk,
-                label: 'Aggressive',
-                desc: 'Only statistical outliers. Concentrated in the highest-scoring funds.',
-              },
-            ]).map(opt => {
-              const selected = risk === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => setRisk(opt.value)}
-                  style={{
-                    padding: '16px 20px',
-                    background: selected ? `${theme.colors.accentBlue}12` : theme.colors.surface,
-                    border: `2px solid ${selected ? theme.colors.accentBlue : theme.colors.border}`,
-                    borderRadius: theme.radii.lg,
-                    color: theme.colors.text,
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    fontFamily: theme.fonts.body,
-                    transition: 'border-color 0.15s',
-                  }}
-                >
-                  <div style={{ fontWeight: 600, fontSize: '15px', marginBottom: '4px' }}>
-                    {opt.label}
-                  </div>
-                  <div style={{ fontSize: '13px', color: theme.colors.textMuted, lineHeight: 1.4 }}>
-                    {opt.desc}
-                  </div>
-                </button>
-              );
-            })}
+          <div style={{ marginTop: '32px' }}>
+            {/* Current value display */}
+            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+              <div style={{
+                fontSize: '48px',
+                fontWeight: 700,
+                color: theme.colors.accentBlue,
+                fontFamily: theme.fonts.mono,
+                lineHeight: 1,
+              }}>
+                {risk}
+              </div>
+              <div style={{
+                fontSize: '16px',
+                fontWeight: 600,
+                color: theme.colors.text,
+                marginTop: '8px',
+              }}>
+                {RISK_LABELS[risk]}
+              </div>
+              <div style={{
+                fontSize: '13px',
+                color: theme.colors.textMuted,
+                marginTop: '6px',
+                lineHeight: 1.5,
+                maxWidth: '380px',
+                marginLeft: 'auto',
+                marginRight: 'auto',
+              }}>
+                {RISK_DESCRIPTIONS[risk]}
+              </div>
+            </div>
+
+            {/* Slider */}
+            <div style={{ padding: '0 8px' }}>
+              <input
+                type="range"
+                min={1}
+                max={9}
+                step={1}
+                value={risk}
+                onChange={(e) => setRisk(Number(e.target.value))}
+                style={{
+                  width: '100%',
+                  height: '6px',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                  background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${(risk - 1) / 8 * 100}%, ${theme.colors.border} ${(risk - 1) / 8 * 100}%, ${theme.colors.border} 100%)`,
+                  borderRadius: '3px',
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+              />
+              {/* Scale labels */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginTop: '8px',
+                fontSize: '11px',
+                color: theme.colors.textDim,
+                fontFamily: theme.fonts.mono,
+              }}>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
+                  <span key={n} style={{
+                    color: n === risk ? theme.colors.accentBlue : theme.colors.textDim,
+                    fontWeight: n === risk ? 700 : 400,
+                  }}>
+                    {n}
+                  </span>
+                ))}
+              </div>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginTop: '4px',
+                fontSize: '11px',
+                color: theme.colors.textDim,
+              }}>
+                <span>Conservative</span>
+                <span>Aggressive</span>
+              </div>
+            </div>
           </div>
         </div>
       )}

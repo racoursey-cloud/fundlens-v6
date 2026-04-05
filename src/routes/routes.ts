@@ -299,15 +299,16 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
     }
   }
 
-  // Validate risk tolerance if being updated
+  // Validate risk tolerance if being updated (integer 1–9)
   if (allowed.risk_tolerance !== undefined) {
-    const valid = ['conservative', 'moderate', 'aggressive'];
-    if (!valid.includes(allowed.risk_tolerance as string)) {
+    const rt = Number(allowed.risk_tolerance);
+    if (!Number.isInteger(rt) || rt < 1 || rt > 9) {
       res.status(400).json({
-        error: `Invalid risk_tolerance. Must be one of: ${valid.join(', ')}`,
+        error: 'Invalid risk_tolerance. Must be an integer from 1 to 9.',
       });
       return;
     }
+    allowed.risk_tolerance = rt;
   }
 
   const { data, error } = await supaUpdate<UserProfileRow>(
@@ -341,9 +342,9 @@ router.post('/api/profile/setup', requireAuth, async (req: Request, res: Respons
     return;
   }
 
-  const valid = ['conservative', 'moderate', 'aggressive'];
-  if (!valid.includes(riskTolerance)) {
-    res.status(400).json({ error: `Invalid riskTolerance. Must be: ${valid.join(', ')}` });
+  const rt = Number(riskTolerance);
+  if (!Number.isInteger(rt) || rt < 1 || rt > 9) {
+    res.status(400).json({ error: 'Invalid riskTolerance. Must be an integer from 1 to 9.' });
     return;
   }
 
@@ -362,7 +363,7 @@ router.post('/api/profile/setup', requireAuth, async (req: Request, res: Respons
       weight_quality: weights.holdingsQuality ?? DEFAULT_FACTOR_WEIGHTS.holdingsQuality,
       weight_positioning: weights.positioning ?? DEFAULT_FACTOR_WEIGHTS.positioning,
       weight_momentum: weights.momentum ?? DEFAULT_FACTOR_WEIGHTS.momentum,
-      risk_tolerance: riskTolerance,
+      risk_tolerance: rt,
       selected_fund_ids: selectedFundIds,
       setup_completed: true,
     },

@@ -36,6 +36,17 @@ import type { FundCompositeScore, FactorWeights } from './scoring.js';
 import type { MacroThesis, SectorPreference } from './thesis.js';
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+/** Human-readable label for risk tolerance 1-9 */
+function riskLabel(rt: number): string {
+  return rt <= 2 ? 'Conservative' :
+    rt <= 4 ? 'Moderately conservative' :
+    rt <= 6 ? 'Moderate' :
+    rt <= 8 ? 'Moderately aggressive' :
+             'Aggressive';
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Relevance tag attached to a fund in the data packet */
@@ -88,7 +99,7 @@ interface FundBriefData {
 export interface BriefDataPacket {
   /** User profile summary */
   user: {
-    riskTolerance: string;
+    riskTolerance: string; // e.g. "Moderate (5/9)"
     factorWeights: {
       costEfficiency: number;
       holdingsQuality: number;
@@ -146,7 +157,7 @@ function computeRelevanceTags(
     factorDetails: Record<string, unknown>;
   },
   userProfile: {
-    riskTolerance: string;
+    riskTolerance: number;
     weights: FactorWeights;
   },
   thesis: MacroThesis
@@ -238,8 +249,8 @@ function computeRelevanceTags(
   }
 
   // ── Risk-tolerance-specific tags ──
-  if (riskTolerance === 'conservative') {
-    // Conservative users care about stability and cost
+  if (riskTolerance <= 3) {
+    // Conservative users (1-3) care about stability and cost
     const hasFixedIncome = fund.sectorExposure.find(
       s => s.sector.toLowerCase() === 'fixed income' && s.weight >= 0.20
     );
@@ -252,8 +263,8 @@ function computeRelevanceTags(
     }
   }
 
-  if (riskTolerance === 'aggressive') {
-    // Aggressive users care about growth and momentum
+  if (riskTolerance >= 7) {
+    // Aggressive users (7-9) care about growth and momentum
     const hasTech = fund.sectorExposure.find(
       s => s.sector.toLowerCase() === 'technology' && s.weight >= 0.20
     );
@@ -306,7 +317,7 @@ function computeRelevanceTags(
  */
 function computeAllocation(
   rankedFunds: Array<{ ticker: string; name: string; composite: number; rank: number }>,
-  riskTolerance: string
+  riskTolerance: number
 ): Array<{ ticker: string; name: string; percentage: number; reason: string }> {
 
   if (rankedFunds.length === 0) return [];
@@ -339,11 +350,11 @@ function computeAllocation(
   // ── Step 3: Apply risk tolerance threshold ──
   // The threshold determines which funds qualify for allocation.
   // Conservative casts a wider net; aggressive demands separation.
-  const threshold = {
-    conservative:  0.0,   // above average — bottom half is out
-    moderate:      0.5,   // clearly above average — separating from the pack
-    aggressive:    1.0,   // statistical outliers — genuinely breaking away
-  }[riskTolerance] ?? 0.5;
+  // Map 1-9 risk scale to z-score threshold:
+  //   1 (most conservative) → 0.0  (above average — wide net)
+  //   5 (moderate)           → 0.5  (clearly above average)
+  //   9 (most aggressive)    → 1.0  (statistical outliers only)
+  const threshold = (riskTolerance - 1) / 8;
 
   // ── Step 4: Filter to funds above the threshold ──
   const qualifying = zScored.filter(f => f.zScore > threshold);
@@ -411,13 +422,16 @@ function profileSummary(profile: UserProfileRow): string {
   if (profile.weight_positioning >= 0.30) emphasis.push('macro positioning');
   if (profile.weight_momentum >= 0.25) emphasis.push('recent performance trends');
 
-  const toleranceDesc = {
-    conservative: 'prefers stability and diversification',
-    moderate: 'balances growth with risk management',
-    aggressive: 'prioritizes growth and is comfortable with concentration',
-  }[profile.risk_tolerance] || 'balanced approach';
+  const toleranceDesc =
+    profile.risk_tolerance <= 2 ? 'prefers stability and broad diversification' :
+    profile.risk_tolerance <= 4 ? 'leans conservative, favoring diversification with some selectivity' :
+    profile.risk_tolerance <= 6 ? 'balances growth with risk management' :
+    profile.risk_tolerance <= 8 ? 'prioritizes growth and is comfortable with concentration' :
+             'seeks maximum conviction with highly concentrated positions';
 
-  return `${profile.risk_tolerance.charAt(0).toUpperCase() + profile.risk_tolerance.slice(1)} investor who ${toleranceDesc}` +
+  const toleranceLabel = riskLabel(profile.risk_tolerance);
+
+  return `${toleranceLabel} investor (${profile.risk_tolerance}/9) who ${toleranceDesc}` +
     (emphasis.length > 0 ? `. Emphasizes: ${emphasis.join(', ')}` : '');
 }
 
@@ -582,7 +596,7 @@ export async function assembleDataPacket(
 
   return {
     user: {
-      riskTolerance: profile.risk_tolerance,
+      riskTolerance: `${riskLabel(profile.risk_tolerance)} (${profile.risk_tolerance}/9)`,
       factorWeights: {
         costEfficiency: profile.weight_cost,
         holdingsQuality: profile.weight_quality,

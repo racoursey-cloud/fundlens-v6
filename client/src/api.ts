@@ -50,7 +50,7 @@ export interface UserProfile {
   weight_quality: number;
   weight_positioning: number;
   weight_momentum: number;
-  risk_tolerance: 'conservative' | 'moderate' | 'aggressive';
+  risk_tolerance: number;
   setup_completed: boolean;
   selected_fund_ids: string[];
   last_brief_sent_at: string | null;
@@ -153,7 +153,7 @@ export const updateProfile = (updates: Partial<UserProfile>) =>
 
 export const completeSetup = (data: {
   weights: { costEfficiency: number; holdingsQuality: number; positioning: number; momentum: number };
-  riskTolerance: string;
+  riskTolerance: number;
   selectedFundIds: string[];
 }) =>
   apiFetch<{ profile: UserProfile; message: string }>('/api/profile/setup', {

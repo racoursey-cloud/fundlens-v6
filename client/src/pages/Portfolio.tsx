@@ -143,35 +143,57 @@ function FactorSlider({ label, shortLabel, value, onChange }: FactorSliderProps)
 
 // ─── Risk Toggle ───────────────────────────────────────────────────────────
 
-function RiskToggle({ value, onChange }: {
-  value: string;
-  onChange: (val: 'conservative' | 'moderate' | 'aggressive') => void;
-}) {
-  const options: Array<{ key: 'conservative' | 'moderate' | 'aggressive'; label: string }> = [
-    { key: 'conservative', label: 'Conservative' },
-    { key: 'moderate', label: 'Moderate' },
-    { key: 'aggressive', label: 'Aggressive' },
-  ];
+const RISK_LABEL: Record<number, string> = {
+  1: 'Very Conservative', 2: 'Conservative', 3: 'Mod. Conservative',
+  4: 'Mod. Low', 5: 'Moderate', 6: 'Mod. High',
+  7: 'Mod. Aggressive', 8: 'Aggressive', 9: 'Very Aggressive',
+};
 
+function RiskSlider({ value, onChange }: {
+  value: number;
+  onChange: (val: number) => void;
+}) {
   return (
-    <div style={{
-      display: 'flex', borderRadius: theme.radii.md,
-      border: `1px solid ${theme.colors.border}`, overflow: 'hidden',
-    }}>
-      {options.map((opt) => (
-        <button
-          key={opt.key}
-          onClick={() => onChange(opt.key)}
-          style={{
-            flex: 1, padding: '8px 12px', border: 'none', cursor: 'pointer',
-            fontSize: '12px', fontWeight: 500, transition: 'all 0.15s',
-            background: value === opt.key ? theme.colors.accentBlue : 'transparent',
-            color: value === opt.key ? theme.colors.white : theme.colors.textMuted,
-          }}
-        >
-          {opt.label}
-        </button>
-      ))}
+    <div>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+        marginBottom: '6px',
+      }}>
+        <span style={{ fontSize: '13px', fontWeight: 500, color: theme.colors.text }}>
+          {RISK_LABEL[value] || 'Moderate'}
+        </span>
+        <span style={{
+          fontSize: '13px', fontFamily: theme.fonts.mono,
+          color: theme.colors.accentBlue, fontWeight: 600,
+        }}>
+          {value}/9
+        </span>
+      </div>
+      <input
+        type="range"
+        min={1}
+        max={9}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{
+          width: '100%',
+          height: '4px',
+          appearance: 'none',
+          WebkitAppearance: 'none',
+          background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${(value - 1) / 8 * 100}%, ${theme.colors.border} ${(value - 1) / 8 * 100}%, ${theme.colors.border} 100%)`,
+          borderRadius: '2px',
+          outline: 'none',
+          cursor: 'pointer',
+        }}
+      />
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', marginTop: '4px',
+        fontSize: '10px', color: theme.colors.textDim,
+      }}>
+        <span>Safe</span>
+        <span>Aggressive</span>
+      </div>
     </div>
   );
 }
@@ -205,7 +227,7 @@ export function Portfolio() {
   const [weights, setWeights] = useState({
     cost: 0.25, quality: 0.30, positioning: 0.25, momentum: 0.20,
   });
-  const [risk, setRisk] = useState<'conservative' | 'moderate' | 'aggressive'>('moderate');
+  const [risk, setRisk] = useState<number>(5);
 
   useEffect(() => {
     Promise.all([fetchScores(), fetchProfile()]).then(([scoresRes, profileRes]) => {
@@ -263,7 +285,7 @@ export function Portfolio() {
     });
   }, [weights, risk]);
 
-  const handleRiskChange = useCallback((val: 'conservative' | 'moderate' | 'aggressive') => {
+  const handleRiskChange = useCallback((val: number) => {
     setRisk(val);
     updateProfile({ risk_tolerance: val });
   }, []);
@@ -479,7 +501,7 @@ export function Portfolio() {
           <h3 style={{ fontSize: '13px', fontWeight: 600, color: theme.colors.text, margin: '0 0 12px' }}>
             Risk Tolerance
           </h3>
-          <RiskToggle value={risk} onChange={handleRiskChange} />
+          <RiskSlider value={risk} onChange={handleRiskChange} />
           <p style={{ fontSize: '11px', color: theme.colors.textDim, margin: '8px 0 0' }}>
             Affects allocation sizing, not scoring.
           </p>

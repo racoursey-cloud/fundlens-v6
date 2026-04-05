@@ -275,8 +275,8 @@ export interface UserProfileRow {
   weight_positioning: number;
   weight_momentum: number;
 
-  /** Risk tolerance: 'conservative' | 'moderate' | 'aggressive' */
-  risk_tolerance: 'conservative' | 'moderate' | 'aggressive';
+  /** Risk tolerance: integer 1 (most conservative) to 9 (most aggressive) */
+  risk_tolerance: number;
 
   /** Setup wizard tracking */
   setup_completed: boolean;
