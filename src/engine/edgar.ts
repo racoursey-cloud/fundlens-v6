@@ -363,23 +363,31 @@ function stripNamespace(name: string): string {
  */
 function resolveFormData(parsed: Record<string, unknown>): Record<string, unknown> | null {
   // Try: edgarSubmission > formData
-  const root = parsed['edgarSubmission'] as Record<string, unknown>[] | undefined;
-  if (root?.[0]) {
-    const fd = (root[0] as Record<string, unknown>)['formData'] as Record<string, unknown>[] | undefined;
-    if (fd?.[0]) return fd[0] as Record<string, unknown>;
+  // xml2js v0.6.2 returns the root element as a direct object (not array-wrapped),
+  // while child elements ARE wrapped in arrays when explicitArray: true.
+  // Handle both cases for safety.
+  const rawRoot = parsed['edgarSubmission'];
+  const root = Array.isArray(rawRoot) ? rawRoot[0] : rawRoot;
+  if (root && typeof root === 'object') {
+    const rawFd = (root as Record<string, unknown>)['formData'];
+    const fd = Array.isArray(rawFd) ? rawFd[0] : rawFd;
+    if (fd && typeof fd === 'object') return fd as Record<string, unknown>;
   }
 
   // Try direct formData at root (some filings omit edgarSubmission wrapper)
-  const directFd = parsed['formData'] as Record<string, unknown>[] | undefined;
-  if (directFd?.[0]) return directFd[0] as Record<string, unknown>;
+  const rawDirectFd = parsed['formData'];
+  const directFd = Array.isArray(rawDirectFd) ? rawDirectFd[0] : rawDirectFd;
+  if (directFd && typeof directFd === 'object') return directFd as Record<string, unknown>;
 
   // Try: root has a single key wrapping everything
   const keys = Object.keys(parsed);
   if (keys.length === 1) {
-    const wrapper = (parsed[keys[0]] as Record<string, unknown>[])?.[0] as Record<string, unknown> | undefined;
-    if (wrapper) {
-      const fd = (wrapper['formData'] as Record<string, unknown>[])?.[0];
-      if (fd) return fd as Record<string, unknown>;
+    const rawWrapper = parsed[keys[0]];
+    const wrapper = Array.isArray(rawWrapper) ? rawWrapper[0] : rawWrapper;
+    if (wrapper && typeof wrapper === 'object') {
+      const rawFd = (wrapper as Record<string, unknown>)['formData'];
+      const fd = Array.isArray(rawFd) ? rawFd[0] : rawFd;
+      if (fd && typeof fd === 'object') return fd as Record<string, unknown>;
     }
   }
 
