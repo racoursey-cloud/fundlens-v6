@@ -34,7 +34,7 @@ import { delay } from './types.js';
 import type { UserProfileRow, FundScoresRow, InvestmentBriefRow } from './types.js';
 import type { FundCompositeScore, FactorWeights } from './scoring.js';
 import type { MacroThesis, SectorPreference } from './thesis.js';
-import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../services/supabase.js';
+import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

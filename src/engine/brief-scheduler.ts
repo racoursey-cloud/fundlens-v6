@@ -29,7 +29,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { BRIEF, CLAUDE } from './constants.js';
 import { delay } from './types.js';
-import { supaFetch, supaSelect } from '../services/supabase.js';
+import { supaFetch, supaSelect } from './supabase.js';
 import { generateBrief } from './brief-engine.js';
 import { sendBriefEmail } from './brief-email.js';
 import type { UserProfileRow, PipelineRunRow } from './types.js';

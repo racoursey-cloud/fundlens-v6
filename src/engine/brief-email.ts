@@ -13,7 +13,7 @@
  */
 
 import { Resend } from 'resend';
-import { supaInsert, supaUpdate } from '../services/supabase.js';
+import { supaInsert, supaUpdate } from './supabase.js';
 import type { BriefDeliveryRow } from './types.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────

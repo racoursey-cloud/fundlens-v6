@@ -16,7 +16,7 @@
  * References: Master Reference §8 Step 14.
  */
 
-import { supaFetch, supaInsert, supaUpdate } from '../services/supabase.js';
+import { supaFetch, supaInsert, supaUpdate } from './supabase.js';
 import { computeComposite } from './scoring.js';
 import { DEFAULT_FACTOR_WEIGHTS } from './constants.js';
 import type { FundRow, FundScoresRow } from './types.js';

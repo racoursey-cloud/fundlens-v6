@@ -6,14 +6,20 @@
  *
  * Updated in Session 5 to wire up API routes and middleware.
  * Updated in Session 7 to start cron jobs on boot.
+ * Updated in Session 8 to serve the React client build.
  * Destination: src/server.ts
  */
 
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { router } from './routes/routes.js';
 import { SERVER, ENV_KEYS } from './engine/constants.js';
 import { startCronJobs, stopCronJobs } from './engine/cron.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 
@@ -50,17 +56,18 @@ app.use(router);
 
 // ─── Static Files (React Client) ───────────────────────────────────────────
 // In production, serve the Vite build output. The React client is a
-// single-page app — all non-API routes serve index.html.
-//
-// This will be wired up in Session 8 (Auth + Shell + Wizard) when
-// the React client is built. For now, the server only serves the API.
-//
-// Future code (Session 8):
-//   import path from 'path';
-//   app.use(express.static(path.join(__dirname, '../client/dist')));
-//   app.get('*', (req, res) => {
-//     res.sendFile(path.join(__dirname, '../client/dist/index.html'));
-//   });
+// single-page app — all non-API routes serve index.html so that
+// React Router can handle client-side navigation.
+
+if (SERVER.IS_PRODUCTION) {
+  const clientDist = path.join(__dirname, '../client/dist');
+  app.use(express.static(clientDist));
+
+  // SPA fallback — any route that isn't /api/* or /health serves index.html
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 // ─── Startup ────────────────────────────────────────────────────────────────
 

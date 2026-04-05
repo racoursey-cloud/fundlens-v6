@@ -20,7 +20,7 @@
  */
 
 import cron from 'node-cron';
-import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../services/supabase.js';
+import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 import { runFullPipeline } from './pipeline.js';
 import { persistPipelineResults } from './persist.js';
 import { checkAndSendBriefs } from './brief-scheduler.js';

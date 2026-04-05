@@ -20,7 +20,7 @@
  * References: Master Reference §7, §8.
  */
 
-import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../services/supabase.js';
+import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 import { runFullPipeline } from './pipeline.js';
 import { persistPipelineResults } from './persist.js';
 import type { FundRow, PipelineRunRow, FundScoresRow, ThesisCacheRow } from './types.js';

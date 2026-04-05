@@ -37,8 +37,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
-import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../services/supabase.js';
+import { requireAuth, AuthenticatedRequest } from '../engine/auth.js';
+import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../engine/supabase.js';
 import { DEFAULT_FACTOR_WEIGHTS } from '../engine/constants.js';
 import type {
   FundRow,
