@@ -109,11 +109,21 @@ async function verifyJwtSignature(token: string): Promise<boolean> {
     if (parts.length !== 3) return false;
 
     const signatureInput = `${parts[0]}.${parts[1]}`;
-    const expectedSignature = createHmac('sha256', secret)
+
+    // Try the secret as-is first (raw string)
+    const expectedRaw = createHmac('sha256', secret)
       .update(signatureInput)
       .digest('base64url');
+    if (expectedRaw === parts[2]) return true;
 
-    return expectedSignature === parts[2];
+    // Try decoding the secret as base64 (Supabase uses base64-encoded secrets)
+    const decodedSecret = Buffer.from(secret, 'base64');
+    const expectedDecoded = createHmac('sha256', decodedSecret)
+      .update(signatureInput)
+      .digest('base64url');
+    if (expectedDecoded === parts[2]) return true;
+
+    return false;
   } catch {
     return false;
   }
