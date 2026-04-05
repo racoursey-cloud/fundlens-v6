@@ -2,9 +2,11 @@
  * FundLens v6 — React Entry Point
  *
  * Mounts the App component and injects global CSS (dark theme,
- * CSS reset, font setup).
+ * CSS reset, font setup). Also registers a global unhandled
+ * promise rejection handler that shows error toasts.
  *
- * Session 8 deliverable. Destination: client/src/main.tsx
+ * Session 8 deliverable, updated Session 11 (pulse animation, error toast).
+ * Destination: client/src/main.tsx
  */
 
 import { StrictMode } from 'react';
@@ -77,6 +79,12 @@ const globalCSS = `
     to { transform: rotate(360deg); }
   }
 
+  /* Pulse animation (used by loading skeletons and status indicators) */
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
   /* Range input styling */
   input[type="range"] {
     -webkit-appearance: none;
@@ -112,6 +120,56 @@ const globalCSS = `
 const styleEl = document.createElement('style');
 styleEl.textContent = globalCSS;
 document.head.appendChild(styleEl);
+
+// ─── Global Error Toast ───────────────────────────────────────────────────
+// Catches unhandled promise rejections and shows a temporary toast
+// in the bottom-right corner. Auto-dismisses after 5 seconds.
+
+window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+  const message = event.reason instanceof Error
+    ? event.reason.message
+    : String(event.reason ?? 'An unexpected error occurred');
+
+  const toast = document.createElement('div');
+  toast.textContent = message;
+  toast.style.cssText = [
+    'position: fixed',
+    'bottom: 24px',
+    'right: 24px',
+    'max-width: 400px',
+    'padding: 12px 16px',
+    'background: rgba(239, 68, 68, 0.15)',
+    'color: #ef4444',
+    'border-left: 3px solid #ef4444',
+    'border-radius: 8px',
+    'font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+    'font-size: 13px',
+    'line-height: 1.4',
+    'z-index: 9999',
+    'opacity: 0',
+    'transform: translateY(8px)',
+    'transition: opacity 0.2s, transform 0.2s',
+  ].join('; ');
+
+  document.body.appendChild(toast);
+
+  // Trigger enter animation
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+  });
+
+  // Auto-dismiss after 5 seconds
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(8px)';
+    setTimeout(() => {
+      if (toast.parentNode) {
+        toast.parentNode.removeChild(toast);
+      }
+    }, 200);
+  }, 5000);
+});
 
 // ─── Mount React ───────────────────────────────────────────────────────────
 
