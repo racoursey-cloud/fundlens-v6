@@ -49,7 +49,7 @@ const SECTOR_COLORS: Record<string, string> = {
 };
 
 function getSectorColor(sector: string): string {
-  return SECTOR_COLORS[sector] || SECTOR_COLORS['Other'];
+  return SECTOR_COLORS[sector] ?? SECTOR_COLORS['Other'] ?? '#71717a';
 }
 
 function MiniDonut({ sectors }: { sectors: Array<{ sector: string; weight: number }> }) {
