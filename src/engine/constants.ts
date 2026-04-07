@@ -70,6 +70,12 @@ export const EDGAR = {
   USER_AGENT: 'FundLens fundlens.app racoursey@gmail.com',
 } as const;
 
+/** OpenFIGI — CUSIP-to-ticker resolution (free with API key, 100 per batch) */
+export const OPENFIGI = {
+  BASE_URL: 'https://api.openfigi.com/v3/mapping',
+  BATCH_SIZE: 100,
+} as const;
+
 /** Financial Modeling Prep — company fundamentals, prices, news ($19/mo Starter) */
 // FMP migrated from /api/v3/ to /stable/ after August 31 2025.
 // All v3 endpoints return "Legacy Endpoint" errors. Use /stable/ exclusively.
@@ -186,6 +192,7 @@ export const ENV_KEYS = [
   'SUPABASE_SERVICE_KEY',
   'ANTHROPIC_API_KEY',
   'FMP_API_KEY',
+  'OPENFIGI_API_KEY',
   'TINNGO_KEY',        // Intentional typo — NEVER correct or mention it
   'FRED_API_KEY',
 
