@@ -531,6 +531,21 @@ function parseHoldingElement(
     getTextValue(item, 'countryOfIssuer') ||
     null;
 
+  // Fair value level (§2.4.2: Level 3 = hard-to-value → distressed adjustment)
+  const fairValLevel = getTextValue(item, 'fairValLevel') || null;
+
+  // Debt security details (§2.4.2: bond quality scoring)
+  // <debtSec> is a child element of <invstOrSec> in NPORT-P filings
+  const debtSecNode = getChild(item, 'debtSec');
+  const isDebt = debtSecNode !== null;
+  let debtIsDefault: string | null = null;
+  let debtInArrears: string | null = null;
+
+  if (debtSecNode) {
+    debtIsDefault = getTextValue(debtSecNode, 'isDefault') || null;
+    debtInArrears = getTextValue(debtSecNode, 'areIntrstPmntsInArrs') || null;
+  }
+
   // Fund-of-funds detection: check if the holding is itself a fund
   // NPORT-P marks these with <isRestrictedSec> N and specific asset categories,
   // or we check for asset category codes that indicate investment companies
@@ -550,6 +565,10 @@ function parseHoldingElement(
     balanceUnits,
     countryOfIssuer,
     isInvestmentCompany,
+    fairValLevel,
+    isDebt,
+    debtIsDefault,
+    debtInArrears,
   };
 }
 

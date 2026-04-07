@@ -40,6 +40,14 @@ export interface EdgarHolding {
   countryOfIssuer: string | null;
   /** Whether this holding is itself a fund (for fund-of-funds detection) */
   isInvestmentCompany: boolean;
+  /** Fair value level (1, 2, or 3) from NPORT-P — Level 3 = hard-to-value (§2.4.2) */
+  fairValLevel: string | null;
+  /** Whether this is a debt security (has <debtSec> element in NPORT-P) */
+  isDebt: boolean;
+  /** 'Y' if debt security is in default (from debtSec.isDefault) (§2.4.2) */
+  debtIsDefault: string | null;
+  /** 'Y' if interest payments are in arrears (from debtSec.areIntrstPmntsInArrs) (§2.4.2) */
+  debtInArrears: string | null;
 }
 
 /** Metadata extracted from the NPORT-P filing header */
