@@ -16,7 +16,13 @@
  * Session 4 deliverable. References: FUNDLENS_SPEC.md §2.1, §2.2, §2.8.
  */
 
-import { DEFAULT_FACTOR_WEIGHTS } from './constants.js';
+import {
+  DEFAULT_FACTOR_WEIGHTS,
+  ALLOCATION,
+  TIER_BADGES,
+  SPECIAL_TIERS,
+  MONEY_MARKET_TICKERS,
+} from './constants.js';
 import { CostEfficiencyResult } from './cost-efficiency.js';
 import { QualityFactorResult } from './quality.js';
 import { MomentumScore } from './momentum.js';
@@ -67,6 +73,10 @@ export interface FundCompositeScore {
   composite: number;
   /** Rank among all funds in the menu (1 = best) */
   rank: number;
+  /** Tier label derived from MAD-based modified z-score (§6.3) */
+  tier: string;
+  /** Tier color for UI display (§6.3) */
+  tierColor: string;
   /** Factor-level detail for the UI */
   factorDetails: {
     costEfficiency: CostEfficiencyResult;
@@ -157,6 +167,72 @@ export function zStandardize(values: number[]): number[] | null {
   }
 
   return values.map(v => (v - mean) / stdev);
+}
+
+// ─── Tier Badge Computation (§6.3) ─────────────────────────────────────────
+
+/** Get tier label + color from MAD-based modified z-score */
+function getTier(modZ: number): { tier: string; tierColor: string } {
+  for (const badge of TIER_BADGES) {
+    if (modZ >= badge.zMin) {
+      return { tier: badge.label, tierColor: badge.color };
+    }
+  }
+  return { tier: 'Weak', tierColor: '#EF4444' };
+}
+
+/** Compute median of a numeric array */
+function median(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Assign tier badges to scored funds using MAD-based modified z-scores (§3.2, §6.3).
+ *
+ * Uses the same MAD → modified z-score → tier threshold logic as allocation.ts,
+ * extracted here so tiers can be persisted alongside scores without running
+ * the full allocation engine.
+ *
+ * @param funds Scored funds with composite scores
+ * @returns Map of ticker → { tier, tierColor }
+ */
+export function computeTiers(
+  funds: Array<{ ticker: string; composite: number }>
+): Map<string, { tier: string; tierColor: string }> {
+  const result = new Map<string, { tier: string; tierColor: string }>();
+
+  // Separate money market funds
+  const nonMM = funds.filter(f => !MONEY_MARKET_TICKERS.has(f.ticker));
+  const mmFunds = funds.filter(f => MONEY_MARKET_TICKERS.has(f.ticker));
+
+  // Money market funds get the special MM tier
+  for (const f of mmFunds) {
+    result.set(f.ticker, {
+      tier: SPECIAL_TIERS.MONEY_MARKET.label,
+      tierColor: SPECIAL_TIERS.MONEY_MARKET.color,
+    });
+  }
+
+  if (nonMM.length === 0) return result;
+
+  // MAD-based modified z-scores (§3.2)
+  const scores = nonMM.map(f => f.composite);
+  const med = median(scores);
+  const absDeviations = scores.map(s => Math.abs(s - med));
+  const mad = median(absDeviations);
+  const safeMad = mad > 0 ? mad : 1e-9;
+
+  for (const fund of nonMM) {
+    const modZ = ALLOCATION.MAD_CONSISTENCY * (fund.composite - med) / safeMad;
+    result.set(fund.ticker, getTier(modZ));
+  }
+
+  return result;
 }
 
 // ─── Core Scoring Functions ─────────────────────────────────────────────────
@@ -298,16 +374,24 @@ export function scoreAndRankFunds(
   // Sort by composite descending (best first)
   withComposites.sort((a, b) => b.composite - a.composite);
 
-  // Assign ranks
-  const funds: FundCompositeScore[] = withComposites.map((f, i) => ({
-    ticker: f.ticker,
-    name: f.name,
-    raw: f.raw,
-    zScores: f.zScores,
-    composite: f.composite,
-    rank: i + 1,
-    factorDetails: f.factorDetails,
-  }));
+  // Compute tier badges from MAD-based modified z-scores (§6.3)
+  const tierMap = computeTiers(withComposites);
+
+  // Assign ranks and tiers
+  const funds: FundCompositeScore[] = withComposites.map((f, i) => {
+    const tierInfo = tierMap.get(f.ticker) ?? { tier: 'Neutral', tierColor: '#6B7280' };
+    return {
+      ticker: f.ticker,
+      name: f.name,
+      raw: f.raw,
+      zScores: f.zScores,
+      composite: f.composite,
+      rank: i + 1,
+      tier: tierInfo.tier,
+      tierColor: tierInfo.tierColor,
+      factorDetails: f.factorDetails,
+    };
+  });
 
   return {
     funds,
@@ -339,11 +423,19 @@ export function rescoreWithNewWeights(
   // Re-sort by new composite
   rescored.sort((a, b) => b.composite - a.composite);
 
-  // Re-assign ranks
-  const funds: FundCompositeScore[] = rescored.map((f, i) => ({
-    ...f,
-    rank: i + 1,
-  }));
+  // Recompute tiers with updated composites (§6.3)
+  const tierMap = computeTiers(rescored);
+
+  // Re-assign ranks and tiers
+  const funds: FundCompositeScore[] = rescored.map((f, i) => {
+    const tierInfo = tierMap.get(f.ticker) ?? { tier: f.tier, tierColor: f.tierColor };
+    return {
+      ...f,
+      rank: i + 1,
+      tier: tierInfo.tier,
+      tierColor: tierInfo.tierColor,
+    };
+  });
 
   return {
     funds,

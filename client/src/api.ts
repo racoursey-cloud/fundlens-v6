@@ -42,6 +42,10 @@ export interface FundScore {
   z_positioning: number;
   z_momentum: number;
   composite_default: number;
+  /** Tier label from MAD-based modified z-score (§6.3) */
+  tier: string;
+  /** Tier badge color hex (§6.3) */
+  tier_color: string;
   factor_details: Record<string, unknown>;
   scored_at: string;
   funds?: { ticker: string; name: string; expense_ratio: number | null };

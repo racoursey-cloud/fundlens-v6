@@ -82,6 +82,8 @@ export async function persistPipelineResults(
       z_positioning: fundScore.zScores.positioning,
       z_momentum: fundScore.zScores.momentum,
       composite_default: compositeDefault,
+      tier: fundScore.tier,
+      tier_color: fundScore.tierColor,
       factor_details: fundScore.factorDetails,
       scored_at: new Date().toISOString(),
     };

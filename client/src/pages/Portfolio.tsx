@@ -43,6 +43,50 @@ function normalCDF(z: number): number {
   return z >= 0 ? result : 1.0 - result;
 }
 
+// ─── Tier Badge Computation (§6.3) ────────────────────────────────────────
+// Client-side MAD z-score → tier, mirrors scoring.ts computeTiers().
+
+const TIER_BADGES = [
+  { tier: 'Breakaway', zMin: 2.0, color: '#F59E0B' },
+  { tier: 'Strong',    zMin: 1.2, color: '#10B981' },
+  { tier: 'Solid',     zMin: 0.3, color: '#3B82F6' },
+  { tier: 'Neutral',   zMin: -0.5, color: '#6B7280' },
+  { tier: 'Weak',      zMin: -Infinity, color: '#EF4444' },
+] as const;
+
+const MAD_CONSISTENCY = 0.6745;
+const MM_TICKERS = new Set(['FDRXX', 'ADAXX']);
+
+function clientMedian(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 !== 0) return sorted[mid]!;
+  return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}
+
+function computeClientTier(
+  ticker: string,
+  composite: number,
+  allComposites: { ticker: string; composite: number }[]
+): { tier: string; tierColor: string } {
+  if (MM_TICKERS.has(ticker)) return { tier: 'MM', tierColor: '#4B5563' };
+
+  const nonMM = allComposites.filter(f => !MM_TICKERS.has(f.ticker));
+  if (nonMM.length === 0) return { tier: 'Neutral', tierColor: '#6B7280' };
+
+  const scores = nonMM.map(f => f.composite);
+  const med = clientMedian(scores);
+  const mad = clientMedian(scores.map(s => Math.abs(s - med)));
+  const safeMad = mad > 0 ? mad : 1e-9;
+  const modZ = MAD_CONSISTENCY * (composite - med) / safeMad;
+
+  for (const badge of TIER_BADGES) {
+    if (modZ >= badge.zMin) return { tier: badge.tier, tierColor: badge.color };
+  }
+  return { tier: 'Weak', tierColor: '#EF4444' };
+}
+
 // ─── SVG Donut ─────────────────────────────────────────────────────────────
 
 interface DonutSlice {
@@ -313,17 +357,28 @@ export function Portfolio() {
   // Client-side rescore with custom weights using z-scores + CDF (§2.1)
   // Z-scores are pre-computed server-side; client does weighted sum + normalCDF
   const rankedScores = useMemo(() => {
-    return scores
+    // First pass: compute composites
+    const withComposites = scores.map(s => {
+      const zComposite =
+        (s.z_cost_efficiency ?? 0) * weights.cost +
+        (s.z_holdings_quality ?? 0) * weights.quality +
+        (s.z_positioning ?? 0) * weights.positioning +
+        (s.z_momentum ?? 0) * weights.momentum;
+      const composite = Math.round(Math.max(0, Math.min(100, 100 * normalCDF(zComposite))));
+      return { ...s, userComposite: composite };
+    });
+
+    // Second pass: compute tier badges from MAD z-scores (§6.3)
+    const allComposites = withComposites.map(s => ({
+      ticker: s.funds?.ticker || s.fund_id,
+      composite: s.userComposite,
+    }));
+
+    return withComposites
       .map(s => {
-        // Weighted composite in z-space (Step 3 from §2.1)
-        const zComposite =
-          (s.z_cost_efficiency ?? 0) * weights.cost +
-          (s.z_holdings_quality ?? 0) * weights.quality +
-          (s.z_positioning ?? 0) * weights.positioning +
-          (s.z_momentum ?? 0) * weights.momentum;
-        // Map to 0–100 via normal CDF (Step 4 from §2.1)
-        const composite = Math.round(Math.max(0, Math.min(100, 100 * normalCDF(zComposite))));
-        return { ...s, userComposite: composite };
+        const ticker = s.funds?.ticker || s.fund_id;
+        const tierInfo = computeClientTier(ticker, s.userComposite, allComposites);
+        return { ...s, userTier: tierInfo.tier, userTierColor: tierInfo.tierColor };
       })
       .sort((a, b) => b.userComposite - a.userComposite);
   }, [scores, weights]);
@@ -414,6 +469,7 @@ export function Portfolio() {
                     <th style={thStyle}>Position</th>
                     <th style={thStyle}>Momentum</th>
                     <th style={thStyle}>Score</th>
+                    <th style={thStyle}>Tier</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -466,6 +522,17 @@ export function Portfolio() {
                             color: scoreColor(s.userComposite),
                           }}>
                             {s.userComposite.toFixed(1)}
+                          </span>
+                        </td>
+                        <td style={tdStyle}>
+                          <span style={{
+                            padding: '3px 8px', borderRadius: '4px', fontSize: '11px',
+                            fontWeight: 600, letterSpacing: '0.03em',
+                            color: s.userTierColor,
+                            background: `${s.userTierColor}18`,
+                            border: `1px solid ${s.userTierColor}40`,
+                          }}>
+                            {s.userTier}
                           </span>
                         </td>
                       </tr>

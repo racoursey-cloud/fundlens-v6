@@ -242,6 +242,18 @@ export function FundDetail({ ticker, onClose }: Props) {
               Expense Ratio: {(fund.expense_ratio * 100).toFixed(2)}%
             </div>
           )}
+          {score?.tier && (
+            <span style={{
+              display: 'inline-block', marginTop: '6px',
+              padding: '3px 8px', borderRadius: '4px', fontSize: '11px',
+              fontWeight: 600, letterSpacing: '0.03em',
+              color: score.tier_color || '#6B7280',
+              background: `${score.tier_color || '#6B7280'}18`,
+              border: `1px solid ${score.tier_color || '#6B7280'}40`,
+            }}>
+              {score.tier}
+            </span>
+          )}
         </div>
         <button onClick={onClose} style={closeBtnStyle}>&times;</button>
       </div>

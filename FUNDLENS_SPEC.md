@@ -843,7 +843,7 @@ Claude should reference current events, trends, and cultural context when it enh
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 7, 2026 (after Session 6)
+**Last updated:** April 7, 2026 (after Session 7)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -909,6 +909,7 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Allocation: MAD + Kelly exponential | §3.1–3.6 | allocation.ts | MAD z-score, quality gate, e^(k×modZ), 5% de minimis, rounding absorption — Session 6 |
 | Money market global skip | §2.7 | pipeline.ts, constants.ts, allocation.ts | FDRXX/ADAXX fixed composite 50, skip all factor scoring, MM tier — Session 6 |
 | Portfolio: Invalid Date fix | §6 | Portfolio.tsx | Null/invalid timestamp guard for pipeline run display — Session 6 |
+| Tier badges: end-to-end wiring | §6.3 | scoring.ts, persist.ts, types.ts, api.ts, Portfolio.tsx, FundDetail.tsx | MAD z-score → tier computed in scoring engine, persisted to fund_scores, rendered in fund table + detail sidebar. Client-side recomputation on slider change. — Session 7 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -996,7 +997,8 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | **DONE** |
 | 6 | Thesis + Allocation + MM Skip | CRITICAL-4 (1-10 scale), CRITICAL-5 (Kelly allocation), MISSING-4 (FRED commodities), MISSING-5 (sector priors), MISSING-6 (money market skip) | **DONE** |
 | 7 | *(Merged into Session 6)* | — | **DONE** |
-| 8 | UI Alignment | Tier badges wired in, risk slider 1-7 in client, HHI (MISSING-7) | |
+| 7 | Tier Badges E2E | §6.3 tier badges wired: scoring → persist → API → client | **DONE** |
+| 8 | UI Alignment | Risk slider 1-7 in client, HHI (MISSING-7), v5.1 UI port | |
 | 9 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
 | 10 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) | |
 
@@ -1318,6 +1320,52 @@ Files: `types.ts`, `persist.ts`, `brief-engine.ts`, `pipeline.ts`
 **Resolved:** CRITICAL-4 (thesis scale), CRITICAL-5 (allocation engine), MISSING-4 (FRED commodities), MISSING-5 (sector priors), MISSING-6 (money market skip), Invalid Date UI bug
 **Pending:** `thesis_cache` Supabase migration needed for `dominant_theme`, `macro_stance`, `risk_factors` columns. Pipeline re-run needed to generate fresh scores. `resolveSubFundTicker()` stub still returns null (fund-of-funds look-through can't fire).
 **Verification:** `tsc --noEmit` passes clean on both server and client.
+
+---
+
+## April 7, 2026 — Session 7: Tier Badges End-to-End (§6.3)
+
+**Goal:** Wire tier badges from server computation through to client rendering. Tier badges were defined in constants.ts (Session 1) but never computed, stored, or displayed.
+
+**1. Tier computation extracted to scoring.ts.**
+File: `src/engine/scoring.ts`
+- Added `computeTiers()`: uses the same MAD-based modified z-score logic as allocation.ts (§3.2) to derive tier labels from composite scores. Replicates median, MAD, and tier threshold logic without depending on the full allocation engine.
+- Added `getTier()` helper: walks TIER_BADGES array by z-score threshold.
+- `scoreAndRankFunds()` now calls `computeTiers()` and attaches `tier` + `tierColor` to each `FundCompositeScore`.
+- `rescoreWithNewWeights()` recomputes tiers when composites change from slider adjustments.
+
+**2. FundCompositeScore extended with tier fields.**
+Files: `src/engine/scoring.ts`, `src/engine/types.ts`
+- `FundCompositeScore` interface: added `tier: string` and `tierColor: string`.
+- `FundScoresRow` interface: added `tier: string` and `tier_color: string`.
+
+**3. Persistence layer writes tier data.**
+File: `src/engine/persist.ts`
+- Score row now includes `tier` and `tier_color` fields when writing to `fund_scores`.
+
+**4. Client API type updated.**
+File: `client/src/api.ts`
+- `FundScore` interface: added `tier: string` and `tier_color: string`.
+
+**5. Portfolio table renders tier badge column.**
+File: `client/src/pages/Portfolio.tsx`
+- Added "Tier" column header to fund table.
+- Client-side tier recomputation via `computeClientTier()`: replicates MAD z-score logic so tiers update instantly when weight sliders change.
+- Tier badge styled with colored text, tinted background, and subtle border matching the tier color.
+
+**6. FundDetail sidebar shows tier badge.**
+File: `client/src/components/FundDetail.tsx`
+- Tier badge rendered in the fund header below expense ratio, using the same styling as the table badge.
+
+**7. SQL migration created.**
+File: `migrations/session7_add_tier_columns.sql`
+- Adds `tier` (TEXT, default 'Neutral') and `tier_color` (TEXT, default '#6B7280') columns to `fund_scores`.
+- Creates index on `tier` column.
+
+**Files created:** `migrations/session7_add_tier_columns.sql`
+**Files changed:** `scoring.ts`, `types.ts`, `persist.ts`, `api.ts`, `Portfolio.tsx`, `FundDetail.tsx`, `FUNDLENS_SPEC.md`
+**Verification:** `tsc --noEmit` passes clean on both server and client.
+**Database migration required:** Run `migrations/session7_add_tier_columns.sql` in Supabase SQL Editor before deploying. Existing rows default to 'Neutral'; next pipeline run populates real tiers.
 
 ---
 
