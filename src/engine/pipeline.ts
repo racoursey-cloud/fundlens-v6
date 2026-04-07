@@ -192,6 +192,26 @@ export async function runFullPipeline(
       weight: h.pctOfNav,
       ratios: h.ticker ? fundamentals.get(h.ticker)?.ratios || null : null,
       keyMetrics: h.ticker ? fundamentals.get(h.ticker)?.keyMetrics || null : null,
+      // Pass bond fields as a minimal EdgarHolding for quality scoring (§2.4.2)
+      edgarHolding: {
+        name: h.name,
+        cusip: h.cusip,
+        isin: null,
+        lei: null,
+        title: h.name,
+        valueUsd: h.valueUsd,
+        pctOfNav: h.pctOfNav,
+        assetCategory: h.assetCategory,
+        issuerCategory: h.issuerCategory,
+        balance: null,
+        balanceUnits: null,
+        countryOfIssuer: h.countryOfIssuer,
+        isInvestmentCompany: h.isInvestmentCompany,
+        fairValLevel: h.fairValLevel,
+        isDebt: h.isDebt,
+        debtIsDefault: h.debtIsDefault,
+        debtInArrears: h.debtInArrears,
+      },
     }));
 
     const result = scoreQualityFactor(holdingsWithFundamentals);

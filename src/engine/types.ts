@@ -145,6 +145,19 @@ export interface ResolvedHolding {
   isLookThrough: boolean;
   /** If look-through, the parent fund's name */
   parentFundName: string | null;
+  // ── Bond fields (Session 5, §2.4.2) — carried from EdgarHolding for quality scoring ──
+  /** Whether this is a debt security (has <debtSec> element in NPORT-P) */
+  isDebt: boolean;
+  /** Issuer category (e.g. "CORP", "UST", "MUN") */
+  issuerCategory: string | null;
+  /** Fair value level (1, 2, or 3) — Level 3 = hard-to-value */
+  fairValLevel: string | null;
+  /** 'Y' if debt security is in default */
+  debtIsDefault: string | null;
+  /** 'Y' if interest payments are in arrears */
+  debtInArrears: string | null;
+  /** Whether this holding is itself a fund (for bond/equity classification) */
+  isInvestmentCompany: boolean;
 }
 
 /** Result of the holdings pipeline for a single fund */

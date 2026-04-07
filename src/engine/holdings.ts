@@ -152,6 +152,13 @@ export async function runHoldingsPipeline(
         sector: null, // Populated later by Claude Haiku (Session 3-4)
         isLookThrough: holding.isInvestmentCompany,
         parentFundName: (holding as LookThroughHolding).parentFundName || null,
+        // Bond fields (Session 5, §2.4.2) — carried for quality scoring
+        isDebt: holding.isDebt,
+        issuerCategory: holding.issuerCategory,
+        fairValLevel: holding.fairValLevel,
+        debtIsDefault: holding.debtIsDefault,
+        debtInArrears: holding.debtInArrears,
+        isInvestmentCompany: holding.isInvestmentCompany,
       });
     }
 
