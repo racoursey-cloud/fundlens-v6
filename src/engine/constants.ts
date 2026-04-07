@@ -7,6 +7,11 @@
  * References: Master Reference Document, Sections 4-6, 8, 10
  */
 
+// ─── Money Market Funds (§2.7) ──────────────────────────────────────────────
+// Fixed composite score of 50, skip all factor scoring, display as "MM" tier,
+// weight 0 in allocation engine (never recommended, but shown in fund list).
+export const MONEY_MARKET_TICKERS = new Set(['FDRXX', 'ADAXX']);
+
 // ─── Factor Weights (defaults — users can customize in profile) ──────────────
 // SESSION 1: Corrected per spec §2.2 — Momentum 25%, Positioning 20%
 // (Previously swapped: positioning was 0.25, momentum was 0.20)

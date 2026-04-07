@@ -378,8 +378,12 @@ export interface ThesisCacheRow {
   id: string;
   pipeline_run_id: string | null;
   narrative: string;
-  sector_preferences: Array<{ sector: string; preference: number }>;
+  /** Sector preferences — new rows use 'score' (1.0–10.0), legacy rows may use 'preference' (-2 to +2) */
+  sector_preferences: Array<{ sector: string; score?: number; preference?: number; reasoning?: string; reason?: string; [key: string]: unknown }>;
   key_themes: string[];
+  dominant_theme?: string;
+  macro_stance?: string;
+  risk_factors?: string[];
   model_used: string;
   generated_at: string;
 }

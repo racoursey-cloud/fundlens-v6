@@ -30,7 +30,7 @@
  * Session 3 updated. References: Spec §4.6, §5.4.
  */
 
-import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS } from './constants.js';
+import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS } from './constants.js';
 import { delay, ResolvedHolding, FundRow } from './types.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile } from './fmp.js';
@@ -114,6 +114,18 @@ export async function runFullPipeline(
   // ── Step 1: Fund list already provided as argument ──
   progress(1, `Processing ${funds.length} funds`);
 
+  // ── Money Market Detection (§2.7) ────────────────────────────────────────
+  // FDRXX/ADAXX get fixed composite 50, skip all factor scoring.
+  // Separated here so all downstream loops can exclude them.
+  const moneyMarketFunds = funds.filter(f => MONEY_MARKET_TICKERS.has(f.ticker));
+  const scorableFunds = funds.filter(f => !MONEY_MARKET_TICKERS.has(f.ticker));
+
+  if (moneyMarketFunds.length > 0) {
+    console.log(
+      `[pipeline] Money market funds (skipping scoring): ${moneyMarketFunds.map(f => f.ticker).join(', ')}`
+    );
+  }
+
   // ── Steps 2–3: Fetch holdings from EDGAR + resolve CUSIPs ──
   // CUSIP resolution uses built-in Supabase cache + OpenFIGI + FMP search fallback.
   // The cache functions default inside resolveCusips() — no need to pass them here.
@@ -122,7 +134,7 @@ export async function runFullPipeline(
   const openFigiKey = process.env.OPENFIGI_API_KEY || '';
   const fundHoldings = new Map<string, ResolvedHolding[]>();
 
-  for (const fund of funds) {
+  for (const fund of scorableFunds) {
     try {
       const result = await runHoldingsPipeline(fund.ticker, openFigiKey);
       if (result.success && result.data) {
@@ -137,7 +149,7 @@ export async function runFullPipeline(
     await delay(PIPELINE.API_CALL_DELAY_MS);
   }
 
-  progress(3, `Holdings fetched for ${fundHoldings.size}/${funds.length} funds`);
+  progress(3, `Holdings fetched for ${fundHoldings.size}/${scorableFunds.length} funds`);
 
   // ── Step 4: Fetch company fundamentals from FMP ──
   progress(4, 'Fetching company fundamentals from FMP');
@@ -228,7 +240,7 @@ export async function runFullPipeline(
   // Store Finnhub fee data (12b-1, frontLoad) per fund for cost scoring (Session 5)
   const finnhubFeeMap = new Map<string, { fee12b1: number | null; frontLoad: number | null }>();
 
-  const fundsNeedingExpenseRatio = funds.filter(f => f.expense_ratio == null);
+  const fundsNeedingExpenseRatio = scorableFunds.filter(f => f.expense_ratio == null);
   if (fundsNeedingExpenseRatio.length > 0) {
     progress(7, `Fetching expense ratios for ${fundsNeedingExpenseRatio.length} funds`);
 
@@ -260,7 +272,7 @@ export async function runFullPipeline(
   }
 
   // For funds that already had expense_ratio, fetch Finnhub fee data (12b-1, frontLoad) if not yet cached
-  const fundsNeedingFeeData = funds.filter(f => f.expense_ratio != null && !finnhubFeeMap.has(f.ticker));
+  const fundsNeedingFeeData = scorableFunds.filter(f => f.expense_ratio != null && !finnhubFeeMap.has(f.ticker));
   if (fundsNeedingFeeData.length > 0) {
     progress(7, `Fetching fee data (12b-1, loads) for ${fundsNeedingFeeData.length} funds`);
     for (const fund of fundsNeedingFeeData) {
@@ -277,7 +289,7 @@ export async function runFullPipeline(
 
   const costResults = new Map<string, CostEfficiencyResult>();
 
-  for (const fund of funds) {
+  for (const fund of scorableFunds) {
     // Build NormalizedFeeData from Finnhub fee components (Session 5)
     // Replaces dead Tiingo fee path — Tiingo fee endpoint returns 404
     let feeData: NormalizedFeeData | null = null;
@@ -312,7 +324,7 @@ export async function runFullPipeline(
 
   const fundMomentums: FundMomentum[] = [];
 
-  for (const fund of funds) {
+  for (const fund of scorableFunds) {
     try {
       // Try Tiingo first (primary per §4.6)
       let prices = null;
@@ -372,6 +384,9 @@ export async function runFullPipeline(
       narrative: 'Macro thesis unavailable — using neutral positioning.',
       sectorPreferences: [],
       keyThemes: [],
+      dominantTheme: '',
+      macroStance: 'mixed' as const,
+      riskFactors: [],
       generatedAt: new Date().toISOString(),
       model: CLAUDE.THESIS_MODEL,
     };
@@ -398,7 +413,34 @@ export async function runFullPipeline(
     factorDetails: FundCompositeScore['factorDetails'];
   }> = [];
 
-  for (const fund of funds) {
+  // Add money market funds with fixed score 50 (§2.7) — no factor scoring needed
+  for (const fund of moneyMarketFunds) {
+    const FIXED_MM_SCORE = 50;
+    fundScoreInputs.push({
+      ticker: fund.ticker,
+      name: fund.name,
+      raw: {
+        ticker: fund.ticker,
+        name: fund.name,
+        costEfficiency: FIXED_MM_SCORE,
+        holdingsQuality: FIXED_MM_SCORE,
+        positioning: FIXED_MM_SCORE,
+        momentum: FIXED_MM_SCORE,
+      },
+      // Money market placeholder — typed as Record<string, unknown> since
+      // these fixed-score funds don't have real factor detail objects.
+      factorDetails: {
+        costEfficiency: { score: FIXED_MM_SCORE, reasoning: 'Money market fund — fixed score' } as CostEfficiencyResult,
+        holdingsQuality: { score: FIXED_MM_SCORE, reasoning: 'Money market fund — fixed score', holdingScores: [], unscoredHoldings: [], coveragePct: 0, equityRatio: 0, bondRatio: 0 },
+        positioning: { score: FIXED_MM_SCORE, reasoning: 'Money market fund — fixed score' },
+        momentum: { ticker: fund.ticker, score: FIXED_MM_SCORE, volAdjustedReturn: null, blendedReturn: null, returns: { threeMonth: null, sixMonth: null, nineMonth: null, twelveMonth: null }, rank: 0 } as MomentumScore,
+        sectorExposure: {},
+      },
+    });
+    console.log(`[pipeline] ${fund.ticker}: money market → fixed composite 50`);
+  }
+
+  for (const fund of scorableFunds) {
     const cost = costResults.get(fund.ticker);
     const quality = qualityResults.get(fund.ticker);
     const momentum = momentumMap.get(fund.ticker);

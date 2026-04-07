@@ -103,6 +103,9 @@ export async function persistPipelineResults(
     narrative: result.thesis.narrative,
     sector_preferences: result.thesis.sectorPreferences,
     key_themes: result.thesis.keyThemes,
+    dominant_theme: result.thesis.dominantTheme || '',
+    macro_stance: result.thesis.macroStance || 'mixed',
+    risk_factors: result.thesis.riskFactors || [],
     model_used: result.thesis.model,
     generated_at: result.thesis.generatedAt,
   });

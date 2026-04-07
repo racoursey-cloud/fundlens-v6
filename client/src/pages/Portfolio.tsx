@@ -478,7 +478,12 @@ export function Portfolio() {
             {/* Pipeline timestamp */}
             {pipelineRun && (
               <div style={{ marginTop: '16px', fontSize: '12px', color: theme.colors.textDim }}>
-                Scores from {new Date(pipelineRun.completed_at || pipelineRun.started_at).toLocaleString()}
+                Scores from {(() => {
+                  const ts = pipelineRun.completed_at || pipelineRun.started_at;
+                  if (!ts) return 'pending pipeline run';
+                  const d = new Date(ts);
+                  return isNaN(d.getTime()) ? 'unknown date' : d.toLocaleString();
+                })()}
               </div>
             )}
           </>

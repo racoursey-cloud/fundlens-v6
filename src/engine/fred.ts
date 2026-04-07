@@ -19,7 +19,7 @@
  * Session 4 deliverable. References: Master Reference §5, §8 step 10.
  */
 
-import { FRED, PIPELINE } from './constants.js';
+import { FRED, FRED_COMMODITY_SERIES, PIPELINE } from './constants.js';
 import { delay } from './types.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -76,6 +76,7 @@ export interface MacroSignals {
 // ─── Indicator Metadata ─────────────────────────────────────────────────────
 
 const INDICATOR_META: Record<string, { name: string; unit: string }> = {
+  // Economic indicators (§4.4 — existing 9 series)
   [FRED.SERIES.GDP]: { name: 'Real GDP', unit: 'Billions of Dollars (annualized)' },
   [FRED.SERIES.UNEMPLOYMENT]: { name: 'Unemployment Rate', unit: 'Percent' },
   [FRED.SERIES.CPI]: { name: 'Consumer Price Index (All Urban)', unit: 'Index (1982-84=100)' },
@@ -85,6 +86,11 @@ const INDICATOR_META: Record<string, { name: string; unit: string }> = {
   [FRED.SERIES.YIELD_SPREAD]: { name: '10Y-2Y Treasury Spread', unit: 'Percent' },
   [FRED.SERIES.CONSUMER_SENTIMENT]: { name: 'Consumer Sentiment (UMich)', unit: 'Index (1966=100)' },
   [FRED.SERIES.INDUSTRIAL_PRODUCTION]: { name: 'Industrial Production Index', unit: 'Index (2017=100)' },
+  // Commodity series (§4.4 — Session 6, same API key, zero additional cost)
+  [FRED_COMMODITY_SERIES.WTI_CRUDE]: { name: 'WTI Crude Oil', unit: 'Dollars per Barrel' },
+  [FRED_COMMODITY_SERIES.BRENT_CRUDE]: { name: 'Brent Crude Oil', unit: 'Dollars per Barrel' },
+  [FRED_COMMODITY_SERIES.GOLD]: { name: 'Gold Price (London Fix)', unit: 'Dollars per Troy Ounce' },
+  [FRED_COMMODITY_SERIES.DOLLAR_INDEX]: { name: 'Trade-Weighted Dollar Index', unit: 'Index (Jan 2006=100)' },
 };
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -94,7 +100,11 @@ const INDICATOR_META: Record<string, { name: string; unit: string }> = {
  * Calls are sequential with delays to stay under FRED's rate limit.
  */
 export async function fetchMacroSnapshot(): Promise<MacroSnapshot> {
-  const seriesIds = Object.values(FRED.SERIES);
+  // Fetch both economic indicators and commodity series (§4.4)
+  const seriesIds = [
+    ...Object.values(FRED.SERIES),
+    ...Object.values(FRED_COMMODITY_SERIES),
+  ];
   const indicators: MacroIndicator[] = [];
 
   console.log(`[fred] Fetching ${seriesIds.length} macro indicators...`);

@@ -28,13 +28,15 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { CLAUDE, BRIEF, DEFAULT_FACTOR_WEIGHTS, KELLY_RISK_TABLE, RISK_MAX } from './constants.js';
+import { CLAUDE, BRIEF, DEFAULT_FACTOR_WEIGHTS, KELLY_RISK_TABLE, RISK_MAX, MONEY_MARKET_TICKERS } from './constants.js';
 import { computeCompositeFromZScores } from './scoring.js';
 import type { FundZScores } from './scoring.js';
 import { delay } from './types.js';
 import type { UserProfileRow, FundScoresRow, InvestmentBriefRow } from './types.js';
 import type { FundCompositeScore, FactorWeights } from './scoring.js';
 import type { MacroThesis, SectorPreference } from './thesis.js';
+import { computeAllocations } from './allocation.js';
+import type { AllocationInput } from './allocation.js';
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -211,18 +213,19 @@ function computeRelevanceTags(
       );
       if (!pref) continue;
 
-      if (pref.preference >= 1.5 && exposure.weight >= 0.15) {
+      // Thesis uses 1.0–10.0 scale: ≥7.0 = favorable, ≤4.0 = unfavorable (§2.6.1)
+      if (pref.score >= 7.0 && exposure.weight >= 0.15) {
         tags.push({
           label: `${exposure.sector} alignment`,
           reason: `Thesis is bullish on ${exposure.sector}, fund has ${(exposure.weight * 100).toFixed(1)}% exposure`,
-          metric: `Positioning score: ${fund.scores.positioning}/100, thesis preference: +${pref.preference}`,
+          metric: `Positioning score: ${fund.scores.positioning}/100, thesis sector score: ${pref.score.toFixed(1)}/10`,
         });
       }
-      if (pref.preference <= -1.5 && exposure.weight >= 0.15) {
+      if (pref.score <= 4.0 && exposure.weight >= 0.15) {
         tags.push({
           label: `${exposure.sector} headwind`,
           reason: `Thesis is bearish on ${exposure.sector}, fund has ${(exposure.weight * 100).toFixed(1)}% exposure`,
-          metric: `Positioning score: ${fund.scores.positioning}/100, thesis preference: ${pref.preference}`,
+          metric: `Positioning score: ${fund.scores.positioning}/100, thesis sector score: ${pref.score.toFixed(1)}/10`,
         });
       }
     }
@@ -279,135 +282,44 @@ function computeRelevanceTags(
 }
 
 /**
- * Generate the recommended allocation using z-score weighted sizing.
+ * Bridge to the allocation engine (allocation.ts, spec §3).
  *
- * Cross-sectional signal weighting: the same approach quant firms use
- * to size positions proportional to signal strength. Composite scores
- * are z-scored across the fund universe — funds that "break away from
- * the pack" (high z-score) earn proportionally larger allocations.
- *
- * No artificial caps or floors on fund count. The statistics determine
- * everything:
- *   - If one fund is genuinely exceptional (z = 2.5), it dominates
- *   - If all funds cluster together (low standard deviation), allocation
- *     spreads out naturally — there's no breakaway to reward
- *
- * Risk tolerance controls the z-score THRESHOLD for inclusion.
- * If you score below the threshold, you're not in the recommendation —
- * there are better funds available. Mutual funds are already diversified
- * across hundreds of holdings, so spreading across too many funds just
- * dilutes the signal.
- *
- *   - Conservative (threshold 0.0σ): above-average funds only. You beat
- *     the pack, you're in. Widest net, but still excludes the bottom half.
- *   - Moderate (threshold +0.5σ): clearly above average. Separating from
- *     the middle of the menu.
- *   - Aggressive (threshold +1.0σ): statistical outliers. Only funds
- *     genuinely breaking away earn an allocation.
- *
- * Position sizes are proportional to (z - threshold), so the fund
- * right at the cutoff gets a small weight and the top scorer gets the
- * largest. The further a fund breaks away, the more it's rewarded.
- *
- * Academic basis: Grinold & Kahn's Fundamental Law of Active Management —
- * optimal portfolio weights are proportional to alpha signal strength.
- * Z-scoring IS that strength measurement.
+ * Converts ranked fund data into AllocationInput[], runs the MAD-based
+ * Kelly allocation engine, and maps results back to the shape that the
+ * Brief data packet expects.
  */
-function computeAllocation(
+function computeAllocationForBrief(
   rankedFunds: Array<{ ticker: string; name: string; composite: number; rank: number }>,
   riskTolerance: number
 ): Array<{ ticker: string; name: string; percentage: number; reason: string }> {
 
   if (rankedFunds.length === 0) return [];
 
-  // ── Step 1: Compute mean and standard deviation of composite scores ──
-  const scores = rankedFunds.map(f => f.composite);
-  const n = scores.length;
-  const mean = scores.reduce((sum, s) => sum + s, 0) / n;
-  const variance = scores.reduce((sum, s) => sum + Math.pow(s - mean, 2), 0) / n;
-  const stdDev = Math.sqrt(variance);
-
-  // Edge case: zero variance means all funds scored identically.
-  // No fund is breaking away — equal-weight the entire menu.
-  if (stdDev < 0.01) {
-    const equalPct = Math.round(100 / n);
-    return rankedFunds.map((f, i) => ({
-      ticker: f.ticker,
-      name: f.name,
-      percentage: i === 0 ? 100 - (equalPct * (n - 1)) : equalPct,
-      reason: `Rank #${f.rank}, composite ${f.composite}/100 (no statistical separation)`,
-    }));
-  }
-
-  // ── Step 2: Z-score each fund ──
-  const zScored = rankedFunds.map(f => ({
-    ...f,
-    zScore: (f.composite - mean) / stdDev,
-  }));
-
-  // ── Step 3: Apply risk tolerance threshold ──
-  // The threshold determines which funds qualify for allocation.
-  // Conservative casts a wider net; aggressive demands separation.
-  // Map 1-9 risk scale to z-score threshold:
-  //   1 (most conservative) → 0.0  (above average — wide net)
-  //   5 (moderate)           → 0.5  (clearly above average)
-  //   9 (most aggressive)    → 1.0  (statistical outliers only)
-  const threshold = (riskTolerance - 1) / 8;
-
-  // ── Step 4: Filter to funds above the threshold ──
-  const qualifying = zScored.filter(f => f.zScore > threshold);
-
-  // Safety net: if threshold excludes everything (possible with aggressive
-  // when scores are tightly clustered), include the top scorer.
-  if (qualifying.length === 0) {
-    const best = zScored[0]; // already sorted by composite descending
-    return [{
-      ticker: best.ticker,
-      name: best.name,
-      percentage: 100,
-      reason: `Rank #${best.rank}, composite ${best.composite}/100, z ${best.zScore.toFixed(2)}σ (sole qualifier)`,
-    }];
-  }
-
-  // ── Step 5: Size positions proportional to (z - threshold) ──
-  // The fund right at the cutoff gets a small weight.
-  // The further a fund breaks away, the more it's rewarded.
-  const withWeight = qualifying.map(f => ({
-    ...f,
-    weight: f.zScore - threshold,
-  }));
-
-  const totalWeight = withWeight.reduce((sum, f) => sum + f.weight, 0);
-
-  const rawAllocation = withWeight.map(f => ({
+  // Convert to AllocationInput[] for the real engine
+  const inputs: AllocationInput[] = rankedFunds.map(f => ({
     ticker: f.ticker,
-    name: f.name,
-    rawPct: (f.weight / totalWeight) * 100,
-    rank: f.rank,
-    composite: f.composite,
-    zScore: f.zScore,
+    compositeScore: f.composite,
+    isMoneyMarket: MONEY_MARKET_TICKERS.has(f.ticker),
+    fallbackCount: 0,  // Brief doesn't have fallback data; quality gate runs in pipeline
   }));
 
-  // Drop funds that round to less than 1% — rounding noise, not a
-  // meaningful position. The z-score barely cleared the threshold.
-  const meaningful = rawAllocation.filter(a => a.rawPct >= 0.5);
+  const results = computeAllocations(inputs, riskTolerance);
 
-  // Re-normalize to sum to exactly 100
-  const meaningfulSum = meaningful.reduce((sum, a) => sum + a.rawPct, 0);
-  const allocation = meaningful.map(a => ({
-    ticker: a.ticker,
-    name: a.name,
-    percentage: Math.round((a.rawPct / meaningfulSum) * 100),
-    reason: `Rank #${a.rank}, composite ${a.composite}/100, z ${a.zScore.toFixed(2)}σ`,
-  }));
+  // Map back to Brief's expected shape, including only funds with >0% allocation
+  const nameMap = new Map(rankedFunds.map(f => [f.ticker, f]));
 
-  // Fix rounding to exactly 100
-  const roundedSum = allocation.reduce((sum, a) => sum + a.percentage, 0);
-  if (roundedSum !== 100 && allocation.length > 0) {
-    allocation[0].percentage += 100 - roundedSum;
-  }
-
-  return allocation;
+  return results
+    .filter(r => r.allocationPct > 0)
+    .map(r => {
+      const fund = nameMap.get(r.ticker);
+      return {
+        ticker: r.ticker,
+        name: fund?.name ?? r.ticker,
+        percentage: r.allocationPct,
+        reason: `${r.tier} tier, composite ${r.compositeScore}/100` +
+          (r.modZ != null ? `, mod-z ${r.modZ.toFixed(2)}σ` : ''),
+      };
+    });
 }
 
 /**
@@ -478,8 +390,11 @@ export async function assembleDataPacket(
   // Fetch latest thesis
   const { data: thesisRow } = await supaFetch<{
     narrative: string;
-    sector_preferences: SectorPreference[];
+    sector_preferences: Array<{ sector: string; score?: number; preference?: number; reasoning?: string; reason?: string }>;
     key_themes: string[];
+    dominant_theme?: string;
+    macro_stance?: string;
+    risk_factors?: string[];
   }>('thesis_cache', {
     params: {
       pipeline_run_id: `eq.${pipelineRunId}`,
@@ -491,14 +406,24 @@ export async function assembleDataPacket(
 
   const thesis: MacroThesis = thesisRow ? {
     narrative: thesisRow.narrative,
-    sectorPreferences: thesisRow.sector_preferences,
-    keyThemes: thesisRow.key_themes,
+    sectorPreferences: (thesisRow.sector_preferences || []).map(sp => ({
+      sector: String(sp.sector || ''),
+      score: Number(sp.score ?? sp.preference ?? 5.0),  // backward compat: old rows used 'preference'
+      reasoning: String(sp.reasoning || sp.reason || ''),
+    })),
+    keyThemes: thesisRow.key_themes || [],
+    dominantTheme: (thesisRow as Record<string, unknown>).dominant_theme as string || '',
+    macroStance: ((thesisRow as Record<string, unknown>).macro_stance as string || 'mixed') as MacroThesis['macroStance'],
+    riskFactors: (thesisRow as Record<string, unknown>).risk_factors as string[] || [],
     generatedAt: new Date().toISOString(),
     model: CLAUDE.THESIS_MODEL,
   } : {
     narrative: 'Macro thesis unavailable.',
     sectorPreferences: [],
     keyThemes: [],
+    dominantTheme: '',
+    macroStance: 'mixed' as const,
+    riskFactors: [],
     generatedAt: new Date().toISOString(),
     model: CLAUDE.THESIS_MODEL,
   };
@@ -597,8 +522,8 @@ export async function assembleDataPacket(
   fundsData.sort((a, b) => b.userComposite - a.userComposite);
   fundsData.forEach((f, i) => { f.userRank = i + 1; });
 
-  // Compute allocation
-  const allocation = computeAllocation(
+  // Compute allocation via MAD-based Kelly engine (§3)
+  const allocation = computeAllocationForBrief(
     fundsData.map(f => ({ ticker: f.ticker, name: f.name, composite: f.userComposite, rank: f.userRank })),
     profile.risk_tolerance
   );
@@ -666,8 +591,8 @@ export async function generateBrief(
 ${dataPacket.macro.narrative}
 
 ### Sector Preferences
-${dataPacket.macro.sectorPreferences.map(p =>
-  `- ${p.sector}: ${p.preference > 0 ? '+' : ''}${p.preference} (${p.reasoning || 'no detail'})`
+${dataPacket.macro.sectorPreferences.map((p: { sector: string; score: number; reasoning?: string }) =>
+  `- ${p.sector}: ${p.score.toFixed(1)}/10 (${p.reasoning || 'no detail'})`
 ).join('\n')}
 
 ### Key Themes

@@ -843,7 +843,7 @@ Claude should reference current events, trends, and cultural context when it enh
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 7, 2026 (after Session 4)
+**Last updated:** April 7, 2026 (after Session 6)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -902,6 +902,13 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Client-side rescore uses z-scores + CDF | §2.1, §5.2 | Portfolio.tsx | Weighted z-sum + `normalCDF()`. No universe data needed client-side. — Session 4 |
 | Fallback: <2 funds → raw weighted average | §2.1 | scoring.ts | Z-standardization undefined for n<2, graceful fallback — Session 4 |
 | Weight validation: ±0.02 tolerance, 5% min | §2.2 | scoring.ts | `validateWeights()` updated to spec tolerances — Session 4 |
+| Thesis: 1.0–10.0 continuous sector scale | §2.6.1 | thesis.ts | Range anchoring: ≥2 sectors ≥7.0, ≥2 ≤4.0, spread ≥4.0. Replaces -2/+2 integer scale — Session 6 |
+| Positioning: correct normalization | §2.6.3 | positioning.ts | `(score - 1) / 9` maps 1–10 → 0–1. Unclassified = neutral 0.5 — Session 6 |
+| Deterministic FRED sector priors | §2.6.2 | thesis.ts | `computeSectorPriors()`: yield curve, CPI, fed stance, employment rules — Session 6 |
+| FRED commodity series | §4.4 | fred.ts, constants.ts | WTI, Brent, Gold, Dollar Index in INDICATOR_META + fetchMacroSnapshot — Session 6 |
+| Allocation: MAD + Kelly exponential | §3.1–3.6 | allocation.ts | MAD z-score, quality gate, e^(k×modZ), 5% de minimis, rounding absorption — Session 6 |
+| Money market global skip | §2.7 | pipeline.ts, constants.ts, allocation.ts | FDRXX/ADAXX fixed composite 50, skip all factor scoring, MM tier — Session 6 |
+| Portfolio: Invalid Date fix | §6 | Portfolio.tsx | Null/invalid timestamp guard for pipeline run display — Session 6 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -919,18 +926,13 @@ Status: ✅ Implemented. `scoreMomentumCrossSectional()` now computes daily retu
 File: `src/engine/momentum.ts`, function `scoreMomentumCrossSectional()`
 Status: ✅ Implemented. Z-standardize (Bessel, n-1) → winsorize ±3σ → normalCDF() → 0-100. Edge cases: <2 funds → all 50, stdev=0 → all 50, single fund → 75, no data → 50. Uses vol-adjusted returns when available.
 
-**CRITICAL-4: Positioning — Wrong Scale (§2.6.1)**
-Files: `src/engine/thesis.ts` (prompt and types), `src/engine/positioning.ts` (normalization)
-Spec requires: sector scores on 1.0–10.0 scale (one decimal). Range anchoring: ≥2 sectors ≥7.0, ≥2 sectors ≤4.0, spread ≥4.0. Normalization: `(score - 1) / 9`.
-Code does: -2 to +2 integer scale. Prompt asks Claude for -2 to +2. Normalization: `(preference + 2) / 4`.
-Impact: 5 discrete values vs continuous 1.0-10.0. Positioning scores compressed.
+**~~CRITICAL-4: Positioning — Wrong Scale (§2.6.1)~~ — RESOLVED (Session 6)**
+Files: `src/engine/thesis.ts`, `src/engine/positioning.ts`
+Status: ✅ Complete rewrite. thesis.ts prompt now requests 1.0–10.0 continuous scale with one decimal. SectorPreference interface uses `score: number`. Range anchoring validation added: ≥2 sectors ≥7.0, ≥2 sectors ≤4.0, spread ≥4.0. Deterministic FRED-based sector priors injected into prompt. positioning.ts normalization corrected to `(score - 1) / 9`. Backward compat with old DB rows (handles both `score` and `preference` fields).
 
-**CRITICAL-5: Allocation Engine — Wrong Algorithm (§3.1–3.6)**
-File: `src/engine/brief-engine.ts`, function `computeAllocation()`
-Spec requires: (1) MAD-based modified z-scores using 0.6745 consistency constant, (2) quality gate excluding 4+ fallback funds, (3) exponential curve `e^(k × mod_z)` using Kelly k parameter from KELLY_RISK_TABLE, (4) normalize, (5) 5% de minimis floor, (6) rounding with error absorption into largest position.
-Code does: standard z-scores → linear threshold `(rt-1)/8` → proportional `z - threshold` weighting → 0.5% floor.
-Impact: Fundamentally different allocation behavior. The exponential curve creates dramatically different concentration profiles at each risk level. The 5% de minimis floor is industry standard; 0.5% is meaningless.
-NOTE: The allocation engine should be extracted to its own file (`allocation.ts`) rather than living inside brief-engine.ts.
+**~~CRITICAL-5: Allocation Engine — Wrong Algorithm (§3.1–3.6)~~ — RESOLVED (Session 6)**
+File: `src/engine/allocation.ts` (new file, extracted from brief-engine.ts)
+Status: ✅ Full spec §3 implementation. MAD-based modified z-scores (0.6745 consistency constant). Quality gate (4+ fallbacks → excluded). Exponential curve `e^(k × mod_z)` using KELLY_RISK_TABLE k-parameters. 5% de minimis floor with iterative removal + renormalization. Rounding with error absorption into largest position. Money market funds excluded with MM tier. brief-engine.ts updated to call computeAllocations() from allocation.ts.
 
 ### 9.3 What's MISSING (Spec Feature Not Yet Implemented)
 
@@ -947,19 +949,17 @@ Status: ✅ Implemented. Issuer Category Quality Map (UST=1.00, USG=0.95, MUN=0.
 File: `src/engine/quality.ts`, `src/engine/pipeline.ts`, `src/engine/scoring.ts`
 Status: ✅ Implemented. quality.ts returns `coveragePct`. Pipeline computes per-fund weight adjustments when coverage < 0.40: `quality_weight_adj = base × max(coverage/0.40, 0.10)`, freed weight → momentum, renormalize to 1.0. `scoreAndRankFunds()` accepts per-fund weight overrides so z-standardization stays uniform but composites use adjusted weights.
 
-**MISSING-4: FRED Commodity Series (§4.4)**
+**~~MISSING-4: FRED Commodity Series (§4.4)~~ — RESOLVED (Session 6)**
 Files: `src/engine/fred.ts`, `src/engine/constants.ts`
-Spec: DCOILWTICO (WTI crude), DCOILBRENTEU (Brent crude), GOLDAMGBD228NLBM (gold), DTWEXBGS (dollar index), copper.
-Status: Constants added in Session 1 (FRED_COMMODITY_SERIES). Not yet wired into fred.ts fetch or thesis prompt.
+Status: ✅ 4 commodity indicators (WTI crude, Brent crude, Gold, Dollar Index) added to INDICATOR_META in fred.ts. fetchMacroSnapshot() now fetches combined FRED_SERIES + FRED_COMMODITY_SERIES. Data flows to thesis prompt.
 
-**MISSING-5: Deterministic FRED-Based Sector Priors (§2.6.2)**
+**~~MISSING-5: Deterministic FRED-Based Sector Priors (§2.6.2)~~ — RESOLVED (Session 6)**
 File: `src/engine/thesis.ts`
-Spec: Compute before Claude. Rules: yield curve inverted → Financials prior -1.0; CPI YoY > 4% → Energy +1.0, Precious Metals +1.0; fed tightening → Real Estate -0.5, Utilities -0.5; unemployment > 5% → Consumer Disc -0.5, Consumer Staples +0.5.
-Status: Not implemented. No `computeSectorPriors()` function. FRED data goes directly to Claude.
+Status: ✅ `computeSectorPriors()` implemented. Deterministic rules: yield curve inverted → Financials -1.0; inflation rising → Energy +1.0, Precious Metals +1.0; fed tightening → Real Estate -0.5, Utilities -0.5; weak employment → Consumer Disc -0.5, Consumer Staples +0.5. Priors injected into Claude prompt as "SECTOR PRIORS (pre-computed)" block before Claude generates scores.
 
-**MISSING-6: Money Market Global Skip (§2.7)**
-Spec: Money market funds get fixed composite 50, skip ALL factor scoring, display as "MM" tier, weight 0 in allocation engine.
-Status: Category detection exists in cost-efficiency.ts. No global skip in pipeline.ts. No MM tier display. No allocation exclusion.
+**~~MISSING-6: Money Market Global Skip (§2.7)~~ — RESOLVED (Session 6)**
+Files: `src/engine/pipeline.ts`, `src/engine/constants.ts`, `src/engine/allocation.ts`
+Status: ✅ MONEY_MARKET_TICKERS set (FDRXX, ADAXX) in constants.ts. pipeline.ts separates money market funds before scoring loops — they get fixed composite 50 with all factors at 50, skip holdings/fundamentals/classification/momentum/positioning. allocation.ts excludes MM funds from allocation (0% weight, MM tier badge).
 
 **MISSING-7: HHI Concentration Display (§6.6)**
 Spec: Herfindahl-Hirschman Index of sector exposure per fund in detail view. Informational only.
@@ -994,8 +994,8 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) | **DONE** |
 | 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | **DONE** |
 | 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | **DONE** |
-| 6 | Thesis Overhaul | CRITICAL-4 (1-10 scale), MISSING-4 (FRED commodities wired in), MISSING-5 (deterministic priors) | |
-| 7 | Allocation Engine | CRITICAL-5 (full Kelly rewrite), MISSING-6 (money market exclusion) | |
+| 6 | Thesis + Allocation + MM Skip | CRITICAL-4 (1-10 scale), CRITICAL-5 (Kelly allocation), MISSING-4 (FRED commodities), MISSING-5 (sector priors), MISSING-6 (money market skip) | **DONE** |
+| 7 | *(Merged into Session 6)* | — | **DONE** |
 | 8 | UI Alignment | Tier badges wired in, risk slider 1-7 in client, HHI (MISSING-7) | |
 | 9 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
 | 10 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) | |
@@ -1250,6 +1250,74 @@ Files: `tiingo.ts`, `constants.ts`
 **Resolved:** CRITICAL-2 (momentum vol-adjust), CRITICAL-3 (momentum z-score/CDF), MISSING-2 (bond quality), MISSING-3 (coverage scaling), MISSING-8 fully resolved (Finnhub fee data wired)
 **Verification:** `tsc --noEmit` passes clean. Pipeline re-run recommended to verify scoring changes with live data.
 **Note from Robert:** v5.1 UI strongly preferred over v6 UI — future session (Session 8) will port v5.1 UI.
+
+---
+
+## April 7, 2026 — Session 6: Thesis Scale, Allocation Engine, Money Market Skip, FRED Commodities
+
+**Goal:** Restore the remaining v5.1 "secret sauce" — the thesis scoring scale, allocation engine, deterministic sector priors, FRED commodities, and money market handling. This session merged the planned Session 6 (Thesis Overhaul) and Session 7 (Allocation Engine) into a single session.
+
+**Gaps addressed:** CRITICAL-4, CRITICAL-5, MISSING-4, MISSING-5, MISSING-6, plus Portfolio.tsx "Invalid Date" UI bug.
+
+**1. Thesis: 1.0–10.0 continuous sector scale with range anchoring (CRITICAL-4).**
+File: `thesis.ts` — complete rewrite.
+- SectorPreference interface: `score: number` (1.0–10.0) replacing `preference: number` (-2 to +2)
+- MacroThesis extended: `dominantTheme`, `macroStance`, `riskFactors`
+- Prompt rewritten with v5.1-style scoring instructions and range anchoring rules
+- Parser handles JSON object and array formats; `clampScore()` enforces 1.0–10.0
+- `checkRangeAnchoring()` validates: ≥2 sectors ≥7.0, ≥2 sectors ≤4.0, spread ≥4.0
+
+**2. Deterministic FRED-based sector priors (MISSING-5).**
+File: `thesis.ts`, function `computeSectorPriors()`
+- Yield curve inverted → Financials -1.0
+- Inflation rising → Energy +1.0, Precious Metals +1.0
+- Fed tightening → Real Estate -0.5, Utilities -0.5
+- Weak employment → Consumer Disc -0.5, Consumer Staples +0.5
+- Priors injected into Claude prompt as "SECTOR PRIORS (pre-computed)" block
+
+**3. Positioning normalization corrected (CRITICAL-4 companion).**
+File: `positioning.ts` — complete rewrite.
+- Normalization: `(score - 1) / 9` maps 1–10 → 0–1 (was `(preference + 2) / 4`)
+- Alignment thresholds: favorable = ≥7.0, unfavorable = ≤4.0
+- Unclassified holdings contribute neutral 0.5
+
+**4. Allocation engine: full Kelly rewrite (CRITICAL-5).**
+File: `allocation.ts` — new file, extracted from brief-engine.ts.
+- MAD-based modified z-scores (0.6745 consistency constant)
+- Quality gate: 4+ fallbacks → excluded
+- Exponential curve `e^(k × mod_z)` using KELLY_RISK_TABLE k-parameters
+- 5% de minimis floor with iterative removal + renormalization
+- Rounding with error absorption into largest position
+- brief-engine.ts updated: old `computeAllocation()` replaced with bridge to `computeAllocations()`
+
+**5. FRED commodity series wired in (MISSING-4).**
+File: `fred.ts`
+- 4 commodity indicators added to INDICATOR_META: WTI Crude, Brent Crude, Gold, Dollar Index
+- `fetchMacroSnapshot()` fetches combined FRED_SERIES + FRED_COMMODITY_SERIES
+
+**6. Money market global skip (MISSING-6).**
+Files: `constants.ts`, `pipeline.ts`, `allocation.ts`
+- MONEY_MARKET_TICKERS = Set(['FDRXX', 'ADAXX'])
+- Pipeline separates money market funds before all scoring loops
+- Fixed composite 50, all factors at 50, skip holdings/fundamentals/classification
+- Allocation engine excludes with MM tier badge, 0% weight
+
+**7. Portfolio.tsx "Invalid Date" fix.**
+File: `client/src/pages/Portfolio.tsx`
+- IIFE guard: checks for null/undefined timestamp, validates with `isNaN(d.getTime())`
+
+**8. Backward compatibility: thesis_cache and brief-engine.**
+Files: `types.ts`, `persist.ts`, `brief-engine.ts`, `pipeline.ts`
+- ThesisCacheRow.sector_preferences broadened to accept both `score` and `preference` fields
+- brief-engine.ts thesis reconstruction handles old DB rows
+- persist.ts saves `dominant_theme`, `macro_stance`, `risk_factors`
+- Pipeline fallback thesis includes new MacroThesis fields
+
+**Files created:** `allocation.ts`
+**Files changed:** `thesis.ts`, `positioning.ts`, `brief-engine.ts`, `pipeline.ts`, `fred.ts`, `constants.ts`, `types.ts`, `persist.ts`, `Portfolio.tsx`, `FUNDLENS_SPEC.md`
+**Resolved:** CRITICAL-4 (thesis scale), CRITICAL-5 (allocation engine), MISSING-4 (FRED commodities), MISSING-5 (sector priors), MISSING-6 (money market skip), Invalid Date UI bug
+**Pending:** `thesis_cache` Supabase migration needed for `dominant_theme`, `macro_stance`, `risk_factors` columns. Pipeline re-run needed to generate fresh scores. `resolveSubFundTicker()` stub still returns null (fund-of-funds look-through can't fire).
+**Verification:** `tsc --noEmit` passes clean on both server and client.
 
 ---
 
