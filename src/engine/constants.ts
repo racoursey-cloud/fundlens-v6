@@ -279,6 +279,7 @@ export const ENV_KEYS = [
   'FMP_API_KEY',
   'OPENFIGI_API_KEY',
   'TINNGO_KEY',        // Intentional typo — NEVER correct or mention it
+  'FINNHUB_KEY',       // Mutual fund expense ratios (ported from v5.1)
   'FRED_API_KEY',
   'RESEND_API_KEY',
 ] as const;

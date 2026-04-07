@@ -33,9 +33,10 @@
 import { PIPELINE, CLAUDE } from './constants.js';
 import { delay, ResolvedHolding, FundRow } from './types.js';
 import { runHoldingsPipeline } from './holdings.js';
-import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRawProfile, fetchFundInfo, extractExpenseRatio } from './fmp.js';
+import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics } from './fmp.js';
 import { supaUpdate } from './supabase.js';
+import { fetchExpenseRatio } from './finnhub.js';
 import { fetchTiingoPrices, fetchFundFees, convertTiingoPricesToFmpFormat, normalizeFeeData } from './tiingo.js';
 import { NormalizedFeeData } from './tiingo.js';
 import { scoreCostEfficiency, CostEfficiencyResult } from './cost-efficiency.js';
@@ -197,60 +198,35 @@ export async function runFullPipeline(
     qualityResults.set(fundTicker, result);
   }
 
-  // ── Step 7a: Sync fund expense ratios (auto-populate from FMP) ──
-  // If a fund's expense_ratio is NULL in the database, fetch it from FMP
-  // and persist it so future runs (and cost scoring) have real data.
+  // ── Step 7a: Sync fund expense ratios (Finnhub → FMP → static fallback) ──
+  // Ported from v5.1's expenses.js. If a fund's expense_ratio is NULL in the
+  // database, fetch it from Finnhub's mutual fund profile endpoint (primary),
+  // then FMP (secondary), then a static map (last resort). Persist to the
+  // funds table so future runs skip the fetch (90-day effective TTL).
   // This makes the pipeline self-healing — no manual SQL needed.
 
   const fundsNeedingExpenseRatio = funds.filter(f => f.expense_ratio == null);
   if (fundsNeedingExpenseRatio.length > 0) {
-    progress(7, `Fetching expense ratios for ${fundsNeedingExpenseRatio.length} funds missing data`);
+    progress(7, `Fetching expense ratios for ${fundsNeedingExpenseRatio.length} funds`);
 
     for (const fund of fundsNeedingExpenseRatio) {
-      let expenseRatio: number | null = null;
+      const result = await fetchExpenseRatio(fund.ticker);
+      await delay(PIPELINE.API_CALL_DELAY_MS);
 
-      try {
-        // Try FMP ETF/fund info endpoint first (best source for mutual fund fees)
-        const fundInfo = await fetchFundInfo(fund.ticker);
-        if (fundInfo) {
-          expenseRatio = extractExpenseRatio(fundInfo);
-          if (expenseRatio) {
-            console.log(`[pipeline] FMP etf-info expense ratio for ${fund.ticker}: ${expenseRatio}`);
-          }
-        }
-        await delay(PIPELINE.API_CALL_DELAY_MS);
-
-        // Fallback: try FMP raw profile (sometimes includes expense ratio)
-        if (!expenseRatio) {
-          const rawProfile = await fetchRawProfile(fund.ticker);
-          if (rawProfile) {
-            expenseRatio = extractExpenseRatio(rawProfile);
-            if (expenseRatio) {
-              console.log(`[pipeline] FMP profile expense ratio for ${fund.ticker}: ${expenseRatio}`);
-            }
-          }
-          await delay(PIPELINE.API_CALL_DELAY_MS);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[pipeline] Expense ratio fetch failed for ${fund.ticker}: ${msg}`);
-      }
-
-      // Persist to funds table so future runs don't need to refetch
-      if (expenseRatio) {
+      if (result.source !== 'none' && result.expenseRatio > 0) {
+        // Persist to funds table so future runs don't need to refetch
         const { error } = await supaUpdate('funds', {
-          expense_ratio: expenseRatio,
+          expense_ratio: result.expenseRatio,
         }, { id: `eq.${fund.id}` });
 
         if (error) {
           console.warn(`[pipeline] Failed to persist expense ratio for ${fund.ticker}: ${error}`);
         } else {
-          // Update the in-memory fund object for this run's cost scoring
-          fund.expense_ratio = expenseRatio;
-          console.log(`[pipeline] Saved expense ratio for ${fund.ticker}: ${expenseRatio}`);
+          fund.expense_ratio = result.expenseRatio;
+          console.log(`[pipeline] Saved ${fund.ticker} expense ratio: ${result.expenseRatio} (source: ${result.source})`);
         }
       } else {
-        console.warn(`[pipeline] No expense ratio found for ${fund.ticker} — Cost will score neutral (50)`);
+        console.warn(`[pipeline] No expense ratio for ${fund.ticker} — Cost will score neutral (50)`);
       }
     }
   }

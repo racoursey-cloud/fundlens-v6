@@ -1,103 +1,171 @@
-# Session 5 Handoff: Factor Upgrades (Momentum + Bond Quality + Coverage Scaling)
+# FundLens v6 — Session 5 Handoff
 
-## Directive
+**Date:** April 7, 2026
+**Previous session:** Session 4 (z-space + CDF scoring engine) + Session 4 continuation (production fixes + Finnhub integration)
+**Repo:** `racoursey-cloud/fundlens-v6` on GitHub (private)
+**Branch:** `main`
+**Spec:** `FUNDLENS_SPEC.md` (read it first — it is the single source of truth)
 
-Read `FUNDLENS_SPEC.md` at the repo root before doing anything. Pay special attention to Section 9 (Implementation Status). The spec is the single source of truth — if code and spec disagree, fix the code.
+---
 
-**Set up GitHub push access first** (spec preamble, "Repository & Git Setup"). Robert will provide the PAT at session start. Configure it before writing any code:
+## What Was Done in Session 4 + Continuation
+
+### Session 4 (Primary)
+Rewrote the composite scoring engine in `scoring.ts` to implement the z-space + CDF pipeline from spec §2.1. This is the mathematical heart of FundLens. Key deliverables:
+- `normalCDF()` — Abramowitz & Stegun 7.1.26 approximation
+- `zStandardize()` — Bessel-corrected (n-1)
+- `scoreAndRankFunds()` — full z-space + CDF pipeline
+- `computeCompositeFromZScores()` — client-side rescore function
+- Z-scores persisted to `fund_scores` table for client-side slider rescore
+- Client-side `Portfolio.tsx` uses z-scores + CDF for instant slider feedback
+- Validated against §2.8 worked example: Fund A=84, B=41, C=40, D=31
+
+### Session 4 Continuation (Production Fixes)
+Diagnosed and fixed three production issues after deploying Session 4:
+
+1. **Helmet CSP blocking Supabase auth** — App stuck on "Loading..." in production. The default Helmet CSP blocked cross-origin Supabase requests. Fixed with explicit CSP directives in `server.ts` allowing `https://*.supabase.co` and `wss://*.supabase.co`.
+
+2. **Empty sector exposure donut chart** — Client reads `factor_details.sectorExposure` but pipeline wasn't populating it. Fixed in `pipeline.ts` (builds sectorExposure map from classified holdings) and `scoring.ts` (added field to interface).
+
+3. **Cost=50 for ALL funds** — Root cause: no expense ratio data. The spec incorrectly claimed Tiingo provides fee data (endpoint returns 404) and NPORT-P contains expense ratios (it doesn't). The actual working source was **Finnhub** (`/api/v1/mutual-fund/profile`), which was the primary in v5.1 but was incorrectly dropped during the v6 rebuild planning. Created `finnhub.ts` with full lookup chain: Finnhub → FMP → static fallback. Added pipeline Step 7a to auto-fetch and persist expense ratios.
+
+---
+
+## Pre-Flight Checklist (Do These BEFORE Coding)
+
+### 1. Add FINNHUB_KEY to Railway Environment Variables
+The Finnhub API key needs to be set in Railway for the v6 deployment:
 ```
-cd <repo-root>
-git remote set-url origin https://racoursey-cloud:<GITHUB_PAT>@github.com/racoursey-cloud/fundlens-v6.git
+FINNHUB_KEY=d6nmeapr01qse5qm8t70d6nmeapr01qse5qm8t7g
 ```
+Without this, Step 7a will skip Finnhub and fall back to FMP/static data.
 
-## What This Session Must Accomplish
+### 2. Run the Pipeline
+After adding the Finnhub key, trigger a pipeline run to verify:
+- Finnhub returns expense ratios for TerrAscend fund tickers
+- Expense ratios are persisted to the `funds` table
+- Cost scores now differentiate (no longer all 50)
+- Sector exposure donut chart populates
+- All existing functionality still works
 
-**Primary: Fix CRITICAL-2 + CRITICAL-3 — Momentum volatility adjustment and z-score/CDF scoring.**
+### 3. Optional: Run Seed SQL as Immediate Unblock
+If Finnhub verification takes time, `migrations/populate_expense_ratios.sql` can be run in Supabase SQL Editor to seed all 22 funds with prospectus expense ratios immediately.
 
-These are in `src/engine/momentum.ts`. The current code has two problems:
+---
 
-1. **CRITICAL-2 (§2.5.2):** Momentum uses raw blended returns for ranking. The spec requires dividing by realized volatility first: `vol_adjusted_return = blended_return / period_vol` where `period_vol = daily_vol × √(trading_days)`. Without this, high-volatility funds dominate the momentum signal.
+## Session 5 Scope (from §9.5 Build Roadmap)
 
-2. **CRITICAL-3 (§2.5.3):** Momentum scoring uses linear rank-to-score (`95 - (rank / (n-1)) * 90`). The spec requires: z-score (Bessel-corrected) → winsorize ±3 sigma → CDF map to 0–100 via `normalCDF()`. Edge cases: <2 funds → all 50, all identical → all 50, single fund → 75, no price data → 50 with dataQuality flag.
+### Primary: Factor Upgrades
 
-**Important:** You now have a working `normalCDF()` and `zStandardize()` in `src/engine/scoring.ts` from Session 4. You can import and reuse these rather than reimplementing them. They are tested against the §2.8 worked example.
+**CRITICAL-2: Momentum — Missing Volatility Adjustment (§2.5.2)**
+- File: `src/engine/momentum.ts`
+- Spec requires: `vol_adjusted_return = blended_return / period_vol` where `period_vol = daily_vol × √(trading_days)`
+- Code does: uses raw blended returns for ranking
+- Impact: High-volatility funds dominate the momentum signal
 
-**Secondary: Implement MISSING-2 — Bond quality scoring (§2.4.2, §2.4.3).**
+**CRITICAL-3: Momentum — Missing Z-Score + CDF Scoring (§2.5.3)**
+- File: `src/engine/momentum.ts`, function `scoreMomentumCrossSectional()`
+- Spec requires: z-score (Bessel) → winsorize ±3 sigma → CDF map to 0-100
+- Code does: linear rank-to-score `95 - (rank / (n-1)) * 90`
+- Impact: Wrong distribution shape, doesn't handle edge cases per spec
 
-Currently `src/engine/quality.ts` only scores equity holdings. The spec requires:
-- Issuer Category Quality Map: UST=1.00, USG=0.95, MUN=0.80, CORP=0.60, Default=0.50
-- Distressed bond adjustments: isDefault=Y → 0.10, fairValLevel=3 → 0.35, debtInArrears=Y → 0.35
-- Blended scoring for funds with both equity and bond holdings (§2.4.3)
+**MISSING-2: Bond Quality Scoring (§2.4.2, §2.4.3)**
+- File: `src/engine/quality.ts`
+- Spec: Issuer Category Quality Map (UST=1.00, USG=0.95, MUN=0.80, CORP=0.60, Default=0.50)
+- Distressed adjustments: isDefault=Y → 0.10, fairValLevel=3 → 0.35, debtInArrears=Y → 0.35
+- Blended equity/bond scoring for mixed funds
 
-Bond issuer categories come from EDGAR NPORT-P filings — check what fields `edgar.ts` already parses.
+**MISSING-3: Coverage-Based Confidence Scaling (§2.4.1)**
+- File: `src/engine/quality.ts`, `src/engine/pipeline.ts`
+- Spec: If coverage_pct < 0.40, reduce quality weight proportionally, freed weight → momentum
 
-**Tertiary: Implement MISSING-3 — Coverage-based confidence scaling (§2.4.1).**
+### Secondary: Finnhub Fee Data Enhancement
 
-When holdings data coverage < 40%, quality factor weight should be reduced proportionally (floor 10% of base weight) and freed weight goes to momentum. This prevents low-confidence quality scores from distorting composites. Quality needs to return `coverage_pct` for this to work.
+Finnhub's `/api/v1/mutual-fund/profile` returns more than just `expenseRatio`. It also provides:
+- `fee12b1` — 12b-1 marketing fees (percentage)
+- `frontLoad` — front-end load fees
+- `category` — fund category (e.g. "Large Blend", "Intermediate Bond")
 
-## Spec Sections to Cite
+The 12b-1 penalty logic already exists in `cost-efficiency.ts` (Session 3). What's needed:
+1. Have `fetchFinnhubExpenseRatio()` in `finnhub.ts` return `fee12b1` and `frontLoad` alongside `expenseRatio`
+2. Wire these into the `NormalizedFeeData` path that `scoreCostEfficiency()` already accepts
+3. This completes the "enhanced expense analysis" feature from §2.3
 
-- §2.5.2 (Volatility Adjustment — the full formula)
-- §2.5.3 (Cross-Sectional Z-Score + CDF — scoring curve and edge cases)
-- §2.4.2 (Bond Holdings — Issuer Category Quality Map)
-- §2.4.3 (Blended Fund Scoring — equity/bond weighting)
-- §2.4.1 (Coverage-Based Confidence Scaling — the weight redistribution formula)
+### Cleanup (Nice to Have)
+- Remove dead `fetchFundFees()` from `tiingo.ts` (the fee endpoint doesn't exist)
+- Remove the Tiingo fee data path from pipeline Step 7b (currently logs but returns no data)
 
-## Key Constraints
+---
 
-- **Reuse `normalCDF()` and `zStandardize()` from `scoring.ts`.** Do not reimplement. They are validated.
-- **Bessel correction everywhere.** Divide by (n-1), not n.
-- **Winsorize momentum z-scores to ±3 sigma** before CDF mapping (§2.5.3). The composite scoring in `scoring.ts` does NOT winsorize (that's the correct behavior for the composite). Momentum's per-factor z-scores are winsorized.
-- **Edge cases matter.** The spec lists specific behaviors for <2 funds, identical returns, single fund with data, and no price data. Test all of them.
-- **Bond data availability.** Check what EDGAR NPORT-P fields are already parsed in `edgar.ts`. The issuer category and distressed flags may already be in the parsed output — verify before building new parsing.
+## Architecture Notes for Session 5
 
-## What's Already Done (Don't Redo)
+### Files You'll Touch
+- `src/engine/momentum.ts` — CRITICAL-2 and CRITICAL-3 (vol adjustment + z-score/CDF)
+- `src/engine/quality.ts` — MISSING-2 (bond scoring) and MISSING-3 (coverage scaling)
+- `src/engine/pipeline.ts` — wire coverage scaling, possibly update momentum call
+- `src/engine/finnhub.ts` — extend return type to include fee12b1, frontLoad
+- `src/engine/cost-efficiency.ts` — wire Finnhub fee data into NormalizedFeeData path
+- `src/engine/tiingo.ts` — cleanup dead fee code (optional)
 
-- Session 0: Security hardening
-- Session 1: Constants, types, Kelly risk model aligned
-- Session 2: CUSIP resolver audited and fixed
-- Session 3: Tiingo integration (prices + fees), 12b-1 fee penalty, pipeline wired
-- Session 4: Scoring engine rewritten — z-space + CDF composite, normalCDF(), zStandardize(), z-scores persisted for client rescore
+### Key Patterns
+- All Claude calls sequential with 1.2s delays (CLAUDE_CALL_DELAY_MS). NEVER Promise.all().
+- All API calls have 500ms delays (API_CALL_DELAY_MS).
+- Scoring operates in z-space (Session 4). Raw scores → z-standardize → weighted composite → CDF → 0-100.
+- Client-side rescore uses pre-computed z-scores from Supabase. Only the weighted sum + CDF runs client-side.
 
-## Files You'll Touch
+### Supabase Project
+- Project ID: `ymrcbpfoveqpvucsmoyv`
+- Access via Supabase dashboard or `supaFetch()` pattern in code
+- All server queries use service_role key via Express proxy
 
-- **MODIFY:** `src/engine/momentum.ts` — add vol adjustment, rewrite scoring to z-score + CDF
-- **MODIFY:** `src/engine/quality.ts` — add bond quality scoring, blended scoring, return coverage_pct
-- **POSSIBLY MODIFY:** `src/engine/pipeline.ts` — if coverage-based weight redistribution needs to happen at pipeline level
-- **IMPORT FROM:** `src/engine/scoring.ts` — `normalCDF()`, `zStandardize()`
-- **VERIFY:** `src/engine/edgar.ts` — check what bond fields are already parsed from NPORT-P
+### Data Source Summary
+| Data | Source | File |
+|------|--------|------|
+| Fund holdings | SEC EDGAR NPORT-P | edgar.ts, holdings.ts |
+| CUSIP → ticker | OpenFIGI → FMP search fallback | cusip.ts |
+| Company fundamentals | FMP Starter (/stable/) | fmp.ts |
+| Fund NAV prices | Tiingo (primary) → FMP (fallback) | tiingo.ts, fmp.ts |
+| Expense ratios | Finnhub (primary) → FMP → static map | finnhub.ts |
+| Sector classification | Claude Haiku | classify.ts |
+| Macro thesis | Claude Sonnet + FRED + RSS | thesis.ts, fred.ts, rss.ts |
+| Investment Brief | Claude Opus | brief-engine.ts |
 
-## What Session 4 Learned (Tips for Success)
+---
 
-1. **Read the full spec before writing any code.** Project drift has been a real problem. Robert is clear: the spec is the single source of truth. Cite specific sections for every decision.
+## Session 5 Handoff Prompt
 
-2. **The Abramowitz & Stegun CDF coefficients approximate `erf(x)`, not `Φ(x)` directly.** The relationship is `Φ(z) = 0.5 × (1 + erf(z/√2))`. Session 4 got this wrong initially and had to debug. You don't need to worry about this — just import the working `normalCDF()` from `scoring.ts`.
+```
+You are continuing the FundLens v6 build. This is Session 5.
 
-3. **Validate against worked examples early.** Write a standalone test script before wiring into the pipeline. Catch math errors before they propagate.
+Read FUNDLENS_SPEC.md first — it is the single source of truth. Pay special attention to:
+- §2.5 (Momentum factor — vol adjustment + z-score/CDF)
+- §2.4.2, §2.4.3 (Bond quality scoring + blended scoring)
+- §2.4.1 (Coverage-based confidence scaling)
+- §9.2 (CRITICAL-2, CRITICAL-3) and §9.3 (MISSING-2, MISSING-3)
+- §10 changelog (Session 4 continuation — explains Finnhub integration and what changed)
 
-4. **Don't touch things outside your scope.** Session 4 was strictly scoring engine only. Your scope is momentum + bond quality + coverage scaling. Don't fix CRITICAL-4 (positioning scale) or CRITICAL-5 (allocation) — those are Sessions 6 and 7.
+Pre-flight:
+1. Verify FINNHUB_KEY is set in Railway environment variables
+2. Run pipeline to verify Session 4 continuation fixes (expense ratios, sector donut, CSP)
+3. Confirm Cost scores now differentiate across funds
 
-5. **Commit after each logical unit.** Prefix with `Session 5:`. Push to main. Update the spec (§9 + §10) and write HANDOFF_SESSION_6.md as your final commit.
+Primary deliverables:
+1. CRITICAL-2: Add volatility adjustment to momentum scoring (§2.5.2)
+2. CRITICAL-3: Replace linear rank scoring with z-score + CDF in momentum (§2.5.3)
+3. MISSING-2: Implement bond quality scoring with issuer category map (§2.4.2)
+4. MISSING-3: Implement coverage-based quality weight redistribution (§2.4.1)
 
-6. **Run `tsc --noEmit` after every change.** Both server and client (`cd client && npx tsc --noEmit`). Don't let type errors accumulate.
+Secondary:
+5. Wire Finnhub fee12b1 data into the NormalizedFeeData path for cost-efficiency scoring
+6. Clean up dead Tiingo fee code
 
-## Verification
+Repo: racoursey-cloud/fundlens-v6 (GitHub, private)
+Branch: main
+GitHub PAT: (ask Robert if not configured)
 
-- `tsc --noEmit` must pass clean (server and client)
-- Momentum: construct a test case with funds of varying returns and volatilities. Verify that a fund with 12% return / 8% vol scores higher than one with 15% return / 25% vol.
-- Bond quality: construct a test case with UST, CORP, and distressed holdings. Verify scores match the issuer category map.
-- Coverage scaling: test with coverage_pct = 0.30 and verify quality weight is reduced and momentum weight is increased.
-- Update FUNDLENS_SPEC.md: §9.2 (mark CRITICAL-2, CRITICAL-3 resolved), §9.3 (mark MISSING-2, MISSING-3 resolved), §9.5 (Session 5 → DONE), §10 (changelog)
+After completing all deliverables:
+- Update FUNDLENS_SPEC.md §9 status and §10 changelog
+- Run tsc --noEmit to verify clean compilation
+- Commit and push all changes
 - Write HANDOFF_SESSION_6.md
-
-## What I Think Is Most Important
-
-After this session, the remaining CRITICALs are:
-- **CRITICAL-4:** Positioning scale change from -2/+2 to 1.0–10.0 (Session 6)
-- **CRITICAL-5:** Allocation engine rewrite (Session 7)
-
-With Sessions 4 and 5 done, the scoring pipeline will be mathematically correct for the first time. Session 6 (thesis overhaul) fixes the positioning input, and Session 7 (allocation) fixes how scores translate to portfolio weights. After that, the engine is spec-compliant end to end.
-
-## Database Migration Note
-
-Session 4 created `migrations/session4_add_z_scores.sql` which adds z-score columns to `fund_scores`. Robert needs to run this in Supabase SQL Editor before the next pipeline run. Remind him if it hasn't been done.
+```

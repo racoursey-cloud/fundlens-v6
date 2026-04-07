@@ -1,6 +1,6 @@
 # FundLens — Master Specification
 ## Version 7.0 — Single Source of Truth
-**Last updated:** April 7, 2026 (Session 4)
+**Last updated:** April 7, 2026 (Session 4 continuation)
 **Owner:** Robert Coursey (racoursey@gmail.com)
 
 ---
@@ -881,12 +881,15 @@ This section tells future sessions exactly what state the codebase is in relativ
 | CUSIP resolver: 429 rate limit retry | §4.3 | cusip.ts | 10s backoff + single retry — verified Session 2 |
 | Fund-of-funds look-through depth = 1 | §2.4.4 | holdings.ts | MAX_LOOKTHROUGH_DEPTH=1 — fixed Session 2 (was 2) |
 | pctOfNav whole-percent units documented | §4.3 | types.ts | Doc comments corrected from "0.0–1.0" to whole-percent — Session 2 |
-| Tiingo API client (NAV prices + fee data) | §4.1, §4.6 | tiingo.ts | fetchTiingoPrices(), fetchFundFees(), convertTiingoPricesToFmpFormat() — Session 3 |
+| Tiingo API client (NAV prices) | §4.1, §4.6 | tiingo.ts | fetchTiingoPrices(), convertTiingoPricesToFmpFormat() — Session 3. NOTE: fetchFundFees() exists but Tiingo fee endpoint returns 404 — Finnhub is primary for fee data. |
 | Tiingo constants and endpoint config | §4.1, §5.6 | constants.ts | TIINGO config block, TINNGO_KEY env var (intentional typo) — Session 3 |
 | Pipeline: Tiingo primary for prices (Step 8) | §4.6 | pipeline.ts | Tiingo → FMP fallback chain for NAV/price data — Session 3 |
-| Pipeline: Tiingo primary for fee data (Step 7) | §4.6 | pipeline.ts | Tiingo fee data → fund table ER fallback — Session 3 |
-| Cost Efficiency: 12b-1 fee penalty | §2.3 | cost-efficiency.ts | -5 pts per 0.10% of 12b-1, capped at -15 — Session 3 |
-| Cost Efficiency: accepts NormalizedFeeData | §2.3, §4.6 | cost-efficiency.ts | Tiingo ER preferred over fund table when available — Session 3 |
+| Pipeline: Finnhub primary for expense ratios (Step 7a) | §4.6 | pipeline.ts, finnhub.ts | Finnhub → FMP → static fallback → persist to funds table — Session 4 continuation |
+| Finnhub API client (expense ratios, fee data) | §2.3, §4.1 | finnhub.ts | fetchFinnhubExpenseRatio(), fetchExpenseRatio(), KNOWN_EXPENSE_RATIOS static map — Session 4 continuation |
+| Cost Efficiency: 12b-1 fee penalty | §2.3 | cost-efficiency.ts | -5 pts per 0.10% of 12b-1, capped at -15 — Session 3. NOTE: penalty wiring needs Finnhub fee12b1 field connected (Session 5). |
+| Cost Efficiency: accepts NormalizedFeeData | §2.3, §4.6 | cost-efficiency.ts | Accepts optional NormalizedFeeData parameter — Session 3 |
+| Sector exposure in factor_details | §6.6 | pipeline.ts, scoring.ts | sectorExposure map built from classified holdings, stored in factor_details for UI donut chart — Session 4 continuation |
+| Helmet CSP allows Supabase auth | §5.1 | server.ts | Explicit CSP directives: connect-src allows https://*.supabase.co and wss://*.supabase.co — Session 4 continuation |
 | Composite scoring: z-space + CDF pipeline | §2.1 | scoring.ts | `scoreAndRankFunds()` → `zStandardize()` → weighted z-sum → `normalCDF()` → 0–100. Bessel-corrected. A&S 7.1.26. — Session 4 |
 | Normal CDF: Abramowitz & Stegun | §2.1 | scoring.ts | `normalCDF()` max error ≈ 7.5 × 10⁻⁸. Validated against §2.8 worked example. — Session 4 |
 | Z-scores persisted for client rescore | §2.1, §5.2 | persist.ts, types.ts | `z_cost_efficiency`, `z_holdings_quality`, `z_positioning`, `z_momentum` columns — Session 4 |
@@ -962,9 +965,9 @@ Status: Category detection exists in cost-efficiency.ts. No global skip in pipel
 Spec: Herfindahl-Hirschman Index of sector exposure per fund in detail view. Informational only.
 Status: Not implemented anywhere.
 
-**~~MISSING-8: Tiingo Integration (§4.1, §4.6)~~ — RESOLVED (Session 3)**
-Spec: Tiingo is primary source for fund NAV history (split-adjusted) and fee data (12b-1, loads). FMP is fallback for prices.
-Status: ✅ Implemented. tiingo.ts created with fetchTiingoPrices(), fetchFundFees(), convertTiingoPricesToFmpFormat(), normalizeFeeData(). Pipeline Step 7 fetches Tiingo fee data → passes to scoreCostEfficiency(). Pipeline Step 8 fetches Tiingo prices → FMP fallback. TIINGO constants added to constants.ts. NOTE: Tiingo fee endpoint path (`/tiingo/fundamentals/fees/{ticker}`) should be verified against live API during integration testing — the field name normalization in normalizeFeeResponse() handles multiple naming conventions as a safety net.
+**~~MISSING-8: Tiingo Integration (§4.1, §4.6)~~ — PARTIALLY RESOLVED (Session 3) + CORRECTED (Session 4 continuation)**
+Spec: Tiingo is primary source for fund NAV history (split-adjusted). ~~Fee data (12b-1, loads)~~ — Tiingo fee endpoint (`/tiingo/fundamentals/fees/{ticker}`) returns 404. It does not exist.
+Status: ✅ Tiingo prices working (fetchTiingoPrices, convertTiingoPricesToFmpFormat). Pipeline Step 8 uses Tiingo → FMP fallback for prices. ❌ Tiingo fee data NOT working — endpoint does not exist. Expense ratio data now comes from **Finnhub** (primary), restored from v5.1 in Session 4 continuation. See finnhub.ts and pipeline.ts Step 7a.
 
 **MISSING-9: Help Section — FAQs + Live Claude Chat (Robert's request)**
 Spec: Not yet in spec — feature idea from build planning session. Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
@@ -1130,7 +1133,7 @@ Primary deliverable: Create `src/engine/tiingo.ts` and wire Tiingo into the pipe
 - Step 7: Fetches Tiingo fee data for each fund before scoring cost efficiency. Falls back to fund table `expense_ratio` if Tiingo unavailable.
 - Step 8: Fetches Tiingo prices for each fund (primary). Falls back to FMP `fetchHistoricalPrices()` if Tiingo returns no data. Uses `convertTiingoPricesToFmpFormat()` adapter.
 
-**Note:** The Tiingo fee endpoint path (`/tiingo/fundamentals/fees/{ticker}`) should be verified against the live API during integration testing. The `normalizeFeeResponse()` function handles multiple possible field naming conventions as a safety net. If the actual endpoint differs, only the path in `constants.ts` and potentially the field name list in `normalizeFeeResponse()` need updating.
+**CORRECTION (Session 4 continuation):** The Tiingo fee endpoint (`/tiingo/fundamentals/fees/{ticker}`) was tested and returns 404 — it does not exist. Tiingo does NOT provide mutual fund fee data via a dedicated endpoint. The v6 rebuild incorrectly assumed Tiingo covered fee data based on the spec planning session. In v5.1, expense ratios came from **Finnhub** (`/api/v1/mutual-fund/profile`), which was the working source all along. Session 4 continuation created `finnhub.ts` and wired it into pipeline Step 7a as the primary expense ratio source. The `fetchFundFees()` function in tiingo.ts is now dead code — it can be removed in a future cleanup.
 
 **Files created:** `tiingo.ts`
 **Files changed:** `constants.ts`, `cost-efficiency.ts`, `pipeline.ts`
@@ -1167,6 +1170,38 @@ Primary deliverable: Rewrite the composite scoring engine in `src/engine/scoring
 **Files created:** `migrations/session4_add_z_scores.sql`
 **Resolved:** CRITICAL-1 (scoring engine z-space + CDF)
 **Verification:** `tsc --noEmit` passes clean on both server and client.
+
+## April 7, 2026 — Session 4 Continuation: Production Fixes + Finnhub Expense Ratio Integration
+
+This session diagnosed and fixed three production issues discovered after deploying Session 4's scoring engine changes, and corrected a fundamental data source error that had been in the spec since the planning session.
+
+**1. Fixed Helmet CSP blocking Supabase auth (server.ts).** The app was stuck on "Loading..." in production because the default Helmet CSP (`contentSecurityPolicy: undefined` in production) applied a strict `connect-src: 'self'` policy that blocked all cross-origin requests to Supabase. Fix: explicit CSP directives allowing `https://*.supabase.co` and `wss://*.supabase.co` in `connect-src`. Dev mode remains CSP-disabled for hot reload.
+
+**2. Fixed empty sector exposure donut chart (pipeline.ts, scoring.ts).** The client reads `factor_details.sectorExposure` for the donut chart, but the pipeline was not including this data. Fix: pipeline now builds a `sectorExposure` map from classified holdings (sector → cumulative pctOfNav) and includes it in `factorDetails`. Added `sectorExposure?: Record<string, number>` to `FundCompositeScore.factorDetails` interface in `scoring.ts`.
+
+**3. Diagnosed and fixed Cost=50 for all funds — root cause: missing expense ratio data.**
+- **Root cause chain:** The v6 spec planning session incorrectly stated that Tiingo provides mutual fund fee data and that NPORT-P contains expense ratios. Both are wrong: Tiingo's fee endpoint (`/tiingo/fundamentals/fees/{ticker}`) returns 404, and NPORT-P's `fundInfo` section does not contain expense ratios. With no working fee data source, all funds had `expense_ratio = NULL` in the funds table, producing a universal Cost score of 50.
+- **Discovery:** Robert directed review of the v5.1 codebase (`racoursey-cloud/fundlens`), which revealed that **Finnhub** (`/api/v1/mutual-fund/profile`) was the working expense ratio source all along. The v6 rebuild plan incorrectly dismissed Finnhub with the note "Free tier rate limiting degraded data quality. FMP covers the same data." — FMP does NOT cover mutual fund expense ratio data.
+- **Fix:** Created `src/engine/finnhub.ts` — a complete Finnhub API client ported from v5.1's `expenses.js`. Three-layer lookup chain: (1) Finnhub mutual fund profile API (primary), (2) FMP etf-info / raw profile (secondary), (3) static `KNOWN_EXPENSE_RATIOS` map with all 22 TerrAscend fund expense ratios from prospectus data (last resort). Added pipeline Step 7a that auto-fetches expense ratios for any fund with `expense_ratio = NULL` and persists the result to the funds table for future runs.
+- **Finnhub API details:** Endpoint `GET https://finnhub.io/api/v1/mutual-fund/profile?symbol={ticker}&token={key}`. Returns `expenseRatio` as a percentage (e.g. 0.75 = 0.75%) — converted to decimal (0.0075) internally. Also returns `fee12b1`, `frontLoad`, `category`, `benchmark`, `navTotal`, `inceptionDate`. Free tier: 60 calls/min. With Supabase persistence, a 22-fund portfolio hits Finnhub at most once per fund per quarter.
+
+**4. Created one-time seed SQL (`migrations/populate_expense_ratios.sql`).** Seeds all 22 TerrAscend fund expense ratios from prospectus data as an immediate unblock while the automated Finnhub fetch is verified.
+
+**5. Corrected spec data source claims.** Multiple spec sections updated:
+- §2.3: Source changed from "Tiingo" to "Finnhub" for expense ratios
+- §4.1: Added Finnhub to Paid Sources table; removed fee data from Tiingo row
+- §4.2: Removed "expense ratios" from EDGAR NPORT-P description
+- §4.6: Fallback chain updated: Finnhub → FMP → static map (was: Tiingo → NPORT-P → manual)
+- §5.4: Pipeline Step 7 updated, Step 7a added for Finnhub expense sync
+- §5.5: Added finnhub.ts to file inventory
+- §5.6: Added FINNHUB_KEY to environment variables
+- §9.1: Updated working features list
+- Planning decisions #6, #17: Corrected Tiingo → Finnhub attribution
+
+**Files created:** `finnhub.ts`, `migrations/populate_expense_ratios.sql`
+**Files changed:** `pipeline.ts`, `scoring.ts`, `server.ts`, `fmp.ts`, `constants.ts`, `FUNDLENS_SPEC.md`
+**Resolved:** Cost=50 for all funds (expense ratio data source), empty sector donut, Helmet CSP auth block
+**Pending verification:** FINNHUB_KEY must be added to Railway environment variables. Pipeline re-run needed to confirm Finnhub returns data for TerrAscend fund tickers.
 
 ---
 
