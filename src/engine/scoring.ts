@@ -73,6 +73,8 @@ export interface FundCompositeScore {
     holdingsQuality: QualityFactorResult;
     positioning: { score: number; reasoning: string };
     momentum: MomentumScore;
+    /** Sector exposure map for the UI donut chart (sector → weight as fraction of NAV) */
+    sectorExposure?: Record<string, number>;
   };
 }
 

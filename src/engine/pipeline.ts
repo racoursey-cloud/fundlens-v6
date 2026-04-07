@@ -344,6 +344,15 @@ export async function runFullPipeline(
       momentum: momentum.score,
     };
 
+    // Build sector exposure map from classified holdings for the UI donut chart
+    const holdings = fundHoldings.get(fund.ticker) || [];
+    const sectorExposure: Record<string, number> = {};
+    for (const h of holdings) {
+      if (h.sector && h.pctOfNav > 0) {
+        sectorExposure[h.sector] = (sectorExposure[h.sector] || 0) + h.pctOfNav;
+      }
+    }
+
     fundScoreInputs.push({
       ticker: fund.ticker,
       name: fund.name,
@@ -353,6 +362,7 @@ export async function runFullPipeline(
         holdingsQuality: quality,
         positioning: { score: positioning.score, reasoning: positioning.reasoning },
         momentum,
+        sectorExposure,
       },
     });
 
