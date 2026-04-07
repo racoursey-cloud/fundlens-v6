@@ -35,8 +35,31 @@ app.set('trust proxy', 1);
 app.use(express.json());
 
 // SESSION 0 SECURITY: Helmet sets security headers (CSP, X-Frame-Options, etc.)
+// In production, configure CSP to allow Supabase auth/API connections.
+// The Supabase JS client makes fetch requests directly from the browser
+// for magic link auth, session refresh, etc. Helmet's default CSP blocks
+// cross-origin requests (connect-src 'self'), which breaks auth entirely.
 app.use(helmet({
-  contentSecurityPolicy: SERVER.IS_PRODUCTION ? undefined : false, // Disable CSP in dev (Vite HMR)
+  contentSecurityPolicy: SERVER.IS_PRODUCTION
+    ? {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'blob:'],
+          connectSrc: [
+            "'self'",
+            'https://*.supabase.co',   // Supabase auth + REST API
+            'wss://*.supabase.co',     // Supabase realtime (future use)
+          ],
+          fontSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+        },
+      }
+    : false, // Disable CSP in dev (Vite HMR)
 }));
 
 // CORS — allow the React client to talk to the API during development.
