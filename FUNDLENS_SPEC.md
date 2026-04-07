@@ -886,7 +886,13 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Pipeline: Tiingo primary for prices (Step 8) | §4.6 | pipeline.ts | Tiingo → FMP fallback chain for NAV/price data — Session 3 |
 | Pipeline: Finnhub primary for expense ratios (Step 7a) | §4.6 | pipeline.ts, finnhub.ts | Finnhub → FMP → static fallback → persist to funds table — Session 4 continuation |
 | Finnhub API client (expense ratios, fee data) | §2.3, §4.1 | finnhub.ts | fetchFinnhubExpenseRatio(), fetchExpenseRatio(), KNOWN_EXPENSE_RATIOS static map — Session 4 continuation |
-| Cost Efficiency: 12b-1 fee penalty | §2.3 | cost-efficiency.ts | -5 pts per 0.10% of 12b-1, capped at -15 — Session 3. NOTE: penalty wiring needs Finnhub fee12b1 field connected (Session 5). |
+| Cost Efficiency: 12b-1 fee penalty | §2.3 | cost-efficiency.ts, finnhub.ts | -5 pts per 0.10% of 12b-1, capped at -15 — Session 3. Finnhub fee12b1 wired Session 5. |
+| Momentum: volatility-adjusted returns | §2.5.2 | momentum.ts | Barroso & Santa-Clara 2015: blended / period_vol — Session 5 |
+| Momentum: z-score + CDF scoring | §2.5.3 | momentum.ts | Bessel z-standardize → winsorize ±3σ → normalCDF → 0-100 — Session 5 |
+| Bond quality scoring (issuer category map) | §2.4.2 | quality.ts | UST=1.0, USG=0.95, MUN=0.80, CORP=0.60 + distressed adjustments — Session 5 |
+| Blended equity/bond fund scoring | §2.4.3 | quality.ts | Weighted by portfolio share — Session 5 |
+| Coverage-based confidence scaling | §2.4.1 | pipeline.ts, scoring.ts | Per-fund weight adjustment when coverage < 40% (Grinold 1989) — Session 5 |
+| NPORT-P bond field parsing | §2.4.2 | edgar.ts, types.ts | isDebt, fairValLevel, debtIsDefault, debtInArrears from <debtSec> — Session 5 |
 | Cost Efficiency: accepts NormalizedFeeData | §2.3, §4.6 | cost-efficiency.ts | Accepts optional NormalizedFeeData parameter — Session 3 |
 | Sector exposure in factor_details | §6.6 | pipeline.ts, scoring.ts | sectorExposure map built from classified holdings, stored in factor_details for UI donut chart — Session 4 continuation |
 | Helmet CSP allows Supabase auth | §5.1 | server.ts | Explicit CSP directives: connect-src allows https://*.supabase.co and wss://*.supabase.co — Session 4 continuation |
@@ -905,17 +911,13 @@ These are the highest priority. The code runs but produces wrong results.
 File: `src/engine/scoring.ts`
 Status: ✅ Implemented. `scoreAndRankFunds()` now performs full z-space + CDF pipeline: raw scores → `zStandardize()` (Bessel-corrected, n-1) → weighted composite in z-space → `normalCDF()` (Abramowitz & Stegun 7.1.26) → 0–100. Z-scores persisted to `fund_scores` table for client-side rescore. Client-side rescore in `Portfolio.tsx` uses pre-computed z-scores + lightweight `normalCDF()`. Validated against §2.8 worked example: Fund A=84, B=41, C=40, D=31 — all match. Edge cases handled: <2 funds → raw fallback, identical scores → all 50.
 
-**CRITICAL-2: Momentum — Missing Volatility Adjustment (§2.5.2)**
+**~~CRITICAL-2: Momentum — Missing Volatility Adjustment (§2.5.2)~~ — RESOLVED (Session 5)**
 File: `src/engine/momentum.ts`
-Spec requires: `vol_adjusted_return = blended_return / period_vol` where `period_vol = daily_vol × √(trading_days)`.
-Code does: uses raw blended returns for ranking.
-Impact: High-volatility funds dominate the momentum signal. 15% return / 25% vol should score lower than 12% return / 8% vol.
+Status: ✅ Implemented. `scoreMomentumCrossSectional()` now computes daily returns → daily vol (Bessel) → period vol = daily_vol × √(trading_days) → vol_adjusted = blended / period_vol (Barroso & Santa-Clara 2015). MIN_DAILY_RETURNS_FOR_VOL = 10. Falls back to raw blended return if insufficient data.
 
-**CRITICAL-3: Momentum — Missing Z-Score + CDF Scoring (§2.5.3)**
+**~~CRITICAL-3: Momentum — Missing Z-Score + CDF Scoring (§2.5.3)~~ — RESOLVED (Session 5)**
 File: `src/engine/momentum.ts`, function `scoreMomentumCrossSectional()`
-Spec requires: z-score (Bessel) → winsorize ±3 sigma → CDF map to 0-100. Edge cases: <2 funds → all 50, all identical → all 50, single fund → 75.
-Code does: linear rank-to-score `95 - (rank / (n-1)) * 90`.
-Impact: Wrong distribution shape. Doesn't handle edge cases per spec.
+Status: ✅ Implemented. Z-standardize (Bessel, n-1) → winsorize ±3σ → normalCDF() → 0-100. Edge cases: <2 funds → all 50, stdev=0 → all 50, single fund → 75, no data → 50. Uses vol-adjusted returns when available.
 
 **CRITICAL-4: Positioning — Wrong Scale (§2.6.1)**
 Files: `src/engine/thesis.ts` (prompt and types), `src/engine/positioning.ts` (normalization)
@@ -937,15 +939,13 @@ File: `src/engine/cost-efficiency.ts`
 Spec: When Tiingo provides 12b-1 fees, apply -5 points per 0.10% of 12b-1, capped at -15.
 Status: ✅ Implemented. scoreCostEfficiency() accepts optional NormalizedFeeData. Penalty applied when twelveb1Fee > 0. CostEfficiencyResult includes twelveb1Penalty and feeDataSource fields.
 
-**MISSING-2: Bond Quality Scoring (§2.4.2, §2.4.3)**
-File: `src/engine/quality.ts`
-Spec: Issuer Category Quality Map (UST=1.00, USG=0.95, MUN=0.80, CORP=0.60, Default=0.50). Distressed adjustments (isDefault=Y → 0.10, fairValLevel=3 → 0.35, debtInArrears=Y → 0.35). Blended equity/bond scoring.
-Status: Only equity dimension scoring exists. No bond quality map.
+**~~MISSING-2: Bond Quality Scoring (§2.4.2, §2.4.3)~~ — RESOLVED (Session 5)**
+File: `src/engine/quality.ts`, `src/engine/edgar.ts`, `src/engine/types.ts`, `src/engine/holdings.ts`
+Status: ✅ Implemented. Issuer Category Quality Map (UST=1.00, USG=0.95, MUN=0.80, CORP=0.60, Default=0.50). Distressed adjustments (isDefault=Y → 0.10, fairValLevel=3 → 0.35, debtInArrears=Y → 0.35). Bond fields parsed from NPORT-P `<debtSec>` element. Blended equity/bond scoring by portfolio share (§2.4.3). Bond fields flow through types.ts → holdings.ts → pipeline.ts → quality.ts.
 
-**MISSING-3: Coverage-Based Confidence Scaling (§2.4.1)**
-File: `src/engine/quality.ts`, `src/engine/pipeline.ts`
-Spec: If coverage_pct < 0.40, reduce quality weight: `quality_weight_adj = base × max(coverage/0.40, 0.10)`, freed weight goes to momentum, renormalize all to 1.0.
-Status: Not implemented. Quality returns score but not coverage_pct.
+**~~MISSING-3: Coverage-Based Confidence Scaling (§2.4.1)~~ — RESOLVED (Session 5)**
+File: `src/engine/quality.ts`, `src/engine/pipeline.ts`, `src/engine/scoring.ts`
+Status: ✅ Implemented. quality.ts returns `coveragePct`. Pipeline computes per-fund weight adjustments when coverage < 0.40: `quality_weight_adj = base × max(coverage/0.40, 0.10)`, freed weight → momentum, renormalize to 1.0. `scoreAndRankFunds()` accepts per-fund weight overrides so z-standardization stays uniform but composites use adjusted weights.
 
 **MISSING-4: FRED Commodity Series (§4.4)**
 Files: `src/engine/fred.ts`, `src/engine/constants.ts`
@@ -965,9 +965,9 @@ Status: Category detection exists in cost-efficiency.ts. No global skip in pipel
 Spec: Herfindahl-Hirschman Index of sector exposure per fund in detail view. Informational only.
 Status: Not implemented anywhere.
 
-**~~MISSING-8: Tiingo Integration (§4.1, §4.6)~~ — PARTIALLY RESOLVED (Session 3) + CORRECTED (Session 4 continuation)**
-Spec: Tiingo is primary source for fund NAV history (split-adjusted). ~~Fee data (12b-1, loads)~~ — Tiingo fee endpoint (`/tiingo/fundamentals/fees/{ticker}`) returns 404. It does not exist.
-Status: ✅ Tiingo prices working (fetchTiingoPrices, convertTiingoPricesToFmpFormat). Pipeline Step 8 uses Tiingo → FMP fallback for prices. ❌ Tiingo fee data NOT working — endpoint does not exist. Expense ratio data now comes from **Finnhub** (primary), restored from v5.1 in Session 4 continuation. See finnhub.ts and pipeline.ts Step 7a.
+**~~MISSING-8: Tiingo Integration (§4.1, §4.6)~~ — FULLY RESOLVED (Session 3 + Session 4 + Session 5)**
+Spec: Tiingo is primary source for fund NAV history (split-adjusted). Fee data (12b-1, loads) from Finnhub.
+Status: ✅ Tiingo prices working (fetchTiingoPrices, convertTiingoPricesToFmpFormat). Pipeline Step 8 uses Tiingo → FMP fallback for prices. ✅ Fee data (12b-1, frontLoad) now comes from **Finnhub** (`fetchFinnhubExpenseRatio` returns `fee12b1` + `frontLoad`). Dead Tiingo fee code removed in Session 5. Pipeline Step 7b constructs NormalizedFeeData from Finnhub for cost-efficiency scoring.
 
 **MISSING-9: Help Section — FAQs + Live Claude Chat (Robert's request)**
 Spec: Not yet in spec — feature idea from build planning session. Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
@@ -993,7 +993,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 2 | CUSIP Resolver Deep Review | §4.3 — flagged by Robert | **DONE** |
 | 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) | **DONE** |
 | 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | **DONE** |
-| 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | Next |
+| 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | **DONE** |
 | 6 | Thesis Overhaul | CRITICAL-4 (1-10 scale), MISSING-4 (FRED commodities wired in), MISSING-5 (deterministic priors) | |
 | 7 | Allocation Engine | CRITICAL-5 (full Kelly rewrite), MISSING-6 (money market exclusion) | |
 | 8 | UI Alignment | Tier badges wired in, risk slider 1-7 in client, HHI (MISSING-7) | |
@@ -1202,6 +1202,54 @@ This session diagnosed and fixed three production issues discovered after deploy
 **Files changed:** `pipeline.ts`, `scoring.ts`, `server.ts`, `fmp.ts`, `constants.ts`, `FUNDLENS_SPEC.md`
 **Resolved:** Cost=50 for all funds (expense ratio data source), empty sector donut, Helmet CSP auth block
 **Pending verification:** FINNHUB_KEY must be added to Railway environment variables. Pipeline re-run needed to confirm Finnhub returns data for TerrAscend fund tickers.
+
+## April 7, 2026 — Session 5: Factor Upgrades (Momentum Vol-Adjust, Bond Quality, Coverage Scaling)
+
+**Goal:** Restore v5.1's "secret sauce" mathematical modeling to v6 while keeping v6's structural improvements. Hybrid approach: port v5.1's exact math formulas, adapt to v6's architecture.
+
+**Gaps addressed:** CRITICAL-2, CRITICAL-3, MISSING-2, MISSING-3, plus Finnhub fee12b1 wiring and dead Tiingo fee code cleanup.
+
+**1. Momentum: volatility-adjusted returns + z-score/CDF scoring (CRITICAL-2, CRITICAL-3).**
+File: `momentum.ts`, `pipeline.ts`
+- Added `dailyReturns: number[]` to FundMomentum interface
+- Added `computeDailyReturns()`: reverse price array to chronological, compute day-over-day fractional returns
+- Volatility adjustment (Barroso & Santa-Clara 2015): daily vol (Bessel-corrected) → period vol = daily_vol × √(trading_days) → vol_adjusted = blended / period_vol
+- Replaced linear rank scoring with z-score (Bessel, n-1) → winsorize ±3σ → normalCDF (A&S 7.1.26) → 0-100
+- MIN_DAILY_RETURNS_FOR_VOL = 10. Edge cases: <2 funds → all 50, stdev=0 → all 50, single fund → 75
+
+**2. Bond quality scoring + blended fund scoring (MISSING-2).**
+Files: `quality.ts`, `edgar.ts`, `types.ts`, `holdings.ts`, `pipeline.ts`
+- Extended EdgarHolding with: fairValLevel, isDebt, debtIsDefault, debtInArrears
+- Extended ResolvedHolding with same bond fields (carried through holdings pipeline)
+- EDGAR parser extracts `<debtSec>` element for bond identification
+- Issuer Category Quality Map: UST=1.0, USG=0.95, MUN=0.80, CORP=0.60, Default=0.50
+- Distressed adjustments: isDefault=Y → 0.10, fairValLevel=3 → 0.35, debtInArrears=Y → 0.35
+- `isBondHolding()` / `isEquityHolding()` classification helpers
+- Blended fund scoring: equity score × equity_ratio + bond score × bond_ratio (§2.4.3)
+- Returns coverage_pct for confidence scaling
+
+**3. Coverage-based confidence scaling (MISSING-3, Grinold 1989).**
+Files: `pipeline.ts`, `scoring.ts`
+- When quality coverage_pct < 0.40: quality_weight_adj = base × max(coverage/0.40, 0.10)
+- Freed weight redistributed to momentum (most reliable — price data always available)
+- `scoreAndRankFunds()` now accepts per-fund weight overrides
+- Z-standardization remains uniform; only weighted composite uses adjusted weights
+
+**4. Finnhub fee12b1 + frontLoad wiring.**
+Files: `finnhub.ts`, `pipeline.ts`
+- `fetchFinnhubExpenseRatio()` extended to return `fee12b1` and `frontLoad` (both as decimals)
+- Pipeline Step 7b constructs NormalizedFeeData from Finnhub fee components
+- Replaces dead Tiingo fee path — 12b-1 penalty now properly wired end-to-end
+
+**5. Dead Tiingo fee code removal.**
+Files: `tiingo.ts`, `constants.ts`
+- Removed: `fetchFundFees()`, `normalizeFeeData()`, `normalizeFeeResponse()`, `fetchTiingoMeta()`, `TiingoFundFees`, `TiingoFundMeta` interfaces, FUND_FEES/FUND_META constants
+- Kept: `NormalizedFeeData` interface (shared type), `fetchTiingoPrices()`, `convertTiingoPricesToFmpFormat()` (still used for momentum)
+
+**Files changed:** `momentum.ts`, `quality.ts`, `edgar.ts`, `types.ts`, `holdings.ts`, `pipeline.ts`, `scoring.ts`, `finnhub.ts`, `tiingo.ts`, `constants.ts`, `FUNDLENS_SPEC.md`
+**Resolved:** CRITICAL-2 (momentum vol-adjust), CRITICAL-3 (momentum z-score/CDF), MISSING-2 (bond quality), MISSING-3 (coverage scaling), MISSING-8 fully resolved (Finnhub fee data wired)
+**Verification:** `tsc --noEmit` passes clean. Pipeline re-run recommended to verify scoring changes with live data.
+**Note from Robert:** v5.1 UI strongly preferred over v6 UI — future session (Session 8) will port v5.1 UI.
 
 ---
 
