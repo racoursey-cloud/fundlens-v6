@@ -821,7 +821,7 @@ Claude should reference current events, trends, and cultural context when it enh
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 8, 2026 (after Session 1)
+**Last updated:** April 8, 2026 (after Session 2)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -853,6 +853,12 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Risk scale 1–7 validation | §6.4 | routes.ts | RISK_MIN=1, RISK_MAX=7 — fixed Session 1 |
 | Brief model = Opus | §4.2 | constants.ts | claude-opus-4-6 — fixed Session 1 |
 | Security hardening | — | server.ts, routes.ts, thesis.ts, classify.ts, edgar.ts, Briefs.tsx | Session 0 complete |
+| CUSIP resolver: Supabase cache wired in | §4.3 | cusip.ts | cusipCacheLookup/cusipCacheSave with negative caching — Session 2 |
+| CUSIP resolver: OpenFIGI → FMP search fallback chain | §4.6 | cusip.ts | OpenFIGI primary, FMP searchByName fallback, cache save — Session 2 |
+| CUSIP resolver: US equity preference | §4.3 | cusip.ts | Prefers US-listed equities from OpenFIGI results — verified Session 2 |
+| CUSIP resolver: 429 rate limit retry | §4.3 | cusip.ts | 10s backoff + single retry — verified Session 2 |
+| Fund-of-funds look-through depth = 1 | §2.4.4 | holdings.ts | MAX_LOOKTHROUGH_DEPTH=1 — fixed Session 2 (was 2) |
+| pctOfNav whole-percent units documented | §4.3 | types.ts | Doc comments corrected from "0.0–1.0" to whole-percent — Session 2 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -933,23 +939,32 @@ Status: Tiingo client file may exist but integration with cost-efficiency (fee d
 Spec: Not yet in spec — feature idea from build planning session. Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
 Status: Planned for Session 9 of the build roadmap.
 
-### 9.4 CUSIP Resolver — Flagged for Dedicated Review
+### 9.4 CUSIP Resolver — COMPLETED (Session 2)
 
-Robert flagged the CUSIP resolver (`src/engine/cusip.ts`) as needing its own dedicated review session. It was not audited in Session 0 or Session 1. The OpenFIGI integration, cache behavior, batch handling, and fallback logic all need verification against spec §4.3.
+Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip.ts`, `holdings.ts`, `pipeline.ts`, and `types.ts` against spec §4.3 and §4.6. Seven issues found and fixed:
+1. Supabase cusip_cache wired in (was never called — cacheLookup/cacheSave now default)
+2. FMP search-by-name fallback added for unresolved CUSIPs (spec §4.6 chain complete)
+3. Parameter renamed `fmpApiKey` → `openFigiKey` in holdings.ts (was always OpenFIGI key)
+4. MAX_LOOKTHROUGH_DEPTH fixed from 2 → 1 (spec §2.4.4)
+5. `resolved: true` edge case fixed when ticker is null (now correctly marks as unresolved)
+6. pctOfNav doc comments corrected from "0.0–1.0" to whole-percent units
+7. Negative caching implemented (unresolved CUSIPs cached to avoid re-querying)
+
+**Remaining:** `resolveSubFundTicker()` in holdings.ts is still a stub (always returns null). Fund-of-funds look-through scaffolding exists but cannot fire without sub-fund ticker resolution. This can be wired when FMP search is tested against real fund names (could be addressed in Session 3 or deferred).
 
 ### 9.5 Build Roadmap (Remaining Sessions)
 
-| Session | Focus | Key Gaps Addressed |
-|---------|-------|--------------------|
-| 2 | CUSIP Resolver Deep Review | §4.3 — flagged by Robert |
-| 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) |
-| 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) |
-| 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) |
-| 6 | Thesis Overhaul | CRITICAL-4 (1-10 scale), MISSING-4 (FRED commodities wired in), MISSING-5 (deterministic priors) |
-| 7 | Allocation Engine | CRITICAL-5 (full Kelly rewrite), MISSING-6 (money market exclusion) |
-| 8 | UI Alignment | Tier badges wired in, risk slider 1-7 in client, HHI (MISSING-7) |
-| 9 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) |
-| 10 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) |
+| Session | Focus | Key Gaps Addressed | Status |
+|---------|-------|--------------------|--------|
+| 2 | CUSIP Resolver Deep Review | §4.3 — flagged by Robert | **DONE** |
+| 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) | Next |
+| 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | |
+| 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | |
+| 6 | Thesis Overhaul | CRITICAL-4 (1-10 scale), MISSING-4 (FRED commodities wired in), MISSING-5 (deterministic priors) | |
+| 7 | Allocation Engine | CRITICAL-5 (full Kelly rewrite), MISSING-6 (money market exclusion) | |
+| 8 | UI Alignment | Tier badges wired in, risk slider 1-7 in client, HHI (MISSING-7) | |
+| 9 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
+| 10 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) | |
 
 ---
 
@@ -1034,6 +1049,33 @@ Robert flagged the CUSIP resolver (`src/engine/cusip.ts`) as needing its own ded
 8. **FRED commodity series constants added (§4.4).** FRED_COMMODITY_SERIES: DCOILWTICO, DCOILBRENTEU, GOLDAMGBD228NLBM, DTWEXBGS.
 
 9. **Spec-vs-code gap analysis completed.** 20 gaps identified (7 Critical, 8 High, 5 Medium). Saved as FundLens_Spec_vs_Code_Gap_Analysis.md. Critical gaps include: missing z-space + CDF in scoring engine, wrong positioning scale (-2/+2 vs 1–10), missing momentum vol-adjustment, and wrong allocation algorithm.
+
+## April 8, 2026 — Session 2: CUSIP Resolver Deep Review
+
+Dedicated audit of `cusip.ts`, `holdings.ts`, `pipeline.ts`, and `types.ts` against spec §4.3 and §4.6. Robert flagged this module as unaudited in Sessions 0–1.
+
+**7 issues found and fixed:**
+
+1. **Supabase cusip_cache wired in (§4.3).** `cusipCacheLookup()` and `cusipCacheSave()` built directly into `cusip.ts` as default parameters on `resolveCusips()`. Pipeline no longer needs to pass cache functions explicitly — they default to the built-in Supabase cache. Negative caching prevents re-querying OpenFIGI for CUSIPs known to not resolve.
+
+2. **FMP search fallback added (§4.6).** Full fallback chain now implemented: Supabase cache → OpenFIGI (batch) → FMP `searchByName()` → cache save. For CUSIPs that OpenFIGI can't resolve, `tryFmpSearchFallback()` queries FMP by the security name, preferring US-listed results (NYSE/NASDAQ/AMEX).
+
+3. **Parameter renamed `fmpApiKey` → `openFigiKey` (§4.3).** `holdings.ts` parameter was misleadingly named — it was always the OpenFIGI API key being passed to `resolveCusips()`.
+
+4. **MAX_LOOKTHROUGH_DEPTH fixed from 2 to 1 (§2.4.4).** Spec explicitly states "Recursion capped at depth 1 (look through one layer only)." Code had 2. Robert confirmed depth 1 is correct for now.
+
+5. **`resolved: true` edge case fixed.** OpenFIGI sometimes returns metadata without a usable ticker. Previously marked `resolved: true` with `ticker: null`, which would skip fallback logic. Now correctly marks as `resolved: false` with warning, allowing FMP fallback to attempt resolution.
+
+6. **pctOfNav doc comments corrected (§4.3).** Four doc comments in `types.ts` (`EdgarHolding.pctOfNav`, `ResolvedHolding.pctOfNav`, `HoldingsCacheRow.pct_of_nav`, `HoldingsPipelineResult.coverage.weightCovered`) changed from "0.0–1.0" to "whole-percent units" to match actual NPORT-P data and the `TARGET_WEIGHT_PCT=65` threshold.
+
+7. **Negative caching implemented.** Unresolved CUSIPs are now saved to `cusip_cache` with `resolved=false`. Subsequent pipeline runs skip the OpenFIGI call for known-unresolvable CUSIPs, reducing API usage.
+
+**Not addressed (deferred):**
+- `resolveSubFundTicker()` in `holdings.ts` remains a stub (returns null). Fund-of-funds look-through scaffolding exists but can't fire. Can be wired when FMP search is tested against real sub-fund names.
+- Supabase manual entry as final fallback (§4.6 step 4) not yet implemented. Would require an admin UI or manual SQL for Robert to enter overrides.
+
+**Files changed:** `cusip.ts`, `holdings.ts`, `pipeline.ts`, `types.ts`
+**Verification:** `tsc --noEmit` passes clean (exit code 0).
 
 ---
 
