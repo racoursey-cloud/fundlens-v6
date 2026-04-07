@@ -5,15 +5,15 @@
  * This is the master control — it runs steps 1–14 from Master Reference §8
  * in sequence, with proper error handling and logging.
  *
- * Pipeline steps:
+ * Pipeline steps (spec §5.4):
  *   1.  Fetch fund list from Supabase (user's 401k menu)
  *   2.  Fetch NPORT-P holdings from EDGAR for each fund
  *   3.  Resolve CUSIPs to tickers via OpenFIGI
  *   4.  Fetch company fundamentals from FMP (sequential, with delays)
  *   5.  Classify holdings into sectors via Claude Haiku (sequential, 1.2s delays)
  *   6.  Score Holdings Quality factor
- *   7.  Score Cost Efficiency factor
- *   8.  Fetch momentum data from FMP for each fund
+ *   7.  Fetch Tiingo fee data; Score Cost Efficiency factor (§4.6: Tiingo primary)
+ *   8.  Fetch Tiingo prices; FMP fallback (§4.6: Tiingo primary for NAV)
  *   9.  Score Momentum factor (cross-sectional ranking)
  *   10. Fetch cached RSS headlines + FRED macro data
  *   11. Generate macro thesis via Claude Sonnet
@@ -35,6 +35,8 @@ import { delay, ResolvedHolding, FundRow } from './types.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics } from './fmp.js';
+import { fetchTiingoPrices, fetchFundFees, convertTiingoPricesToFmpFormat, normalizeFeeData } from './tiingo.js';
+import { NormalizedFeeData } from './tiingo.js';
 import { scoreCostEfficiency, CostEfficiencyResult } from './cost-efficiency.js';
 import { scoreQualityFactor, QualityFactorResult } from './quality.js';
 import { calculateFundMomentum, scoreMomentumCrossSectional, MomentumScore, FundMomentum } from './momentum.js';
@@ -194,18 +196,36 @@ export async function runFullPipeline(
     qualityResults.set(fundTicker, result);
   }
 
-  // ── Step 7: Score Cost Efficiency factor ──
-  progress(7, 'Scoring Cost Efficiency');
+  // ── Step 7: Fetch Tiingo fee data + Score Cost Efficiency (§4.6: Tiingo primary) ──
+  progress(7, 'Fetching fee data from Tiingo + Scoring Cost Efficiency');
 
   const costResults = new Map<string, CostEfficiencyResult>();
+  const feeDataMap = new Map<string, NormalizedFeeData>();
 
   for (const fund of funds) {
-    const result = scoreCostEfficiency(fund.expense_ratio, fund.name);
+    // Try Tiingo fee data first (primary per §4.6)
+    let feeData: NormalizedFeeData | null = null;
+    try {
+      const tiingoFees = await fetchFundFees(fund.ticker);
+      if (tiingoFees?.hasData) {
+        feeData = normalizeFeeData(tiingoFees);
+        feeDataMap.set(fund.ticker, feeData);
+        console.log(`[pipeline] Tiingo fee data for ${fund.ticker}: ER=${tiingoFees.netExpenseRatio}, 12b-1=${tiingoFees.twelveb1Fee}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[pipeline] Tiingo fee fetch failed for ${fund.ticker}: ${msg}`);
+    }
+    await delay(PIPELINE.API_CALL_DELAY_MS);
+
+    // Score cost efficiency with Tiingo fee data (if available) + fund table ER as fallback
+    const result = scoreCostEfficiency(fund.expense_ratio, fund.name, feeData);
     costResults.set(fund.ticker, result);
   }
 
   // ── Steps 8–9: Fetch momentum data + cross-sectional scoring ──
-  progress(8, 'Fetching momentum data');
+  // §4.6: Tiingo is PRIMARY for fund NAV/prices. FMP is FALLBACK.
+  progress(8, 'Fetching price data (Tiingo primary, FMP fallback)');
 
   // Calculate date range: 13 months back (12 months + buffer)
   const toDate = new Date().toISOString().split('T')[0];
@@ -217,8 +237,23 @@ export async function runFullPipeline(
 
   for (const fund of funds) {
     try {
-      const prices = await fetchHistoricalPrices(fund.ticker, fromDate, toDate);
-      const momentum = calculateFundMomentum(fund.ticker, prices);
+      // Try Tiingo first (primary per §4.6)
+      let prices = null;
+      const tiingoPrices = await fetchTiingoPrices(fund.ticker, fromDate, toDate);
+      if (tiingoPrices && tiingoPrices.length > 0) {
+        prices = convertTiingoPricesToFmpFormat(tiingoPrices);
+        console.log(`[pipeline] Tiingo prices for ${fund.ticker}: ${tiingoPrices.length} days`);
+      } else {
+        // Fallback to FMP (§4.6 fallback chain)
+        console.log(`[pipeline] Tiingo prices unavailable for ${fund.ticker}, falling back to FMP`);
+        await delay(PIPELINE.API_CALL_DELAY_MS);
+        prices = await fetchHistoricalPrices(fund.ticker, fromDate, toDate);
+        if (prices && prices.length > 0) {
+          console.log(`[pipeline] FMP prices for ${fund.ticker}: ${prices.length} days`);
+        }
+      }
+
+      const momentum = calculateFundMomentum(fund.ticker, prices || []);
       fundMomentums.push(momentum);
     } catch (err) {
       fundMomentums.push({
