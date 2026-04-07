@@ -161,6 +161,22 @@ export const FMP = {
 } as const;
 
 
+/** Tiingo — mutual fund NAV prices (primary) + fee data (§4.1, §4.6) */
+// Tiingo provides cleaner NAV history (split/distribution-adjusted, back to 1970s)
+// and granular fee breakdowns (12b-1, loads, etc.) that FMP does not.
+// Env var is TINNGO_KEY (intentional typo per §5.6 — do NOT correct).
+export const TIINGO = {
+  BASE_URL: 'https://api.tiingo.com',
+  ENDPOINTS: {
+    /** Daily prices / NAV history — works for mutual fund tickers */
+    DAILY_PRICES: '/tiingo/daily',     // /{ticker}/prices
+    /** Mutual fund metadata (includes fee data) */
+    FUND_META: '/tiingo/daily',        // /{ticker} — metadata endpoint
+    /** Mutual fund & ETF fee data — dedicated fee endpoint */
+    FUND_FEES: '/tiingo/fundamentals/fees',  // /{ticker}
+  },
+} as const;
+
 /** FRED — macroeconomic indicators (free) */
 export const FRED = {
   BASE_URL: 'https://api.stlouisfed.org/fred/series/observations',
