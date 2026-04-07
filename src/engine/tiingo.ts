@@ -98,7 +98,7 @@ export interface NormalizedFeeData {
   /** Back-end load as decimal */
   backLoad: number | null;
   /** Source of the data */
-  source: 'tiingo' | 'edgar' | 'supabase' | 'unknown';
+  source: 'tiingo' | 'finnhub' | 'edgar' | 'supabase' | 'unknown';
 }
 
 // ─── API Client ─────────────────────────────────────────────────────────────

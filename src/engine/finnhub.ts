@@ -50,19 +50,38 @@ export interface ExpenseRatioResult {
   source: 'finnhub' | 'fmp' | 'static' | 'none';
   /** Finnhub category if available */
   category: string | null;
+  /** 12b-1 marketing fee as DECIMAL (from Finnhub), null if not available */
+  fee12b1: number | null;
+  /** Front-end sales load as DECIMAL (from Finnhub), null if not available */
+  frontLoad: number | null;
 }
 
 // ─── Finnhub API ────────────────────────────────────────────────────────────
 
+/** Extended Finnhub response including fee components (Session 5) */
+export interface FinnhubFeeResult {
+  /** Net expense ratio as DECIMAL (e.g. 0.0075 = 0.75%) */
+  expenseRatio: number;
+  /** Finnhub category (e.g. "Large Blend") */
+  category: string | null;
+  /** 12b-1 marketing fee as DECIMAL, null if not reported */
+  fee12b1: number | null;
+  /** Front-end sales load as DECIMAL, null if not reported */
+  frontLoad: number | null;
+}
+
 /**
- * Fetch mutual fund expense ratio from Finnhub.
+ * Fetch mutual fund expense ratio and fee components from Finnhub.
+ *
+ * Finnhub returns: expenseRatio, fee12b1, frontLoad (all as percentages).
+ * We convert everything to decimals for internal consistency.
  *
  * @param ticker Fund ticker (e.g. "FXAIX")
- * @returns Expense ratio as decimal, or null if unavailable
+ * @returns Fee data as decimals, or null if unavailable
  */
 export async function fetchFinnhubExpenseRatio(
   ticker: string
-): Promise<{ expenseRatio: number; category: string | null } | null> {
+): Promise<FinnhubFeeResult | null> {
   const apiKey = process.env.FINNHUB_KEY;
   if (!apiKey) {
     console.warn('[finnhub] FINNHUB_KEY not set — expense ratio fetch will skip');
@@ -94,18 +113,26 @@ export async function fetchFinnhubExpenseRatio(
       return null;
     }
 
-    // Finnhub expenseRatio is a PERCENTAGE (e.g. 0.75 = 0.75%)
+    // Finnhub returns all fees as PERCENTAGES (e.g. 0.75 = 0.75%)
     // Convert to decimal (0.0075) for internal consistency
     const ratioDecimal = data.expenseRatio / 100;
 
+    // Extract fee12b1 and frontLoad if present (Session 5)
+    const fee12b1 = typeof data.fee12b1 === 'number' ? data.fee12b1 / 100 : null;
+    const frontLoad = typeof data.frontLoad === 'number' ? data.frontLoad / 100 : null;
+
     console.log(
       `[finnhub] ${ticker}: expenseRatio=${data.expenseRatio}% (${ratioDecimal}), ` +
-      `category=${data.category || 'unknown'}`
+      `category=${data.category || 'unknown'}` +
+      (fee12b1 != null ? `, 12b-1=${(fee12b1 * 100).toFixed(2)}%` : '') +
+      (frontLoad != null ? `, frontLoad=${(frontLoad * 100).toFixed(2)}%` : '')
     );
 
     return {
       expenseRatio: ratioDecimal,
       category: data.category || null,
+      fee12b1,
+      frontLoad,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -177,6 +204,8 @@ export async function fetchExpenseRatio(
       expenseRatio: finnhub.expenseRatio,
       source: 'finnhub',
       category: finnhub.category,
+      fee12b1: finnhub.fee12b1,
+      frontLoad: finnhub.frontLoad,
     };
   }
 
@@ -190,7 +219,7 @@ export async function fetchExpenseRatio(
     if (fundInfo) {
       const er = extractExpenseRatio(fundInfo);
       if (er) {
-        return { expenseRatio: er, source: 'fmp', category: null };
+        return { expenseRatio: er, source: 'fmp', category: null, fee12b1: null, frontLoad: null };
       }
     }
 
@@ -200,7 +229,7 @@ export async function fetchExpenseRatio(
     if (rawProfile) {
       const er = extractExpenseRatio(rawProfile);
       if (er) {
-        return { expenseRatio: er, source: 'fmp', category: null };
+        return { expenseRatio: er, source: 'fmp', category: null, fee12b1: null, frontLoad: null };
       }
     }
   } catch (err) {
@@ -211,10 +240,10 @@ export async function fetchExpenseRatio(
   const known = KNOWN_EXPENSE_RATIOS.get(ticker);
   if (known) {
     console.log(`[finnhub] ${ticker}: using static fallback (${known})`);
-    return { expenseRatio: known, source: 'static', category: null };
+    return { expenseRatio: known, source: 'static', category: null, fee12b1: null, frontLoad: null };
   }
 
   // No data — cost scoring will use neutral (50)
   console.warn(`[finnhub] ${ticker}: no expense data from any source`);
-  return { expenseRatio: 0, source: 'none', category: null };
+  return { expenseRatio: 0, source: 'none', category: null, fee12b1: null, frontLoad: null };
 }

@@ -36,8 +36,8 @@ import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics } from './fmp.js';
 import { supaUpdate } from './supabase.js';
-import { fetchExpenseRatio } from './finnhub.js';
-import { fetchTiingoPrices, fetchFundFees, convertTiingoPricesToFmpFormat, normalizeFeeData } from './tiingo.js';
+import { fetchExpenseRatio, fetchFinnhubExpenseRatio } from './finnhub.js';
+import { fetchTiingoPrices, convertTiingoPricesToFmpFormat } from './tiingo.js';
 import { NormalizedFeeData } from './tiingo.js';
 import { scoreCostEfficiency, CostEfficiencyResult } from './cost-efficiency.js';
 import { scoreQualityFactor, QualityFactorResult } from './quality.js';
@@ -225,6 +225,9 @@ export async function runFullPipeline(
   // funds table so future runs skip the fetch (90-day effective TTL).
   // This makes the pipeline self-healing — no manual SQL needed.
 
+  // Store Finnhub fee data (12b-1, frontLoad) per fund for cost scoring (Session 5)
+  const finnhubFeeMap = new Map<string, { fee12b1: number | null; frontLoad: number | null }>();
+
   const fundsNeedingExpenseRatio = funds.filter(f => f.expense_ratio == null);
   if (fundsNeedingExpenseRatio.length > 0) {
     progress(7, `Fetching expense ratios for ${fundsNeedingExpenseRatio.length} funds`);
@@ -232,6 +235,11 @@ export async function runFullPipeline(
     for (const fund of fundsNeedingExpenseRatio) {
       const result = await fetchExpenseRatio(fund.ticker);
       await delay(PIPELINE.API_CALL_DELAY_MS);
+
+      // Store fee data regardless of expense ratio status
+      if (result.fee12b1 != null || result.frontLoad != null) {
+        finnhubFeeMap.set(fund.ticker, { fee12b1: result.fee12b1, frontLoad: result.frontLoad });
+      }
 
       if (result.source !== 'none' && result.expenseRatio > 0) {
         // Persist to funds table so future runs don't need to refetch
@@ -251,26 +259,43 @@ export async function runFullPipeline(
     }
   }
 
+  // For funds that already had expense_ratio, fetch Finnhub fee data (12b-1, frontLoad) if not yet cached
+  const fundsNeedingFeeData = funds.filter(f => f.expense_ratio != null && !finnhubFeeMap.has(f.ticker));
+  if (fundsNeedingFeeData.length > 0) {
+    progress(7, `Fetching fee data (12b-1, loads) for ${fundsNeedingFeeData.length} funds`);
+    for (const fund of fundsNeedingFeeData) {
+      const finnhubResult = await fetchFinnhubExpenseRatio(fund.ticker);
+      if (finnhubResult && (finnhubResult.fee12b1 != null || finnhubResult.frontLoad != null)) {
+        finnhubFeeMap.set(fund.ticker, { fee12b1: finnhubResult.fee12b1, frontLoad: finnhubResult.frontLoad });
+      }
+      await delay(PIPELINE.API_CALL_DELAY_MS);
+    }
+  }
+
   // ── Step 7b: Score Cost Efficiency ──
   progress(7, 'Scoring Cost Efficiency');
 
   const costResults = new Map<string, CostEfficiencyResult>();
 
   for (const fund of funds) {
-    // Try Tiingo fee data for enhanced cost scoring (12b-1 fees, load fees)
+    // Build NormalizedFeeData from Finnhub fee components (Session 5)
+    // Replaces dead Tiingo fee path — Tiingo fee endpoint returns 404
     let feeData: NormalizedFeeData | null = null;
-    try {
-      const tiingoFees = await fetchFundFees(fund.ticker);
-      if (tiingoFees?.hasData) {
-        feeData = normalizeFeeData(tiingoFees);
-        console.log(`[pipeline] Tiingo fee data for ${fund.ticker}: ER=${tiingoFees.netExpenseRatio}, 12b-1=${tiingoFees.twelveb1Fee}`);
+    const finnhubFees = finnhubFeeMap.get(fund.ticker);
+    if (finnhubFees && (finnhubFees.fee12b1 != null || finnhubFees.frontLoad != null)) {
+      feeData = {
+        expenseRatio: fund.expense_ratio,
+        twelveb1Fee: finnhubFees.fee12b1,
+        frontLoad: finnhubFees.frontLoad,
+        backLoad: null,
+        source: 'finnhub' as const,
+      };
+      if (finnhubFees.fee12b1 != null) {
+        console.log(`[pipeline] Finnhub fee data for ${fund.ticker}: 12b-1=${(finnhubFees.fee12b1 * 100).toFixed(2)}%`);
       }
-    } catch (err) {
-      // Tiingo fee endpoint may not exist for mutual funds — this is expected
     }
-    await delay(PIPELINE.API_CALL_DELAY_MS);
 
-    // Score cost efficiency using fund table expense_ratio (populated above) + Tiingo extras
+    // Score cost efficiency using fund table expense_ratio + Finnhub fee extras
     const result = scoreCostEfficiency(fund.expense_ratio, fund.name, feeData);
     costResults.set(fund.ticker, result);
   }
