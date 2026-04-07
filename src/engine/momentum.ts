@@ -1,25 +1,26 @@
 /**
- * FundLens v6 — Momentum Factor
+ * FundLens v6 — Momentum Factor (§2.5)
  *
- * Measures recent price performance trends (3–12 month) for each fund.
- * Momentum is a well-documented academic factor — securities that have
- * performed well recently tend to continue performing well in the short term.
+ * Measures recent price performance trends, volatility-adjusted, cross-sectionally
+ * scored via z-score + CDF. Backward-looking confirmation signal.
  *
- * Scoring approach:
- *   1. Fetch historical daily prices from FMP for each fund ticker
- *   2. Calculate returns over multiple lookback windows (3, 6, 9, 12 months)
- *   3. Blend the windows (most weight on 6–12 month, least on 3 month)
- *   4. Cross-sectional ranking: score each fund relative to the other
- *      funds in the 401(k) menu, not against an absolute benchmark
+ * Pipeline (hybrid of v6 multi-window + v5.1 mathematical engine):
+ *   1. Fetch daily prices from Tiingo (primary) or FMP (fallback)
+ *   2. Calculate returns over 4 lookback windows (3/6/9/12 months)
+ *   3. Blend windows: 10/30/30/30 weights (§2.5.1)
+ *   4. Volatility adjustment: blended_return / period_vol (§2.5.2)
+ *      — Prevents high-vol funds from dominating the momentum signal
+ *      — Ported from v5.1 scoring.js (Barroso & Santa-Clara 2015)
+ *   5. Cross-sectional z-score + CDF scoring (§2.5.3)
+ *      — Bessel-corrected (n-1) z-standardization
+ *      — Winsorize ±3 sigma
+ *      — Map through Abramowitz & Stegun normal CDF to 0–100
+ *      — Ported from v5.1 scoring.js computeCrossSectionalMomentum()
  *
- * Cross-sectional means: the best-performing fund in the menu gets ~95,
- * the worst gets ~5, and everyone else is spread between. This ensures
- * the Momentum factor always differentiates funds, even in a bear market
- * where all returns are negative.
+ * Weight: 25% of composite (DEFAULT_FACTOR_WEIGHTS.momentum)
  *
- * Weight: 20% of composite (DEFAULT_FACTOR_WEIGHTS.momentum)
- *
- * Session 3 deliverable. References: Master Reference §4 (Momentum), §8 step 8–9.
+ * Session 5: CRITICAL-2 (vol adjustment) + CRITICAL-3 (z-score + CDF).
+ * References: FUNDLENS_SPEC.md §2.5.1, §2.5.2, §2.5.3.
  */
 
 import { FmpDailyPrice } from './fmp.js';
@@ -42,13 +43,15 @@ export interface FundMomentum {
   };
   /** Blended momentum signal (weighted average of available windows) */
   blendedReturn: number | null;
+  /** Daily returns array for volatility calculation (day-over-day fractional changes) */
+  dailyReturns: number[];
   /** Whether sufficient price data was available */
   hasData: boolean;
 }
 
 /** Result of cross-sectional momentum scoring for the full fund menu */
 export interface MomentumFactorResult {
-  /** Per-fund momentum scores (0–100, cross-sectional) */
+  /** Per-fund momentum scores (0–100, cross-sectional z-score + CDF) */
   scores: MomentumScore[];
   /** Human-readable summary */
   reasoning: string;
@@ -57,9 +60,11 @@ export interface MomentumFactorResult {
 /** Momentum score for a single fund */
 export interface MomentumScore {
   ticker: string;
-  /** Cross-sectional momentum score (0–100) */
+  /** Cross-sectional momentum score (0–100) via z-score + CDF */
   score: number;
-  /** Blended return used for ranking */
+  /** Vol-adjusted return used for scoring (blendedReturn / periodVol) */
+  volAdjustedReturn: number | null;
+  /** Raw blended return before vol adjustment */
   blendedReturn: number | null;
   /** Individual window returns */
   returns: FundMomentum['returns'];
@@ -69,7 +74,7 @@ export interface MomentumScore {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-/** Weights for blending lookback windows into a single momentum signal */
+/** Weights for blending lookback windows into a single momentum signal (§2.5.1) */
 const WINDOW_WEIGHTS = {
   threeMonth: 0.10,  // Recent noise — low weight
   sixMonth: 0.30,    // Medium-term trend — solid signal
@@ -80,13 +85,56 @@ const WINDOW_WEIGHTS = {
 /** Approximate trading days per month */
 const TRADING_DAYS_PER_MONTH = 21;
 
+/**
+ * Minimum daily return observations required for a meaningful volatility estimate.
+ * v5.1 uses 10. Below this, vol estimate is unreliable — fall back to raw return.
+ */
+const MIN_DAILY_RETURNS_FOR_VOL = 10;
+
+// ─── Math Helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Abramowitz & Stegun approximation to the standard normal CDF Φ(x).
+ * Maximum error ≈ 7.5 × 10⁻⁸.
+ * Identical to v5.1 scoring.js normalCDF and v6 scoring.ts normalCDF.
+ */
+function normalCDF(x: number): number {
+  if (x < -8) return 0;
+  if (x > 8) return 1;
+
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+
+  const sign = x < 0 ? -1 : 1;
+  const absX = Math.abs(x);
+  const t = 1.0 / (1.0 + p * absX);
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const t4 = t3 * t;
+  const t5 = t4 * t;
+  const y =
+    1.0 -
+    (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) *
+      Math.exp(-0.5 * absX * absX);
+
+  return 0.5 * (1.0 + sign * y);
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
  * Calculate momentum returns for a single fund from its price history.
  *
+ * Computes multi-window returns (§2.5.1) and extracts daily returns for
+ * volatility calculation (§2.5.2). The actual vol adjustment and z-score
+ * scoring happens in scoreMomentumCrossSectional() which needs all funds.
+ *
  * @param ticker Fund ticker
- * @param prices Daily price history from FMP (most recent first)
+ * @param prices Daily price history (sorted most-recent-first per FMP/Tiingo adapter)
  */
 export function calculateFundMomentum(
   ticker: string,
@@ -102,6 +150,7 @@ export function calculateFundMomentum(
         twelveMonth: null,
       },
       blendedReturn: null,
+      dailyReturns: [],
       hasData: false,
     };
   }
@@ -113,13 +162,13 @@ export function calculateFundMomentum(
 
   const currentPrice = sorted[0].adjClose || sorted[0].close;
 
-  // Calculate returns for each lookback window
+  // Calculate returns for each lookback window (§2.5.1)
   const threeMonth = calculateReturn(sorted, currentPrice, 3);
   const sixMonth = calculateReturn(sorted, currentPrice, 6);
   const nineMonth = calculateReturn(sorted, currentPrice, 9);
   const twelveMonth = calculateReturn(sorted, currentPrice, 12);
 
-  // Blend available windows
+  // Blend available windows (§2.5.1: renormalize if any window unavailable)
   const blendedReturn = blendReturns({
     threeMonth,
     sixMonth,
@@ -127,20 +176,36 @@ export function calculateFundMomentum(
     twelveMonth,
   });
 
+  // Extract daily returns for volatility calculation (§2.5.2)
+  // Prices are sorted most-recent-first; daily returns need chronological order
+  const dailyReturns = computeDailyReturns(sorted);
+
   return {
     ticker,
     returns: { threeMonth, sixMonth, nineMonth, twelveMonth },
     blendedReturn,
+    dailyReturns,
     hasData: blendedReturn !== null,
   };
 }
 
 /**
- * Cross-sectional momentum scoring: rank all funds in the menu against
- * each other and assign scores from 0–100.
+ * Cross-sectional momentum scoring with volatility adjustment.
  *
- * The best-performing fund gets ~95, the worst gets ~5.
- * Funds with no price data get a neutral 50.
+ * Implements §2.5.2 (vol adjustment) and §2.5.3 (z-score + CDF):
+ *   1. For each fund: vol_adjusted_return = blended_return / period_vol
+ *   2. Z-standardize vol-adjusted returns across fund universe (Bessel-corrected)
+ *   3. Winsorize z-scores to ±3 sigma
+ *   4. Map through normal CDF to 0–100
+ *
+ * Ported from v5.1 scoring.js computeCrossSectionalMomentum(), adapted for
+ * v6's multi-window architecture.
+ *
+ * Edge cases (§2.5.3):
+ *   - < 2 funds with valid returns → all funds get 50 (neutral)
+ *   - All returns identical (stdev = 0) → all funds get 50
+ *   - Single fund with data → score 75
+ *   - No price data for a fund → score 50 with dataQuality flag
  *
  * @param fundMomentums Momentum data for all funds in the menu
  */
@@ -148,46 +213,188 @@ export function scoreMomentumCrossSectional(
   fundMomentums: FundMomentum[]
 ): MomentumFactorResult {
   // Separate funds with and without data
-  const withData = fundMomentums.filter(m => m.hasData && m.blendedReturn !== null);
-  const withoutData = fundMomentums.filter(m => !m.hasData || m.blendedReturn === null);
+  const withData = fundMomentums.filter(
+    (m) => m.hasData && m.blendedReturn !== null
+  );
+  const withoutData = fundMomentums.filter(
+    (m) => !m.hasData || m.blendedReturn === null
+  );
 
+  // Edge case: no data at all → all neutral (§2.5.3)
   if (withData.length === 0) {
-    // No price data for any fund — all get neutral scores
-    const scores: MomentumScore[] = fundMomentums.map(m => ({
+    const scores: MomentumScore[] = fundMomentums.map((m) => ({
       ticker: m.ticker,
       score: 50,
+      volAdjustedReturn: null,
       blendedReturn: null,
       returns: m.returns,
       rank: 1,
     }));
     return {
       scores,
-      reasoning: 'Momentum: No price data available for any fund. All scored at neutral 50.',
+      reasoning:
+        'Momentum: No price data available for any fund. All scored at neutral 50.',
     };
   }
 
-  // Sort by blended return descending (best first)
-  const ranked = [...withData].sort(
-    (a, b) => (b.blendedReturn || 0) - (a.blendedReturn || 0)
-  );
+  // ── Step 1: Volatility adjustment (§2.5.2) ──────────────────────────────
+  // For each fund, divide blended return by realized period volatility.
+  // This ensures a fund with 12% return / 8% vol scores higher than
+  // one with 15% return / 25% vol.
+  //
+  // Ported from v5.1: dailyVol = stdev(dailyReturns), Bessel-corrected
+  //                   periodVol = dailyVol × √(number of daily observations)
+  //                   volAdjustedReturn = blendedReturn / periodVol
 
-  const scores: MomentumScore[] = [];
-  const n = ranked.length;
+  const volAdjustedByTicker: Map<
+    string,
+    { volAdjusted: number; blended: number }
+  > = new Map();
 
-  for (let i = 0; i < n; i++) {
-    const m = ranked[i];
-    // Map rank to score: rank 0 (best) → ~95, rank n-1 (worst) → ~5
-    // Formula: score = 95 - (rank / (n - 1)) * 90
-    // For a single fund, score = 50
-    const score = n === 1
-      ? 75 // Single fund with data gets above-neutral
-      : Math.round(95 - (i / (n - 1)) * 90);
+  for (const m of withData) {
+    const blended = m.blendedReturn!;
+    let volAdjusted = blended; // fallback: use raw return if vol unavailable
 
+    if (m.dailyReturns.length >= MIN_DAILY_RETURNS_FOR_VOL) {
+      const n = m.dailyReturns.length;
+      const mean = m.dailyReturns.reduce((a, b) => a + b, 0) / n;
+      const variance =
+        m.dailyReturns.reduce((acc, v) => acc + (v - mean) ** 2, 0) / (n - 1); // Bessel
+      const dailyVol = Math.sqrt(variance);
+
+      if (dailyVol > 0) {
+        const periodVol = dailyVol * Math.sqrt(n);
+        volAdjusted = blended / periodVol; // risk-adjusted return (Sharpe-like)
+      }
+    }
+
+    volAdjustedByTicker.set(m.ticker, { volAdjusted, blended });
+  }
+
+  // ── Step 2: Collect vol-adjusted returns for z-scoring ────────────────
+  const validReturns: number[] = [];
+  const tickersWithData: string[] = [];
+
+  for (const m of withData) {
+    const entry = volAdjustedByTicker.get(m.ticker);
+    if (entry) {
+      validReturns.push(entry.volAdjusted);
+      tickersWithData.push(m.ticker);
+    }
+  }
+
+  // Edge case: single fund with data → score 75 (§2.5.3)
+  if (validReturns.length === 1) {
+    const scores: MomentumScore[] = [];
+    const m = withData[0];
+    const entry = volAdjustedByTicker.get(m.ticker)!;
     scores.push({
       ticker: m.ticker,
-      score: Math.max(5, Math.min(95, score)),
-      blendedReturn: m.blendedReturn,
+      score: 75,
+      volAdjustedReturn: entry.volAdjusted,
+      blendedReturn: entry.blended,
       returns: m.returns,
+      rank: 1,
+    });
+    for (const m2 of withoutData) {
+      scores.push({
+        ticker: m2.ticker,
+        score: 50,
+        volAdjustedReturn: null,
+        blendedReturn: null,
+        returns: m2.returns,
+        rank: 2,
+      });
+    }
+    return {
+      scores,
+      reasoning: `Momentum: Only 1 fund with data (${m.ticker}) — scored 75. ${withoutData.length} funds without data scored 50.`,
+    };
+  }
+
+  // ── Step 3: Z-standardize (Bessel-corrected, §2.5.3) ─────────────────
+  const mean = validReturns.reduce((a, b) => a + b, 0) / validReturns.length;
+  const variance =
+    validReturns.reduce((acc, v) => acc + (v - mean) ** 2, 0) /
+    (validReturns.length - 1); // Bessel correction (n-1)
+  const stdev = Math.sqrt(variance);
+
+  // Edge case: all identical returns (stdev = 0) → all get 50 (§2.5.3)
+  if (stdev === 0) {
+    const scores: MomentumScore[] = [];
+    for (const m of withData) {
+      const entry = volAdjustedByTicker.get(m.ticker)!;
+      scores.push({
+        ticker: m.ticker,
+        score: 50,
+        volAdjustedReturn: entry.volAdjusted,
+        blendedReturn: entry.blended,
+        returns: m.returns,
+        rank: 1,
+      });
+    }
+    for (const m of withoutData) {
+      scores.push({
+        ticker: m.ticker,
+        score: 50,
+        volAdjustedReturn: null,
+        blendedReturn: null,
+        returns: m.returns,
+        rank: withData.length + 1,
+      });
+    }
+    return {
+      scores,
+      reasoning:
+        'Momentum: All funds have identical vol-adjusted returns. All scored at 50.',
+    };
+  }
+
+  // ── Step 4: Z-score → winsorize ±3 → CDF → 0–100 (§2.5.3) ───────────
+  // Ported from v5.1: z = (val - mean) / stdev, clamp [-3, 3],
+  // then 100 × Φ(z) for v6's 0–100 scale (v5.1 used 1 + 9 × Φ(z) for 1–10)
+
+  interface ScoredFund {
+    ticker: string;
+    score: number;
+    volAdjusted: number;
+    blended: number;
+    returns: FundMomentum['returns'];
+  }
+
+  const scored: ScoredFund[] = [];
+
+  for (let i = 0; i < tickersWithData.length; i++) {
+    const ticker = tickersWithData[i];
+    const entry = volAdjustedByTicker.get(ticker)!;
+    const fundData = withData.find((m) => m.ticker === ticker)!;
+
+    const z = (entry.volAdjusted - mean) / stdev;
+    const zWinsorized = Math.min(3, Math.max(-3, z)); // clamp ±3 sigma
+    const score = Math.round(100 * normalCDF(zWinsorized));
+
+    scored.push({
+      ticker,
+      score: Math.max(0, Math.min(100, score)),
+      volAdjusted: entry.volAdjusted,
+      blended: entry.blended,
+      returns: fundData.returns,
+    });
+  }
+
+  // Sort by score descending for ranking
+  scored.sort((a, b) => b.score - a.score);
+
+  const scores: MomentumScore[] = [];
+
+  for (let i = 0; i < scored.length; i++) {
+    const s = scored[i];
+    scores.push({
+      ticker: s.ticker,
+      score: s.score,
+      volAdjustedReturn: s.volAdjusted,
+      blendedReturn: s.blended,
+      returns: s.returns,
       rank: i + 1,
     });
   }
@@ -197,22 +404,21 @@ export function scoreMomentumCrossSectional(
     scores.push({
       ticker: m.ticker,
       score: 50,
+      volAdjustedReturn: null,
       blendedReturn: null,
       returns: m.returns,
-      rank: n + 1,
+      rank: scored.length + 1,
     });
   }
 
-  const best = ranked[0];
-  const bestPct = best.blendedReturn
-    ? (best.blendedReturn * 100).toFixed(1)
-    : '?';
+  const best = scored[0];
+  const bestPct = best.blended ? (best.blended * 100).toFixed(1) : '?';
 
   return {
     scores,
     reasoning:
-      `Momentum: Ranked ${withData.length} funds cross-sectionally. ` +
-      `Best: ${best.ticker} (${bestPct}% blended return). ` +
+      `Momentum: Vol-adjusted z-score + CDF scoring for ${withData.length} funds. ` +
+      `Best: ${best.ticker} (${bestPct}% blended return, vol-adj=${best.volAdjusted.toFixed(3)}). ` +
       `${withoutData.length} funds had no price data.`,
   };
 }
@@ -220,7 +426,9 @@ export function scoreMomentumCrossSectional(
 // ─── Internal Helpers ───────────────────────────────────────────────────────
 
 /**
- * Calculate the return over a lookback window.
+ * Calculate the return over a lookback window (§2.5.1).
+ *
+ * Window tolerance: ±5 trading days around the target lookback (§2.5.1).
  *
  * @param sortedPrices Prices sorted most-recent-first
  * @param currentPrice Most recent price
@@ -239,9 +447,7 @@ function calculateReturn(
     return null;
   }
 
-  // Use a window around the target index to handle weekends/holidays
-  // Look within ±5 trading days of the target
-  const windowStart = Math.max(0, targetIndex - 5);
+  // Use a window around the target index to handle weekends/holidays (§2.5.1: ±5 tolerance)
   const windowEnd = Math.min(sortedPrices.length - 1, targetIndex + 5);
   const pastPrice = sortedPrices[Math.min(targetIndex, windowEnd)];
 
@@ -253,9 +459,41 @@ function calculateReturn(
 }
 
 /**
- * Blend multiple return windows into a single momentum signal using
- * the configured weights. Handles missing windows by redistributing
- * weight to available ones.
+ * Compute daily returns from price history for volatility calculation (§2.5.2).
+ *
+ * Prices come in most-recent-first order. We need chronological order for
+ * day-over-day fractional changes: (close[i] - close[i-1]) / close[i-1].
+ *
+ * Ported from v5.1 tiingo.js extractReturns().
+ *
+ * @param sortedPrices Prices sorted most-recent-first
+ * @returns Array of day-over-day fractional returns (chronological order)
+ */
+function computeDailyReturns(sortedPrices: FmpDailyPrice[]): number[] {
+  if (sortedPrices.length < 2) return [];
+
+  // Reverse to chronological (oldest first)
+  const chronological = [...sortedPrices].reverse();
+
+  const closes = chronological
+    .map((p) => p.adjClose || p.close)
+    .filter((v) => v != null && v > 0);
+
+  if (closes.length < 2) return [];
+
+  const dailyReturns: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    dailyReturns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  }
+
+  return dailyReturns;
+}
+
+/**
+ * Blend multiple return windows into a single momentum signal (§2.5.1).
+ *
+ * Uses configured weights, redistributing proportionally to available
+ * windows when any window has insufficient data.
  */
 function blendReturns(returns: FundMomentum['returns']): number | null {
   const windows: Array<{ value: number; weight: number }> = [];
@@ -270,12 +508,15 @@ function blendReturns(returns: FundMomentum['returns']): number | null {
     windows.push({ value: returns.nineMonth, weight: WINDOW_WEIGHTS.nineMonth });
   }
   if (returns.twelveMonth != null) {
-    windows.push({ value: returns.twelveMonth, weight: WINDOW_WEIGHTS.twelveMonth });
+    windows.push({
+      value: returns.twelveMonth,
+      weight: WINDOW_WEIGHTS.twelveMonth,
+    });
   }
 
   if (windows.length === 0) return null;
 
-  // Normalize weights so they sum to 1.0
+  // Normalize weights so they sum to 1.0 (§2.5.1: renormalize if any unavailable)
   const totalWeight = windows.reduce((sum, w) => sum + w.weight, 0);
   let blended = 0;
   for (const w of windows) {

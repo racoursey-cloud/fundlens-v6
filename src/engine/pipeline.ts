@@ -292,6 +292,7 @@ export async function runFullPipeline(
         ticker: fund.ticker,
         returns: { threeMonth: null, sixMonth: null, nineMonth: null, twelveMonth: null },
         blendedReturn: null,
+        dailyReturns: [],
         hasData: false,
       });
     }
