@@ -1,6 +1,6 @@
 # FundLens — Master Specification
 ## Version 7.0 — Single Source of Truth
-**Last updated:** April 8, 2026
+**Last updated:** April 7, 2026 (Session 4)
 **Owner:** Robert Coursey (racoursey@gmail.com)
 
 ---
@@ -843,7 +843,7 @@ Claude should reference current events, trends, and cultural context when it enh
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 7, 2026 (after Session 3)
+**Last updated:** April 7, 2026 (after Session 4)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -887,17 +887,20 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Pipeline: Tiingo primary for fee data (Step 7) | §4.6 | pipeline.ts | Tiingo fee data → fund table ER fallback — Session 3 |
 | Cost Efficiency: 12b-1 fee penalty | §2.3 | cost-efficiency.ts | -5 pts per 0.10% of 12b-1, capped at -15 — Session 3 |
 | Cost Efficiency: accepts NormalizedFeeData | §2.3, §4.6 | cost-efficiency.ts | Tiingo ER preferred over fund table when available — Session 3 |
+| Composite scoring: z-space + CDF pipeline | §2.1 | scoring.ts | `scoreAndRankFunds()` → `zStandardize()` → weighted z-sum → `normalCDF()` → 0–100. Bessel-corrected. A&S 7.1.26. — Session 4 |
+| Normal CDF: Abramowitz & Stegun | §2.1 | scoring.ts | `normalCDF()` max error ≈ 7.5 × 10⁻⁸. Validated against §2.8 worked example. — Session 4 |
+| Z-scores persisted for client rescore | §2.1, §5.2 | persist.ts, types.ts | `z_cost_efficiency`, `z_holdings_quality`, `z_positioning`, `z_momentum` columns — Session 4 |
+| Client-side rescore uses z-scores + CDF | §2.1, §5.2 | Portfolio.tsx | Weighted z-sum + `normalCDF()`. No universe data needed client-side. — Session 4 |
+| Fallback: <2 funds → raw weighted average | §2.1 | scoring.ts | Z-standardization undefined for n<2, graceful fallback — Session 4 |
+| Weight validation: ±0.02 tolerance, 5% min | §2.2 | scoring.ts | `validateWeights()` updated to spec tolerances — Session 4 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
 These are the highest priority. The code runs but produces wrong results.
 
-**CRITICAL-1: Scoring Engine — Missing Z-Space + CDF (§2.1)**
-File: `src/engine/scoring.ts`, function `computeComposite()`
-Spec requires: raw scores → z-standardize (Bessel-corrected stdev, n-1) → weighted composite in z-space → normal CDF map back to 0-100.
-Code does: simple weighted average `raw.cost * w.cost + raw.quality * w.quality + ...` then clamp.
-Impact: Without z-standardization, factors with wider natural score ranges dominate the composite. Without CDF mapping, scores distribute linearly instead of following the S-curve. This is the core formula of the entire system.
-NOTE: This also affects client-side rescoring — `computeComposite()` is shared.
+**~~CRITICAL-1: Scoring Engine — Missing Z-Space + CDF (§2.1)~~ — RESOLVED (Session 4)**
+File: `src/engine/scoring.ts`
+Status: ✅ Implemented. `scoreAndRankFunds()` now performs full z-space + CDF pipeline: raw scores → `zStandardize()` (Bessel-corrected, n-1) → weighted composite in z-space → `normalCDF()` (Abramowitz & Stegun 7.1.26) → 0–100. Z-scores persisted to `fund_scores` table for client-side rescore. Client-side rescore in `Portfolio.tsx` uses pre-computed z-scores + lightweight `normalCDF()`. Validated against §2.8 worked example: Fund A=84, B=41, C=40, D=31 — all match. Edge cases handled: <2 funds → raw fallback, identical scores → all 50.
 
 **CRITICAL-2: Momentum — Missing Volatility Adjustment (§2.5.2)**
 File: `src/engine/momentum.ts`
@@ -986,8 +989,8 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 |---------|-------|--------------------|--------|
 | 2 | CUSIP Resolver Deep Review | §4.3 — flagged by Robert | **DONE** |
 | 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) | **DONE** |
-| 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | Next |
-| 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | |
+| 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | **DONE** |
+| 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | Next |
 | 6 | Thesis Overhaul | CRITICAL-4 (1-10 scale), MISSING-4 (FRED commodities wired in), MISSING-5 (deterministic priors) | |
 | 7 | Allocation Engine | CRITICAL-5 (full Kelly rewrite), MISSING-6 (money market exclusion) | |
 | 8 | UI Alignment | Tier badges wired in, risk slider 1-7 in client, HHI (MISSING-7) | |
@@ -1133,6 +1136,37 @@ Primary deliverable: Create `src/engine/tiingo.ts` and wire Tiingo into the pipe
 **Files changed:** `constants.ts`, `cost-efficiency.ts`, `pipeline.ts`
 **Resolved:** MISSING-1 (12b-1 fee penalty), MISSING-8 (Tiingo integration)
 **Verification:** `tsc --noEmit` passes clean (exit code 0).
+
+## April 7, 2026 — Session 4: Scoring Engine (Z-Space + CDF)
+
+Primary deliverable: Rewrite the composite scoring engine in `src/engine/scoring.ts` to implement the z-space + CDF pipeline from spec §2.1. This is the mathematical heart of FundLens — without it, every composite score in the system was wrong.
+
+**1. Implemented `normalCDF()` — Abramowitz & Stegun 7.1.26 (§2.1).** Standard normal CDF via erf approximation with max error ≈ 7.5 × 10⁻⁸. The A&S coefficients approximate `erf(x)`, and the normal CDF relates via `Φ(z) = 0.5 × (1 + erf(z/√2))`. Uses Horner form for numerical stability.
+
+**2. Implemented `zStandardize()` — Bessel-corrected (§2.1).** Standardizes an array of raw scores to z-scores across the fund universe. Divides by (n-1) per spec. Returns null for n < 2 (z-standardization undefined). Returns all zeros if stdev = 0 (all identical scores).
+
+**3. Rewrote `scoreAndRankFunds()` — full z-space + CDF pipeline (§2.1).** The server-side scoring function now performs all four steps from §2.1: (1) raw scores already computed, (2) z-standardize each factor across universe, (3) weighted composite in z-space, (4) map to 0–100 via normalCDF. Falls back to raw weighted average if fewer than 2 funds. Z-scores stored on each `FundCompositeScore` for downstream persistence and client use.
+
+**4. Added `computeCompositeFromZScores()` — client-side rescore function (§2.1, §5.2).** Takes pre-computed z-scores (already stored in Supabase) and user weights, returns composite via weighted z-sum + CDF. Pure math, no universe data needed. This is what runs when users adjust weight sliders.
+
+**5. Preserved `computeComposite()` — legacy raw-weighted-average fallback.** Maintained for the <2 funds edge case. `brief-engine.ts` updated to use `computeCompositeFromZScores()` with z-scores read from Supabase.
+
+**6. Updated persistence layer to store z-scores (§2.1).** `persist.ts` now writes `z_cost_efficiency`, `z_holdings_quality`, `z_positioning`, `z_momentum` to `fund_scores` table. `FundScoresRow` in `types.ts` extended with z-score fields. SQL migration created (`migrations/session4_add_z_scores.sql`). Full schema (`v6_full_schema.sql`) updated.
+
+**7. Updated client-side rescore in `Portfolio.tsx` (§5.2).** Replaced inline raw weighted average with z-score weighted sum + `normalCDF()`. Added lightweight `normalCDF()` function to Portfolio.tsx (identical to server-side, ~15 lines). `FundScore` interface in `api.ts` extended with z-score fields. The `select: '*'` in routes automatically picks up new columns — no route changes needed.
+
+**8. Updated weight validation to spec tolerances (§2.2).** `validateWeights()` now enforces ±0.02 sum tolerance (was 0.001) and minimum 5% per factor.
+
+**Architecture decision — client-side rescore approach:** Discussed with Robert whether to keep client-side rescore or move all computation server-side. Decision: keep lightweight client-side rescore for instant slider feedback. Server computes z-scores during pipeline (heavy lifting), stores them. Client does weighted z-sum + one CDF call (~15 lines of math). This keeps the client thin while maintaining the instant feel when dragging sliders. Universal scores confirmed: same fund, same score, regardless of viewer. Risk tolerance affects allocation only (§3), never scoring.
+
+**Validation:** §2.8 worked example produces correct results: Fund A=84, Fund B=41, Fund C=40, Fund D=31. All intermediate z-scores and z-composites match spec. Edge cases verified: single fund → null z-scores → raw fallback, all identical → z=0 → composite 50.
+
+**Database migration required:** Run `migrations/session4_add_z_scores.sql` in Supabase SQL Editor before deploying. Adds 4 z-score columns to `fund_scores` with default 0. Existing rows will be populated on next pipeline run.
+
+**Files changed:** `scoring.ts`, `persist.ts`, `types.ts`, `brief-engine.ts`, `v6_full_schema.sql`, `client/src/api.ts`, `client/src/pages/Portfolio.tsx`
+**Files created:** `migrations/session4_add_z_scores.sql`
+**Resolved:** CRITICAL-1 (scoring engine z-space + CDF)
+**Verification:** `tsc --noEmit` passes clean on both server and client.
 
 ---
 
