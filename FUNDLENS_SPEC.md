@@ -15,6 +15,28 @@ This file is the authority for all FundLens development. Every coding session mu
 5. **Read Section 9 (Implementation Status) before coding.** It tells you exactly what's working, what's broken, and what's missing. Don't rediscover gaps — they're cataloged.
 3. **Evidence Gate Protocol.** Before writing any code, the session must: (a) read this entire document, (b) cite the specific section that governs each design decision, (c) state findings and gaps before coding, (d) verify all interfaces after delivery.
 4. **If it's not in this document, ask Robert before building it.**
+5. **Set up GitHub push access early.** Before doing any coding work, configure git so you can push directly. See "Repository & Git Setup" below. This saves significant time — do not defer it to end-of-session.
+
+### Repository & Git Setup
+
+**Repo:** `racoursey-cloud/fundlens-v6` (GitHub, private)
+**Branch:** `main` (all work lands here unless Robert says otherwise)
+**Push token:** Classic PAT named "Phase 2" with full `repo` scope.
+
+**First thing every session — configure the remote with the token:**
+
+```
+cd <repo-root>
+git remote set-url origin https://racoursey-cloud:<GITHUB_PAT>@github.com/racoursey-cloud/fundlens-v6.git
+```
+
+Robert will provide the token value at session start if it is not already configured. If the token is expired or returns a 403, ask Robert to regenerate the "Phase 2" classic token at: GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic).
+
+**Commit and push conventions:**
+- Commit after completing each logical unit of work (don't batch an entire session into one commit).
+- Prefix commit messages with the session topic, e.g. `Session 3: Tiingo Integration — add fee data fetcher`.
+- Push to `main` after each commit or at minimum before ending the session.
+- Always update FUNDLENS_SPEC.md (Section 9 status + Section 10 changelog) as part of the session's final commit.
 
 ---
 
