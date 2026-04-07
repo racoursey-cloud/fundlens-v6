@@ -82,6 +82,44 @@ const SECTORS = [
 
 export type Sector = typeof SECTORS[number];
 
+// ─── Prompt Input Sanitization ─────────────────────────────────────────────
+// SESSION 0 SECURITY: Prevents prompt injection via RSS headlines or FRED data.
+
+/**
+ * Sanitize text before embedding in a Claude prompt.
+ * Strips control characters, limits length, and removes patterns
+ * that look like prompt injection attempts.
+ */
+function sanitizePromptInput(text: string, maxLength = 200): string {
+  return text
+    // Strip control characters (except newline/tab)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    // Remove anything that looks like prompt delimiter injection
+    .replace(/```/g, '')
+    .replace(/NARRATIVE:|KEY_THEMES:|SECTOR_PREFERENCES:/gi, '')
+    // Remove instruction-like patterns
+    .replace(/ignore\s+(previous|above|all)\s+instructions/gi, '[filtered]')
+    .replace(/you\s+are\s+now/gi, '[filtered]')
+    .replace(/system\s*:\s*/gi, '[filtered]')
+    // Limit length per headline
+    .slice(0, maxLength)
+    .trim();
+}
+
+/**
+ * Validate that parsed sector preferences only contain known sectors
+ * and scores within the expected range. Rejects injection attempts
+ * that produce out-of-bounds values.
+ */
+function validateSectorPreferences(prefs: SectorPreference[]): SectorPreference[] {
+  const validSectorSet = new Set<string>(SECTORS);
+  return prefs.filter(p => {
+    if (!validSectorSet.has(p.sector)) return false;
+    if (typeof p.preference !== 'number' || !isFinite(p.preference)) return false;
+    return true;
+  });
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -101,7 +139,12 @@ export async function generateMacroThesis(
 
   const client = new Anthropic({ apiKey });
 
-  const headlinesText = formatHeadlinesForPrompt(headlines);
+  // SESSION 0 SECURITY: Sanitize all external inputs before embedding in prompt
+  const rawHeadlines = formatHeadlinesForPrompt(headlines);
+  const headlinesText = rawHeadlines
+    .split('\n')
+    .map(line => sanitizePromptInput(line, 250))
+    .join('\n');
   const macroText = formatMacroForPrompt(macroSnapshot);
 
   const systemPrompt = buildSystemPrompt();
@@ -129,6 +172,20 @@ export async function generateMacroThesis(
 
   // Parse the structured thesis from Claude's response
   const thesis = parseThesisResponse(text);
+
+  // SESSION 0 SECURITY: Validate sector preferences contain only known sectors
+  thesis.sectorPreferences = validateSectorPreferences(thesis.sectorPreferences);
+
+  // Re-fill any missing sectors after validation filtering
+  for (const sector of SECTORS) {
+    if (!thesis.sectorPreferences.find(sp => sp.sector === sector)) {
+      thesis.sectorPreferences.push({
+        sector,
+        preference: 0,
+        reasoning: 'No specific thesis view — neutral positioning.',
+      });
+    }
+  }
 
   console.log(
     `[thesis] Thesis generated: ${thesis.sectorPreferences.length} sector views, ` +

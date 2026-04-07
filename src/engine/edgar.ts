@@ -323,10 +323,16 @@ async function parseNportXml(
 ): Promise<EdgarFilingResult> {
   // xml2js parses into a nested object. Arrays are used for all elements
   // (even single-occurrence ones) — so we always access [0] for single values.
-  const parsed = await parseStringPromise(xml, {
+  // SESSION 0 SECURITY: Strip DOCTYPE declarations to prevent XXE attacks.
+  // xml2js does not natively disable external entities, so we remove them
+  // from the raw XML before parsing.
+  const safeXml = xml.replace(/<!DOCTYPE[^>]*>/gi, '');
+
+  const parsed = await parseStringPromise(safeXml, {
     explicitArray: true,
     ignoreAttrs: false,
     tagNameProcessors: [stripNamespace],
+    strict: true,
   });
 
   // Navigate to the formData node (may be under edgarSubmission or root)

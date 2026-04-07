@@ -12,10 +12,12 @@
 
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { router } from './routes/routes.js';
-import { SERVER, ENV_KEYS } from './engine/constants.js';
+import { SERVER, ENV_KEYS, CRITICAL_ENV_KEYS } from './engine/constants.js';
 import { startCronJobs, stopCronJobs } from './engine/cron.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,14 +30,27 @@ const app = express();
 // Parse JSON request bodies
 app.use(express.json());
 
+// SESSION 0 SECURITY: Helmet sets security headers (CSP, X-Frame-Options, etc.)
+app.use(helmet({
+  contentSecurityPolicy: SERVER.IS_PRODUCTION ? undefined : false, // Disable CSP in dev (Vite HMR)
+}));
+
 // CORS — allow the React client to talk to the API during development.
-// In production, the React build is served from the same Express server,
-// so CORS isn't needed. But during development, Vite runs on a different port.
+// SESSION 0 SECURITY: Explicit production origins, default restrictive.
 app.use(cors({
   origin: SERVER.IS_PRODUCTION
-    ? false                    // Same-origin in production
+    ? ['https://fundlens.app', 'https://www.fundlens.app']
     : ['http://localhost:5173', 'http://localhost:3000'],
-  credentials: true,           // Allow cookies/auth headers
+  credentials: true,
+}));
+
+// SESSION 0 SECURITY: Global rate limiting — 100 requests per minute per IP
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
 }));
 
 // ─── Health Check ───────────────────────────────────────────────────────────
@@ -71,17 +86,33 @@ if (SERVER.IS_PRODUCTION) {
 
 // ─── Startup ────────────────────────────────────────────────────────────────
 
-// Validate environment variables at startup (warn, don't crash)
+// SESSION 0 SECURITY: Critical env vars crash the server. Others warn.
 function validateEnv(): void {
-  const missing: string[] = [];
-  for (const key of ENV_KEYS) {
+  // Critical keys: server MUST NOT start without these
+  const missingCritical: string[] = [];
+  for (const key of CRITICAL_ENV_KEYS) {
     if (!process.env[key]) {
-      missing.push(key);
+      missingCritical.push(key);
     }
   }
-  if (missing.length > 0) {
+  if (missingCritical.length > 0) {
+    console.error(
+      `[server] FATAL: Missing critical environment variables: ${missingCritical.join(', ')}. ` +
+      `Server cannot start safely without these.`
+    );
+    process.exit(1);
+  }
+
+  // Non-critical keys: warn but continue
+  const missingOther: string[] = [];
+  for (const key of ENV_KEYS) {
+    if (!process.env[key] && !CRITICAL_ENV_KEYS.includes(key)) {
+      missingOther.push(key);
+    }
+  }
+  if (missingOther.length > 0) {
     console.warn(
-      `[server] Warning: Missing environment variables: ${missing.join(', ')}. ` +
+      `[server] Warning: Missing environment variables: ${missingOther.join(', ')}. ` +
       `Some features may not work.`
     );
   }

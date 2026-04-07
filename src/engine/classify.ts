@@ -108,6 +108,22 @@ export async function classifyHoldingSectors(
   console.log(`[classify] Done: ${classified}/${holdings.length} holdings have sectors`);
 }
 
+// ─── Prompt Input Sanitization ─────────────────────────────────────────────
+// SESSION 0 SECURITY: Prevents prompt injection via holding names from EDGAR.
+
+function sanitizeHoldingText(text: string): string {
+  return text
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/[\r\n]/g, ' ')
+    .replace(/ignore\s+(previous|above|all)\s+instructions/gi, '[filtered]')
+    .replace(/you\s+are\s+now/gi, '[filtered]')
+    .replace(/system\s*:\s*/gi, '[filtered]')
+    .replace(/respond\s+as/gi, '[filtered]')
+    .replace(/classify\s+all\s+as/gi, '[filtered]')
+    .slice(0, 100)
+    .trim();
+}
+
 // ─── Internal ───────────────────────────────────────────────────────────────
 
 /**
@@ -118,8 +134,9 @@ async function classifyBatch(
   client: Anthropic,
   holdings: ResolvedHolding[]
 ): Promise<Map<string, string>> {
+  // SESSION 0 SECURITY: Sanitize holding names before embedding in prompt
   const holdingsList = holdings
-    .map(h => `- ${h.ticker || 'N/A'}: ${h.name}`)
+    .map(h => `- ${sanitizeHoldingText(h.ticker || 'N/A')}: ${sanitizeHoldingText(h.name)}`)
     .join('\n');
 
   const sectorList = VALID_SECTORS.join(', ');

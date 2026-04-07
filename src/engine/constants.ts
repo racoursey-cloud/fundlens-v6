@@ -8,11 +8,13 @@
  */
 
 // ─── Factor Weights (defaults — users can customize in profile) ──────────────
+// SESSION 1: Corrected per spec §2.2 — Momentum 25%, Positioning 20%
+// (Previously swapped: positioning was 0.25, momentum was 0.20)
 export const DEFAULT_FACTOR_WEIGHTS = {
   costEfficiency: 0.25,
   holdingsQuality: 0.30,
-  positioning: 0.25,
-  momentum: 0.20,
+  momentum: 0.25,
+  positioning: 0.20,
 } as const;
 
 // ─── Holdings Coverage Thresholds ────────────────────────────────────────────
@@ -26,8 +28,26 @@ export const HOLDINGS_COVERAGE = {
   MAX_HOLDINGS: 50,
 } as const;
 
-// ─── Risk Tolerance ──────────────────────────────────────────────────────────
+// ─── Risk Tolerance (7-Point Kelly Scale, Spec §3.4, §6.4) ─────────────────
 // Affects allocation sizing only, NOT scoring. Same scores, different position sizes.
+// The k values are non-linearly spaced — tighter at conservative end, wider at aggressive.
+export const KELLY_RISK_TABLE = [
+  { level: 1, label: 'Very Conservative',     kellyFraction: 0.15, k: 0.30 },
+  { level: 2, label: 'Conservative',          kellyFraction: 0.22, k: 0.50 },
+  { level: 3, label: 'Moderate-Conservative',  kellyFraction: 0.30, k: 0.70 },
+  { level: 4, label: 'Moderate',               kellyFraction: 0.40, k: 0.95 },
+  { level: 5, label: 'Moderate-Aggressive',    kellyFraction: 0.50, k: 1.20 },
+  { level: 6, label: 'Aggressive',             kellyFraction: 0.65, k: 1.50 },
+  { level: 7, label: 'Very Aggressive',        kellyFraction: 0.80, k: 1.85 },
+] as const;
+
+/** Default risk level (Moderate = 4) */
+export const DEFAULT_RISK_LEVEL = 4;
+/** Min/max risk tolerance values */
+export const RISK_MIN = 1;
+export const RISK_MAX = 7;
+
+// Legacy compatibility — kept for any code referencing the old shape
 export const RISK_LEVELS = {
   CONSERVATIVE: 'conservative',
   MODERATE: 'moderate',
@@ -35,6 +55,48 @@ export const RISK_LEVELS = {
 } as const;
 
 export type RiskLevel = typeof RISK_LEVELS[keyof typeof RISK_LEVELS];
+
+// ─── Tier Badges (Spec §6.3) ────────────────────────────────────────────────
+// Derived from MAD-based modified z-score in allocation engine.
+export const TIER_BADGES = [
+  { tier: 'BREAKAWAY',    zMin: 2.0,   color: '#F59E0B', label: 'Breakaway' },
+  { tier: 'STRONG',       zMin: 1.2,   color: '#10B981', label: 'Strong' },
+  { tier: 'SOLID',        zMin: 0.3,   color: '#3B82F6', label: 'Solid' },
+  { tier: 'NEUTRAL',      zMin: -0.5,  color: '#6B7280', label: 'Neutral' },
+  { tier: 'WEAK',         zMin: -Infinity, color: '#EF4444', label: 'Weak' },
+] as const;
+
+/** Special tier badges (not z-score-based) */
+export const SPECIAL_TIERS = {
+  MONEY_MARKET: { tier: 'MONEY_MARKET', color: '#4B5563', label: 'MM' },
+  LOW_DATA:     { tier: 'LOW_DATA',     color: '#4B5563', label: 'Low Data' },
+} as const;
+
+// ─── Score Display Colors (Spec §6.2) ───────────────────────────────────────
+export const SCORE_COLORS = {
+  GREEN:  { min: 75, color: '#10B981' },
+  BLUE:   { min: 50, color: '#3B82F6' },
+  AMBER:  { min: 25, color: '#F59E0B' },
+  RED:    { min: 0,  color: '#EF4444' },
+} as const;
+
+// ─── Allocation Engine Constants (Spec §3) ──────────────────────────────────
+export const ALLOCATION = {
+  /** MAD consistency constant (1/Φ⁻¹(0.75)) — makes MAD comparable to stdev for normal distributions */
+  MAD_CONSISTENCY: 0.6745,
+  /** De minimis floor — positions below this are dropped (spec §3.5) */
+  DE_MINIMIS_PCT: 0.05,
+  /** Quality gate: funds with this many or more fallbacks are excluded */
+  QUALITY_GATE_MAX_FALLBACKS: 4,
+} as const;
+
+// ─── FRED Commodity Series (Spec §4.4) ──────────────────────────────────────
+export const FRED_COMMODITY_SERIES = {
+  WTI_CRUDE: 'DCOILWTICO',
+  BRENT_CRUDE: 'DCOILBRENTEU',
+  GOLD: 'GOLDAMGBD228NLBM',
+  DOLLAR_INDEX: 'DTWEXBGS',
+} as const;
 
 // ─── Claude AI Configuration ─────────────────────────────────────────────────
 // MANDATORY: All Claude API calls are sequential with 1.2s delays.
@@ -44,8 +106,8 @@ export const CLAUDE = {
   CLASSIFICATION_MODEL: 'claude-haiku-4-5-20251001',
   /** Model for macro thesis generation */
   THESIS_MODEL: 'claude-sonnet-4-6',
-  /** Model for Investment Brief writing — Opus for natural voice and stronger reasoning */
-  BRIEF_MODEL: 'claude-sonnet-4-6',
+  /** Model for Investment Brief writing — Opus for natural voice and stronger reasoning (spec §4.2) */
+  BRIEF_MODEL: 'claude-opus-4-6',
   /** Minimum delay between sequential Claude API calls (milliseconds) */
   CALL_DELAY_MS: 1200,
   /** All Claude calls route through this proxy endpoint */
@@ -184,17 +246,31 @@ export const SERVER = {
   IS_PRODUCTION: process.env.NODE_ENV === 'production',
 } as const;
 
+// ─── Admin Configuration ────────────────────────────────────────────────────
+// SESSION 0 SECURITY: Admin emails for privileged operations (pipeline, etc.)
+export const ADMIN_EMAILS: readonly string[] = [
+  'racoursey@gmail.com',
+];
+
 // ─── Environment Variable Keys ───────────────────────────────────────────────
 // Listed here so we can validate they exist at startup.
 export const ENV_KEYS = [
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
   'SUPABASE_SERVICE_KEY',
+  'SUPABASE_JWT_SECRET',
   'ANTHROPIC_API_KEY',
   'FMP_API_KEY',
   'OPENFIGI_API_KEY',
   'TINNGO_KEY',        // Intentional typo — NEVER correct or mention it
   'FRED_API_KEY',
-
   'RESEND_API_KEY',
 ] as const;
+
+// SESSION 0 SECURITY: Server MUST NOT start without these.
+export const CRITICAL_ENV_KEYS: readonly string[] = [
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_KEY',
+  'SUPABASE_JWT_SECRET',
+  'ANTHROPIC_API_KEY',
+];

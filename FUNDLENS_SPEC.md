@@ -1,6 +1,6 @@
 # FundLens — Master Specification
 ## Version 7.0 — Single Source of Truth
-**Last updated:** April 7, 2026
+**Last updated:** April 8, 2026
 **Owner:** Robert Coursey (racoursey@gmail.com)
 
 ---
@@ -11,7 +11,8 @@ This file is the authority for all FundLens development. Every coding session mu
 
 **Rules:**
 1. **The spec is the authority, not the code.** If code and spec disagree, fix the code.
-2. **No silent changes.** If a session needs to change a decision here, they must update this document as a deliverable and add a Changelog entry (Section 8) explaining what changed and why.
+2. **No silent changes.** If a session needs to change a decision here, they must update this document as a deliverable and add a Changelog entry (Section 10) explaining what changed and why.
+5. **Read Section 9 (Implementation Status) before coding.** It tells you exactly what's working, what's broken, and what's missing. Don't rediscover gaps — they're cataloged.
 3. **Evidence Gate Protocol.** Before writing any code, the session must: (a) read this entire document, (b) cite the specific section that governs each design decision, (c) state findings and gaps before coding, (d) verify all interfaces after delivery.
 4. **If it's not in this document, ask Robert before building it.**
 
@@ -818,7 +819,141 @@ Claude should reference current events, trends, and cultural context when it enh
 
 ---
 
-## 9. CHANGELOG
+## 9. IMPLEMENTATION STATUS
+
+**Last updated:** April 8, 2026 (after Session 1)
+
+This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
+
+### 9.1 What's Working (Matches Spec)
+
+| Feature | Spec Section | File(s) | Notes |
+|---------|-------------|---------|-------|
+| Default factor weights | §2.2 | constants.ts | 25/30/25/20 (Cost/Quality/Momentum/Positioning) — corrected Session 1 |
+| Category benchmarks for cost scoring | §2.3 | cost-efficiency.ts | All 6 categories, piecewise linear interpolation |
+| Holdings cutoff 65%/50 | §4.3 | constants.ts, holdings.ts | TARGET_WEIGHT_PCT=65, MAX_HOLDINGS=50 |
+| Quality 5 dimensions at correct weights | §2.4.1 | quality.ts | 0.25/0.20/0.20/0.15/0.20 |
+| 25+ financial ratios scored | §2.4.1 | quality.ts | All ratios from spec present |
+| Position-weighted fund quality aggregation | §2.4.1 | quality.ts | Σ(score×weight)/Σ(weight) |
+| Multi-window momentum blend | §2.5.1 | momentum.ts | 3/6/9/12-month at 10/30/30/30, renormalize missing |
+| 14 standard sectors | §2.6.1 | thesis.ts | Exact list from spec |
+| Claude sequential calls with 1.2s delay | §5.3 | constants.ts, pipeline.ts | CLAUDE_CALL_DELAY_MS=1200, never Promise.all |
+| API call delay 500ms | §5.3 | constants.ts, pipeline.ts | API_CALL_DELAY_MS=500 |
+| RSS feeds (5 feeds, 120min cache) | §4.5 | constants.ts, rss.ts | All 5 feeds configured |
+| EDGAR User-Agent | §4.1 | constants.ts | FundLens fundlens.app racoursey@gmail.com |
+| OpenFIGI batch 100 | §4.3 | constants.ts | BATCH_SIZE=100 |
+| FMP /stable/ endpoints | §4.1 | constants.ts | Migrated from /api/v3/ |
+| UI theme colors | §6.1 | constants.ts | #0e0f11, #16181c, #25282e, #3b82f6 |
+| Fonts | §6.1 | constants.ts | Inter + JetBrains Mono |
+| Brief delivery interval 30 days | §7.5 | constants.ts | DELIVERY_INTERVAL_DAYS=30 |
+| Weight redistribution slider logic | §6.5 | scoring.ts | Proportional, 5% min per factor |
+| Weight validation sum to 1.0 | §2.2 | scoring.ts, routes.ts | ±0.02 tolerance |
+| Kelly risk table constants | §3.4 | constants.ts | 7 levels, k=0.30 to 1.85 — added Session 1 |
+| Tier badge constants | §6.3 | constants.ts | 5 tiers + MM + Low Data — added Session 1 |
+| Risk scale 1–7 validation | §6.4 | routes.ts | RISK_MIN=1, RISK_MAX=7 — fixed Session 1 |
+| Brief model = Opus | §4.2 | constants.ts | claude-opus-4-6 — fixed Session 1 |
+| Security hardening | — | server.ts, routes.ts, thesis.ts, classify.ts, edgar.ts, Briefs.tsx | Session 0 complete |
+
+### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
+
+These are the highest priority. The code runs but produces wrong results.
+
+**CRITICAL-1: Scoring Engine — Missing Z-Space + CDF (§2.1)**
+File: `src/engine/scoring.ts`, function `computeComposite()`
+Spec requires: raw scores → z-standardize (Bessel-corrected stdev, n-1) → weighted composite in z-space → normal CDF map back to 0-100.
+Code does: simple weighted average `raw.cost * w.cost + raw.quality * w.quality + ...` then clamp.
+Impact: Without z-standardization, factors with wider natural score ranges dominate the composite. Without CDF mapping, scores distribute linearly instead of following the S-curve. This is the core formula of the entire system.
+NOTE: This also affects client-side rescoring — `computeComposite()` is shared.
+
+**CRITICAL-2: Momentum — Missing Volatility Adjustment (§2.5.2)**
+File: `src/engine/momentum.ts`
+Spec requires: `vol_adjusted_return = blended_return / period_vol` where `period_vol = daily_vol × √(trading_days)`.
+Code does: uses raw blended returns for ranking.
+Impact: High-volatility funds dominate the momentum signal. 15% return / 25% vol should score lower than 12% return / 8% vol.
+
+**CRITICAL-3: Momentum — Missing Z-Score + CDF Scoring (§2.5.3)**
+File: `src/engine/momentum.ts`, function `scoreMomentumCrossSectional()`
+Spec requires: z-score (Bessel) → winsorize ±3 sigma → CDF map to 0-100. Edge cases: <2 funds → all 50, all identical → all 50, single fund → 75.
+Code does: linear rank-to-score `95 - (rank / (n-1)) * 90`.
+Impact: Wrong distribution shape. Doesn't handle edge cases per spec.
+
+**CRITICAL-4: Positioning — Wrong Scale (§2.6.1)**
+Files: `src/engine/thesis.ts` (prompt and types), `src/engine/positioning.ts` (normalization)
+Spec requires: sector scores on 1.0–10.0 scale (one decimal). Range anchoring: ≥2 sectors ≥7.0, ≥2 sectors ≤4.0, spread ≥4.0. Normalization: `(score - 1) / 9`.
+Code does: -2 to +2 integer scale. Prompt asks Claude for -2 to +2. Normalization: `(preference + 2) / 4`.
+Impact: 5 discrete values vs continuous 1.0-10.0. Positioning scores compressed.
+
+**CRITICAL-5: Allocation Engine — Wrong Algorithm (§3.1–3.6)**
+File: `src/engine/brief-engine.ts`, function `computeAllocation()`
+Spec requires: (1) MAD-based modified z-scores using 0.6745 consistency constant, (2) quality gate excluding 4+ fallback funds, (3) exponential curve `e^(k × mod_z)` using Kelly k parameter from KELLY_RISK_TABLE, (4) normalize, (5) 5% de minimis floor, (6) rounding with error absorption into largest position.
+Code does: standard z-scores → linear threshold `(rt-1)/8` → proportional `z - threshold` weighting → 0.5% floor.
+Impact: Fundamentally different allocation behavior. The exponential curve creates dramatically different concentration profiles at each risk level. The 5% de minimis floor is industry standard; 0.5% is meaningless.
+NOTE: The allocation engine should be extracted to its own file (`allocation.ts`) rather than living inside brief-engine.ts.
+
+### 9.3 What's MISSING (Spec Feature Not Yet Implemented)
+
+**MISSING-1: Cost Efficiency 12b-1 Fee Penalty (§2.3)**
+File: `src/engine/cost-efficiency.ts`
+Spec: When Tiingo provides 12b-1 fees, apply -5 points per 0.10% of 12b-1, capped at -15.
+Status: No 12b-1 handling. Depends on Tiingo fee data integration (Session 3).
+
+**MISSING-2: Bond Quality Scoring (§2.4.2, §2.4.3)**
+File: `src/engine/quality.ts`
+Spec: Issuer Category Quality Map (UST=1.00, USG=0.95, MUN=0.80, CORP=0.60, Default=0.50). Distressed adjustments (isDefault=Y → 0.10, fairValLevel=3 → 0.35, debtInArrears=Y → 0.35). Blended equity/bond scoring.
+Status: Only equity dimension scoring exists. No bond quality map.
+
+**MISSING-3: Coverage-Based Confidence Scaling (§2.4.1)**
+File: `src/engine/quality.ts`, `src/engine/pipeline.ts`
+Spec: If coverage_pct < 0.40, reduce quality weight: `quality_weight_adj = base × max(coverage/0.40, 0.10)`, freed weight goes to momentum, renormalize all to 1.0.
+Status: Not implemented. Quality returns score but not coverage_pct.
+
+**MISSING-4: FRED Commodity Series (§4.4)**
+Files: `src/engine/fred.ts`, `src/engine/constants.ts`
+Spec: DCOILWTICO (WTI crude), DCOILBRENTEU (Brent crude), GOLDAMGBD228NLBM (gold), DTWEXBGS (dollar index), copper.
+Status: Constants added in Session 1 (FRED_COMMODITY_SERIES). Not yet wired into fred.ts fetch or thesis prompt.
+
+**MISSING-5: Deterministic FRED-Based Sector Priors (§2.6.2)**
+File: `src/engine/thesis.ts`
+Spec: Compute before Claude. Rules: yield curve inverted → Financials prior -1.0; CPI YoY > 4% → Energy +1.0, Precious Metals +1.0; fed tightening → Real Estate -0.5, Utilities -0.5; unemployment > 5% → Consumer Disc -0.5, Consumer Staples +0.5.
+Status: Not implemented. No `computeSectorPriors()` function. FRED data goes directly to Claude.
+
+**MISSING-6: Money Market Global Skip (§2.7)**
+Spec: Money market funds get fixed composite 50, skip ALL factor scoring, display as "MM" tier, weight 0 in allocation engine.
+Status: Category detection exists in cost-efficiency.ts. No global skip in pipeline.ts. No MM tier display. No allocation exclusion.
+
+**MISSING-7: HHI Concentration Display (§6.6)**
+Spec: Herfindahl-Hirschman Index of sector exposure per fund in detail view. Informational only.
+Status: Not implemented anywhere.
+
+**MISSING-8: Tiingo Integration (§4.1, §4.6)**
+Spec: Tiingo is primary source for fund NAV history (split-adjusted) and fee data (12b-1, loads). FMP is fallback for prices.
+Status: Tiingo client file may exist but integration with cost-efficiency (fee data) and momentum (prices) is not wired in pipeline.ts. Pipeline currently uses FMP for both.
+
+**MISSING-9: Help Section — FAQs + Live Claude Chat (Robert's request)**
+Spec: Not yet in spec — feature idea from build planning session. Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
+Status: Planned for Session 9 of the build roadmap.
+
+### 9.4 CUSIP Resolver — Flagged for Dedicated Review
+
+Robert flagged the CUSIP resolver (`src/engine/cusip.ts`) as needing its own dedicated review session. It was not audited in Session 0 or Session 1. The OpenFIGI integration, cache behavior, batch handling, and fallback logic all need verification against spec §4.3.
+
+### 9.5 Build Roadmap (Remaining Sessions)
+
+| Session | Focus | Key Gaps Addressed |
+|---------|-------|--------------------|
+| 2 | CUSIP Resolver Deep Review | §4.3 — flagged by Robert |
+| 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) |
+| 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) |
+| 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) |
+| 6 | Thesis Overhaul | CRITICAL-4 (1-10 scale), MISSING-4 (FRED commodities wired in), MISSING-5 (deterministic priors) |
+| 7 | Allocation Engine | CRITICAL-5 (full Kelly rewrite), MISSING-6 (money market exclusion) |
+| 8 | UI Alignment | Tier badges wired in, risk slider 1-7 in client, HHI (MISSING-7) |
+| 9 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) |
+| 10 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) |
+
+---
+
+## 10. CHANGELOG
 
 ### April 7, 2026 — v7 Specification Created (Planning Session with Robert)
 
@@ -857,6 +992,48 @@ Claude should reference current events, trends, and cultural context when it enh
 16. **No culture/trends in scoring.** Social media sentiment, generational preferences, etc. add noise to the objective model. Claude may reference current events and cultural context in the Investment Brief narrative when it enhances readability and relevance.
 
 17. **Cost Efficiency enhanced with Tiingo fee components.** When 12b-1 marketing fees are present, apply penalty within cost factor (-5 points per 0.10% of 12b-1, capped at -15). Distinguishes funds with identical headline expense ratios but different fee structures.
+
+## April 7, 2026 — Session 0: Security Hardening
+
+1. **XSS prevention in Briefs.tsx.** Added DOMPurify sanitization with strict ALLOWED_TAGS whitelist and escapeHtml() preprocessing before inline markdown formatting. Prevents stored XSS via Claude-generated Brief content.
+
+2. **Prompt injection hardening in thesis.ts and classify.ts.** Added sanitizePromptInput() and sanitizeHoldingText() functions that strip control characters, prompt delimiter patterns, and instruction-like text before embedding RSS headlines or holding names in Claude prompts.
+
+3. **Rate limiting added.** Global 100 requests/minute/IP. Pipeline endpoints: 3/hour per user. Brief generation: 5/day per user. Prevents abuse and Claude API quota exhaustion.
+
+4. **Admin role enforcement.** Pipeline run and retry endpoints now require admin email whitelist check via requireAdmin middleware. Only racoursey@gmail.com can trigger pipeline runs.
+
+5. **XXE prevention in EDGAR XML parsing.** DOCTYPE stripping before xml2js parsing plus strict mode enabled. Prevents XML External Entity attacks via malicious NPORT-P filings.
+
+6. **Mandatory environment variables.** Server now crashes on startup (process.exit(1)) if SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_JWT_SECRET, or ANTHROPIC_API_KEY are missing.
+
+7. **CORS locked to explicit origins.** Production CORS restricted to fundlens.app and www.fundlens.app only. Development allows localhost:5173 and localhost:3000.
+
+8. **Helmet security headers enabled.** CSP disabled in dev for hot reload; enabled in production.
+
+9. **Internal error details stripped from API responses.** All 7 routes that returned `${error}` in 500 responses now log details server-side and return generic user-facing messages.
+
+10. **Input validation hardened.** Ticker format validation (isValidTicker) on /api/funds/:ticker and /api/scores/:ticker. UUID format validation (isValidUUID) on /api/briefs/:id. Individual weight bounds (0.05–0.60) on PUT /api/profile.
+
+## April 7–8, 2026 — Session 1: Foundation — Constants, Types, 7-Point Kelly Risk Model
+
+1. **Default factor weights corrected (§2.2).** Momentum and Positioning were swapped in constants.ts — Momentum was 0.20 (should be 0.25), Positioning was 0.25 (should be 0.20). Fixed to match spec: Cost 25%, Quality 30%, Momentum 25%, Positioning 20%.
+
+2. **Brief model corrected to Opus (§4.2, §5.1).** BRIEF_MODEL changed from claude-sonnet-4-6 to claude-opus-4-6.
+
+3. **Kelly risk table added (§3.4).** KELLY_RISK_TABLE constant with all 7 levels: labels, Kelly fractions (0.15–0.80), and k parameters (0.30–1.85). Replaces the old 3-value RISK_LEVELS enum.
+
+4. **Risk scale changed from 1–9 to 1–7 (§3.4, §6.4).** RISK_MIN and RISK_MAX constants added. Validation in PUT /api/profile and POST /api/profile/setup updated. riskLabel() rewritten to use KELLY_RISK_TABLE. Profile summary descriptions aligned to 7-point scale. Display strings changed from /9 to /7.
+
+5. **Tier badge constants added (§6.3).** TIER_BADGES array with z-score thresholds and colors: BREAKAWAY (≥2.0, amber), STRONG (≥1.2, green), SOLID (≥0.3, blue), NEUTRAL (≥-0.5, gray), WEAK (<-0.5, red). SPECIAL_TIERS for Money Market and Low Data.
+
+6. **Score color constants added (§6.2).** SCORE_COLORS: Green ≥75, Blue ≥50, Amber ≥25, Red <25.
+
+7. **Allocation engine constants added (§3).** MAD_CONSISTENCY (0.6745), DE_MINIMIS_PCT (0.05), QUALITY_GATE_MAX_FALLBACKS (4).
+
+8. **FRED commodity series constants added (§4.4).** FRED_COMMODITY_SERIES: DCOILWTICO, DCOILBRENTEU, GOLDAMGBD228NLBM, DTWEXBGS.
+
+9. **Spec-vs-code gap analysis completed.** 20 gaps identified (7 Critical, 8 High, 5 Medium). Saved as FundLens_Spec_vs_Code_Gap_Analysis.md. Critical gaps include: missing z-space + CDF in scoring engine, wrong positioning scale (-2/+2 vs 1–10), missing momentum vol-adjustment, and wrong allocation algorithm.
 
 ---
 

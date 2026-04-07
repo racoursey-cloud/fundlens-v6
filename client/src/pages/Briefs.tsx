@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
+import DOMPurify from 'dompurify';
 import {
   fetchBriefs,
   fetchBrief,
@@ -41,8 +42,20 @@ function renderMarkdown(md: string): string {
     if (inOl) { htmlParts.push('</ol>'); inOl = false; }
   };
 
-  const inlineFormat = (text: string): string => {
+  /** Escape HTML entities BEFORE any markdown-to-HTML conversion */
+  const escapeHtml = (text: string): string => {
     return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  };
+
+  const inlineFormat = (text: string): string => {
+    // Escape HTML first, then apply markdown formatting
+    const escaped = escapeHtml(text);
+    return escaped
       .replace(/\*\*(.+?)\*\*/g, `<strong style="color:${theme.colors.text};font-weight:600">$1</strong>`)
       .replace(/\*(.+?)\*/g, `<em>$1</em>`)
       .replace(/`(.+?)`/g, `<code style="font-family:${theme.fonts.mono};font-size:13px;background:${theme.colors.surface};padding:2px 6px;border-radius:4px">$1</code>`);
@@ -108,7 +121,11 @@ function renderMarkdown(md: string): string {
   }
 
   closeList();
-  return htmlParts.join('\n');
+  // Sanitize final HTML output to prevent XSS from any source
+  return DOMPurify.sanitize(htmlParts.join('\n'), {
+    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'p', 'strong', 'em', 'code', 'ul', 'ol', 'li', 'hr'],
+    ALLOWED_ATTR: ['style'],
+  });
 }
 
 // ─── Status Badge ──────────────────────────────────────────────────────────

@@ -28,7 +28,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { CLAUDE, BRIEF, DEFAULT_FACTOR_WEIGHTS } from './constants.js';
+import { CLAUDE, BRIEF, DEFAULT_FACTOR_WEIGHTS, KELLY_RISK_TABLE, RISK_MAX } from './constants.js';
 import { computeComposite } from './scoring.js';
 import { delay } from './types.js';
 import type { UserProfileRow, FundScoresRow, InvestmentBriefRow } from './types.js';
@@ -38,13 +38,10 @@ import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-/** Human-readable label for risk tolerance 1-9 */
+/** Human-readable label for risk tolerance 1-7 (spec §3.4, §6.4) */
 function riskLabel(rt: number): string {
-  return rt <= 2 ? 'Conservative' :
-    rt <= 4 ? 'Moderately conservative' :
-    rt <= 6 ? 'Moderate' :
-    rt <= 8 ? 'Moderately aggressive' :
-             'Aggressive';
+  const entry = KELLY_RISK_TABLE.find(r => r.level === rt);
+  return entry?.label ?? 'Moderate';
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -422,16 +419,19 @@ function profileSummary(profile: UserProfileRow): string {
   if (profile.weight_positioning >= 0.30) emphasis.push('macro positioning');
   if (profile.weight_momentum >= 0.25) emphasis.push('recent performance trends');
 
+  // SESSION 1: Updated for 7-point scale (spec §3.4)
   const toleranceDesc =
+    profile.risk_tolerance <= 1 ? 'prefers stability and maximum diversification' :
     profile.risk_tolerance <= 2 ? 'prefers stability and broad diversification' :
-    profile.risk_tolerance <= 4 ? 'leans conservative, favoring diversification with some selectivity' :
-    profile.risk_tolerance <= 6 ? 'balances growth with risk management' :
-    profile.risk_tolerance <= 8 ? 'prioritizes growth and is comfortable with concentration' :
+    profile.risk_tolerance <= 3 ? 'leans conservative, favoring diversification with some selectivity' :
+    profile.risk_tolerance <= 4 ? 'balances growth with risk management' :
+    profile.risk_tolerance <= 5 ? 'prioritizes growth and is comfortable with concentration' :
+    profile.risk_tolerance <= 6 ? 'seeks high conviction with concentrated positions' :
              'seeks maximum conviction with highly concentrated positions';
 
   const toleranceLabel = riskLabel(profile.risk_tolerance);
 
-  return `${toleranceLabel} investor (${profile.risk_tolerance}/9) who ${toleranceDesc}` +
+  return `${toleranceLabel} investor (${profile.risk_tolerance}/${RISK_MAX}) who ${toleranceDesc}` +
     (emphasis.length > 0 ? `. Emphasizes: ${emphasis.join(', ')}` : '');
 }
 
@@ -596,7 +596,7 @@ export async function assembleDataPacket(
 
   return {
     user: {
-      riskTolerance: `${riskLabel(profile.risk_tolerance)} (${profile.risk_tolerance}/9)`,
+      riskTolerance: `${riskLabel(profile.risk_tolerance)} (${profile.risk_tolerance}/${RISK_MAX})`,
       factorWeights: {
         costEfficiency: profile.weight_cost,
         holdingsQuality: profile.weight_quality,

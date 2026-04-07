@@ -36,10 +36,11 @@
  * References: Master Reference §5, §7, §8, §10.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
 import { requireAuth, AuthenticatedRequest } from '../engine/auth.js';
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../engine/supabase.js';
-import { DEFAULT_FACTOR_WEIGHTS } from '../engine/constants.js';
+import { DEFAULT_FACTOR_WEIGHTS, ADMIN_EMAILS, RISK_MIN, RISK_MAX } from '../engine/constants.js';
 import type {
   FundRow,
   FundScoresRow,
@@ -49,6 +50,45 @@ import type {
 } from '../engine/types.js';
 
 export const router = Router();
+
+// ─── SESSION 0 SECURITY: Rate limiters for expensive endpoints ────────────
+
+const pipelineRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,                    // 3 pipeline runs per hour
+  message: { error: 'Pipeline rate limit exceeded. Max 3 per hour.' },
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || req.ip || 'unknown',
+});
+
+const briefRateLimit = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 5,                         // 5 brief generations per day
+  message: { error: 'Brief generation rate limit exceeded. Max 5 per day.' },
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || req.ip || 'unknown',
+});
+
+// ─── SESSION 0 SECURITY: Admin-only middleware ────────────────────────────
+
+function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  const { userEmail } = req as AuthenticatedRequest;
+  if (!userEmail || !ADMIN_EMAILS.includes(userEmail)) {
+    res.status(403).json({ error: 'Admin access required for this operation.' });
+    return;
+  }
+  next();
+}
+
+// ─── SESSION 0 SECURITY: Input validation helpers ─────────────────────────
+
+/** Validate ticker format: 1-10 uppercase alphanumeric characters */
+function isValidTicker(ticker: string): boolean {
+  return /^[A-Z0-9]{1,10}$/.test(ticker);
+}
+
+/** Validate UUID format */
+function isValidUUID(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FUNDS
@@ -66,7 +106,8 @@ router.get('/api/funds', requireAuth, async (req: Request, res: Response) => {
   });
 
   if (error) {
-    res.status(500).json({ error: `Failed to fetch funds: ${error}` });
+    console.error('[routes] Failed to fetch funds:', error);
+    res.status(500).json({ error: 'Failed to fetch funds. Please try again later.' });
     return;
   }
 
@@ -78,10 +119,16 @@ router.get('/api/funds', requireAuth, async (req: Request, res: Response) => {
  * Returns a single fund by ticker symbol.
  */
 router.get('/api/funds/:ticker', requireAuth, async (req: Request, res: Response) => {
-  const ticker = req.params.ticker as string;
+  const ticker = (req.params.ticker as string).toUpperCase();
+
+  // SESSION 0 SECURITY: Validate ticker format before using in query
+  if (!isValidTicker(ticker)) {
+    res.status(400).json({ error: 'Invalid ticker format' });
+    return;
+  }
 
   const { data, error } = await supaFetch<FundRow>('funds', {
-    params: { ticker: `eq.${ticker.toUpperCase()}`, select: '*' },
+    params: { ticker: `eq.${ticker}`, select: '*' },
     single: true,
   });
 
@@ -130,7 +177,8 @@ router.get('/api/scores', requireAuth, async (req: Request, res: Response) => {
   });
 
   if (error) {
-    res.status(500).json({ error: `Failed to fetch scores: ${error}` });
+    console.error('[routes] Failed to fetch scores:', error);
+    res.status(500).json({ error: 'Failed to fetch scores. Please try again later.' });
     return;
   }
 
@@ -150,11 +198,17 @@ router.get('/api/scores', requireAuth, async (req: Request, res: Response) => {
  * Returns the latest scores for a specific fund, including factor detail.
  */
 router.get('/api/scores/:ticker', requireAuth, async (req: Request, res: Response) => {
-  const ticker = req.params.ticker as string;
+  const ticker = (req.params.ticker as string).toUpperCase();
+
+  // SESSION 0 SECURITY: Validate ticker format before using in query
+  if (!isValidTicker(ticker)) {
+    res.status(400).json({ error: 'Invalid ticker format' });
+    return;
+  }
 
   // Find the fund
   const { data: fund } = await supaFetch<FundRow>('funds', {
-    params: { ticker: `eq.${ticker.toUpperCase()}` },
+    params: { ticker: `eq.${ticker}` },
     single: true,
   });
 
@@ -287,6 +341,17 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
         weight_momentum: (allowed.weight_momentum ?? current.weight_momentum) as number,
       };
 
+      // SESSION 0 SECURITY: Validate individual weight bounds (spec: min 5%)
+      const weightValues = Object.values(finalWeights);
+      for (const w of weightValues) {
+        if (typeof w !== 'number' || !isFinite(w) || w < 0.05 || w > 0.60) {
+          res.status(400).json({
+            error: 'Each factor weight must be between 0.05 and 0.60.',
+          });
+          return;
+        }
+      }
+
       const sum = finalWeights.weight_cost + finalWeights.weight_quality +
         finalWeights.weight_positioning + finalWeights.weight_momentum;
 
@@ -299,12 +364,12 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
     }
   }
 
-  // Validate risk tolerance if being updated (integer 1–9)
+  // SESSION 1: Validate risk tolerance (spec §6.4: 7-point slider, 1–7)
   if (allowed.risk_tolerance !== undefined) {
     const rt = Number(allowed.risk_tolerance);
-    if (!Number.isInteger(rt) || rt < 1 || rt > 9) {
+    if (!Number.isInteger(rt) || rt < RISK_MIN || rt > RISK_MAX) {
       res.status(400).json({
-        error: 'Invalid risk_tolerance. Must be an integer from 1 to 9.',
+        error: `Invalid risk_tolerance. Must be an integer from ${RISK_MIN} to ${RISK_MAX}.`,
       });
       return;
     }
@@ -318,7 +383,8 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
   );
 
   if (error) {
-    res.status(500).json({ error: `Failed to update profile: ${error}` });
+    console.error('[routes] Failed to update profile:', error);
+    res.status(500).json({ error: 'Failed to update profile. Please try again later.' });
     return;
   }
 
@@ -342,9 +408,10 @@ router.post('/api/profile/setup', requireAuth, async (req: Request, res: Respons
     return;
   }
 
+  // SESSION 1: 7-point risk scale (spec §6.4)
   const rt = Number(riskTolerance);
-  if (!Number.isInteger(rt) || rt < 1 || rt > 9) {
-    res.status(400).json({ error: 'Invalid riskTolerance. Must be an integer from 1 to 9.' });
+  if (!Number.isInteger(rt) || rt < RISK_MIN || rt > RISK_MAX) {
+    res.status(400).json({ error: `Invalid riskTolerance. Must be an integer from ${RISK_MIN} to ${RISK_MAX}.` });
     return;
   }
 
@@ -371,7 +438,8 @@ router.post('/api/profile/setup', requireAuth, async (req: Request, res: Respons
   );
 
   if (error) {
-    res.status(500).json({ error: `Failed to save setup: ${error}` });
+    console.error('[routes] Failed to save setup:', error);
+    res.status(500).json({ error: 'Failed to save setup. Please try again later.' });
     return;
   }
 
@@ -396,7 +464,8 @@ router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Respon
   });
 
   if (error) {
-    res.status(500).json({ error: `Failed to fetch pipeline status: ${error}` });
+    console.error('[routes] Failed to fetch pipeline status:', error);
+    res.status(500).json({ error: 'Failed to fetch pipeline status. Please try again later.' });
     return;
   }
 
@@ -423,7 +492,8 @@ router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Respon
  * NOTE: The actual pipeline execution is wired up in persist.ts (Session 5).
  * This route creates the run record and calls the pipeline.
  */
-router.post('/api/pipeline/run', requireAuth, async (req: Request, res: Response) => {
+// SESSION 0 SECURITY: Admin-only + rate limited
+router.post('/api/pipeline/run', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
   // Check if a pipeline is already running
   const { data: running } = await supaFetch<PipelineRunRow>('pipeline_runs', {
     params: {
@@ -448,7 +518,8 @@ router.post('/api/pipeline/run', requireAuth, async (req: Request, res: Response
   }, { single: true });
 
   if (error || !run) {
-    res.status(500).json({ error: `Failed to create pipeline run: ${error}` });
+    console.error('[routes] Failed to create pipeline run:', error);
+    res.status(500).json({ error: 'Failed to create pipeline run. Please try again later.' });
     return;
   }
 
@@ -517,7 +588,8 @@ async function runPipelineAsync(runId: string): Promise<void> {
  *
  * Body: { failedRunId: string }
  */
-router.post('/api/pipeline/retry', requireAuth, async (req: Request, res: Response) => {
+// SESSION 0 SECURITY: Admin-only + rate limited
+router.post('/api/pipeline/retry', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
   const { failedRunId } = req.body;
 
   if (!failedRunId) {
@@ -576,7 +648,8 @@ router.get('/api/briefs', requireAuth, async (req: Request, res: Response) => {
   });
 
   if (error) {
-    res.status(500).json({ error: `Failed to fetch briefs: ${error}` });
+    console.error('[routes] Failed to fetch briefs:', error);
+    res.status(500).json({ error: 'Failed to fetch briefs. Please try again later.' });
     return;
   }
 
@@ -590,7 +663,13 @@ router.get('/api/briefs', requireAuth, async (req: Request, res: Response) => {
  */
 router.get('/api/briefs/:id', requireAuth, async (req: Request, res: Response) => {
   const { userId } = req as AuthenticatedRequest;
-  const { id } = req.params;
+  const id = req.params.id as string;
+
+  // SESSION 0 SECURITY: Validate UUID format before using in query
+  if (!isValidUUID(id)) {
+    res.status(400).json({ error: 'Invalid brief ID format' });
+    return;
+  }
 
   const { data: brief, error } = await supaFetch<InvestmentBriefRow>('investment_briefs', {
     params: {
@@ -618,7 +697,8 @@ router.get('/api/briefs/:id', requireAuth, async (req: Request, res: Response) =
  *
  * Query param: ?sendEmail=true to also email the Brief (default: false for on-demand)
  */
-router.post('/api/briefs/generate', requireAuth, async (req: Request, res: Response) => {
+// SESSION 0 SECURITY: Rate limited to prevent Claude Opus quota exhaustion
+router.post('/api/briefs/generate', requireAuth, briefRateLimit, async (req: Request, res: Response) => {
   const { userId } = req as AuthenticatedRequest;
   const sendEmail = req.query.sendEmail === 'true';
 
