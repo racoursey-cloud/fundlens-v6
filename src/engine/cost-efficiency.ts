@@ -6,18 +6,26 @@
  * per Morningstar and Vanguard research.
  *
  * Scoring approach:
- *   1. Get the fund's expense ratio (from FMP profile or Supabase funds table)
+ *   1. Get the fund's expense ratio (from Tiingo fee data, EDGAR, or Supabase)
  *   2. Compare it to a category-based benchmark curve
  *   3. Score 0–100 where 100 = lowest cost in category
+ *   4. Apply 12b-1 fee penalty when Tiingo provides granular fee breakdowns (§2.3)
  *
  * The score is relative to the fund's category (index funds are compared
  * to other index funds, active funds to active funds) so a 0.04% index
  * fund and a 0.65% active fund can both score well within their category.
  *
+ * Enhanced expense analysis (§2.3): When Tiingo provides 12b-1 marketing fees,
+ * a penalty modifier is applied: -5 points per 0.10% of 12b-1, capped at -15.
+ * This distinguishes funds with identical headline expense ratios but different
+ * fee structures — 12b-1 fees are pure drag with zero benefit to the investor.
+ *
  * Weight: 25% of composite (DEFAULT_FACTOR_WEIGHTS.costEfficiency)
  *
- * Session 3 deliverable. References: Master Reference §4 (Cost Efficiency).
+ * Session 3 deliverable. References: Spec §2.3, §4.1, §4.6.
  */
+
+import { NormalizedFeeData } from './tiingo.js';
 
 // ─── Category Benchmarks ────────────────────────────────────────────────────
 // Expense ratio percentiles by fund category. Derived from Morningstar
@@ -202,56 +210,62 @@ export function detectFundCategory(
  */
 export function scoreCostEfficiency(
   expenseRatio: number | null,
-  fundName: string
+  fundName: string,
+  feeData?: NormalizedFeeData | null
 ): CostEfficiencyResult {
+  // If Tiingo provides an expense ratio, prefer it over the Supabase/fund table value
+  const effectiveER = feeData?.expenseRatio ?? expenseRatio;
+
   // If expense ratio is unknown, return a neutral score
-  if (expenseRatio == null || expenseRatio < 0) {
+  if (effectiveER == null || effectiveER < 0) {
     return {
       score: 50,
       category: 'default',
       expenseRatio: null,
       percentileEstimate: 50,
+      twelveb1Penalty: 0,
+      feeDataSource: feeData?.source || 'unknown',
       reasoning: 'Expense ratio not available — scored at neutral midpoint.',
     };
   }
 
-  const category = detectFundCategory(fundName, expenseRatio);
+  const category = detectFundCategory(fundName, effectiveER);
   const bench = CATEGORY_BENCHMARKS[category] || CATEGORY_BENCHMARKS.default;
 
   let score: number;
   let percentileEstimate: number;
 
-  if (expenseRatio <= bench.p10) {
+  if (effectiveER <= bench.p10) {
     // Top 10% — excellent
-    score = interpolate(expenseRatio, 0, bench.p10, 100, 95);
-    percentileEstimate = interpolate(expenseRatio, 0, bench.p10, 1, 10);
-  } else if (expenseRatio <= bench.p25) {
+    score = interpolate(effectiveER, 0, bench.p10, 100, 95);
+    percentileEstimate = interpolate(effectiveER, 0, bench.p10, 1, 10);
+  } else if (effectiveER <= bench.p25) {
     // 10th–25th percentile — very good
-    score = interpolate(expenseRatio, bench.p10, bench.p25, 95, 80);
-    percentileEstimate = interpolate(expenseRatio, bench.p10, bench.p25, 10, 25);
-  } else if (expenseRatio <= bench.p50) {
+    score = interpolate(effectiveER, bench.p10, bench.p25, 95, 80);
+    percentileEstimate = interpolate(effectiveER, bench.p10, bench.p25, 10, 25);
+  } else if (effectiveER <= bench.p50) {
     // 25th–50th percentile — good
-    score = interpolate(expenseRatio, bench.p25, bench.p50, 80, 60);
-    percentileEstimate = interpolate(expenseRatio, bench.p25, bench.p50, 25, 50);
-  } else if (expenseRatio <= bench.p75) {
+    score = interpolate(effectiveER, bench.p25, bench.p50, 80, 60);
+    percentileEstimate = interpolate(effectiveER, bench.p25, bench.p50, 25, 50);
+  } else if (effectiveER <= bench.p75) {
     // 50th–75th percentile — below average
-    score = interpolate(expenseRatio, bench.p50, bench.p75, 60, 35);
-    percentileEstimate = interpolate(expenseRatio, bench.p50, bench.p75, 50, 75);
-  } else if (expenseRatio <= bench.p90) {
+    score = interpolate(effectiveER, bench.p50, bench.p75, 60, 35);
+    percentileEstimate = interpolate(effectiveER, bench.p50, bench.p75, 50, 75);
+  } else if (effectiveER <= bench.p90) {
     // 75th–90th percentile — expensive
-    score = interpolate(expenseRatio, bench.p75, bench.p90, 35, 15);
-    percentileEstimate = interpolate(expenseRatio, bench.p75, bench.p90, 75, 90);
+    score = interpolate(effectiveER, bench.p75, bench.p90, 35, 15);
+    percentileEstimate = interpolate(effectiveER, bench.p75, bench.p90, 75, 90);
   } else {
     // Above 90th percentile — very expensive
     score = interpolate(
-      expenseRatio,
+      effectiveER,
       bench.p90,
       bench.p90 * 2,
       15,
       0
     );
     percentileEstimate = interpolate(
-      expenseRatio,
+      effectiveER,
       bench.p90,
       bench.p90 * 2,
       90,
@@ -259,27 +273,54 @@ export function scoreCostEfficiency(
     );
   }
 
+  // ── 12b-1 Fee Penalty (§2.3, MISSING-1) ──────────────────────────────────
+  // When Tiingo provides 12b-1 fees, apply -5 points per 0.10% of 12b-1,
+  // capped at -15. A fund with a 0.85% ER including a 0.25% 12b-1 fee should
+  // score lower than a fund at 0.85% with no 12b-1 fee, because the marketing
+  // fee is pure drag with zero benefit to the investor.
+  let twelveb1Penalty = 0;
+  if (feeData?.twelveb1Fee != null && feeData.twelveb1Fee > 0) {
+    // Convert to percentage points (e.g. 0.0025 → 0.25%)
+    const feePct = feeData.twelveb1Fee * 100;
+    // -5 points per 0.10% of 12b-1, capped at -15
+    twelveb1Penalty = Math.min(15, Math.floor(feePct / 0.10) * 5);
+    score -= twelveb1Penalty;
+  }
+
   // Clamp to 0–100
   score = Math.max(0, Math.min(100, Math.round(score)));
   percentileEstimate = Math.max(1, Math.min(99, Math.round(percentileEstimate)));
 
-  const pctDisplay = (expenseRatio * 100).toFixed(2);
+  const pctDisplay = (effectiveER * 100).toFixed(2);
+  const sourceLabel = feeData?.source === 'tiingo' ? ' (Tiingo)' : '';
+
+  let reasoning =
+    `Expense ratio ${pctDisplay}%${sourceLabel} is at ~${percentileEstimate}th percentile ` +
+    `for ${formatCategoryName(category)} funds.`;
+
+  if (twelveb1Penalty > 0) {
+    const feePctDisplay = feeData?.twelveb1Fee != null
+      ? (feeData.twelveb1Fee * 100).toFixed(2)
+      : '?';
+    reasoning += ` 12b-1 fee ${feePctDisplay}% → -${twelveb1Penalty} penalty.`;
+  }
+
+  reasoning += ` Score: ${score}/100.`;
 
   return {
     score,
     category,
-    expenseRatio,
+    expenseRatio: effectiveER,
     percentileEstimate,
-    reasoning:
-      `Expense ratio ${pctDisplay}% is at ~${percentileEstimate}th percentile ` +
-      `for ${formatCategoryName(category)} funds. ` +
-      `Score: ${score}/100.`,
+    twelveb1Penalty,
+    feeDataSource: feeData?.source || 'unknown',
+    reasoning,
   };
 }
 
 /** Result of Cost Efficiency scoring for a single fund */
 export interface CostEfficiencyResult {
-  /** Score 0–100 (higher = cheaper = better) */
+  /** Score 0–100 (higher = cheaper = better), includes 12b-1 penalty if applicable */
   score: number;
   /** Detected fund category */
   category: string;
@@ -287,6 +328,10 @@ export interface CostEfficiencyResult {
   expenseRatio: number | null;
   /** Estimated percentile within category (1 = cheapest, 99 = most expensive) */
   percentileEstimate: number;
+  /** Points deducted for 12b-1 marketing fees (0 if no 12b-1 data, max 15) */
+  twelveb1Penalty: number;
+  /** Where the fee data came from */
+  feeDataSource: string;
   /** Human-readable explanation of the score */
   reasoning: string;
 }
