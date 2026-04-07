@@ -111,6 +111,8 @@ export async function runFullPipeline(
   progress(1, `Processing ${funds.length} funds`);
 
   // ── Steps 2–3: Fetch holdings from EDGAR + resolve CUSIPs ──
+  // CUSIP resolution uses built-in Supabase cache + OpenFIGI + FMP search fallback.
+  // The cache functions default inside resolveCusips() — no need to pass them here.
   progress(2, 'Fetching holdings from EDGAR + resolving CUSIPs');
 
   const openFigiKey = process.env.OPENFIGI_API_KEY || '';

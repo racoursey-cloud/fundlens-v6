@@ -25,7 +25,8 @@ export interface EdgarHolding {
   title: string;
   /** Value in USD */
   valueUsd: number;
-  /** Percentage of fund net assets (0.0–1.0 scale, e.g. 0.07 = 7%) */
+  /** Percentage of fund net assets in whole-percent units (e.g. 4.89 = 4.89% of NAV).
+   *  Matches NPORT-P pctVal field directly. Coverage cutoff compares against 65. */
   pctOfNav: number;
   /** SEC asset category code */
   assetCategory: string | null;
@@ -122,7 +123,7 @@ export interface ResolvedHolding {
   cusip: string;
   /** Resolved ticker from OpenFIGI (null if unresolved) */
   ticker: string | null;
-  /** Percentage of fund net assets (0.0–1.0) */
+  /** Percentage of fund net assets in whole-percent units (e.g. 4.89 = 4.89% of NAV) */
   pctOfNav: number;
   /** Value in USD */
   valueUsd: number;
@@ -152,7 +153,7 @@ export interface HoldingsPipelineResult {
     holdingsIncluded: number;
     /** Total holdings in original filing */
     holdingsTotal: number;
-    /** Cumulative weight of included holdings (0.0–1.0) */
+    /** Cumulative weight of included holdings in whole-percent units (e.g. 65 = 65%) */
     weightCovered: number;
     /** Which cutoff was hit: "weight" (65%) or "count" (50) */
     cutoffReason: 'weight' | 'count';
@@ -201,7 +202,7 @@ export interface HoldingsCacheRow {
   cusip: string;
   /** Resolved ticker (null if unresolved) */
   ticker: string | null;
-  /** Percentage of fund NAV (0.0–1.0) */
+  /** Percentage of fund NAV in whole-percent units (e.g. 4.89 = 4.89%) */
   pct_of_nav: number;
   /** Value in USD */
   value_usd: number;

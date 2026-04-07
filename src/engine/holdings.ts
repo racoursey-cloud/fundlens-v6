@@ -34,8 +34,8 @@ import {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-/** Max depth for fund-of-funds look-through (prevents infinite recursion) */
-const MAX_LOOKTHROUGH_DEPTH = 2;
+/** Max depth for fund-of-funds look-through (spec §2.4.4: capped at depth 1) */
+const MAX_LOOKTHROUGH_DEPTH = 1;
 
 /**
  * Minimum weight for a sub-fund holding to trigger look-through.
@@ -57,13 +57,13 @@ const MIN_SUBFUND_WEIGHT = 0.01;
  * 5. Return the ready-to-score holdings array
  *
  * @param fundTicker - Mutual fund ticker (e.g. "VFIAX")
- * @param fmpApiKey - API key for FMP CUSIP resolution
+ * @param openFigiKey - OpenFIGI API key for CUSIP-to-ticker resolution
  * @param cacheLookup - Optional Supabase cache lookup for CUSIPs
  * @param cacheSave - Optional Supabase cache save for new CUSIP resolutions
  */
 export async function runHoldingsPipeline(
   fundTicker: string,
-  fmpApiKey: string,
+  openFigiKey: string,
   cacheLookup?: (cusips: string[]) => Promise<Map<string, CusipResolution>>,
   cacheSave?: (resolutions: CusipResolution[]) => Promise<void>
 ): Promise<PipelineStepResult<HoldingsPipelineResult>> {
@@ -109,11 +109,11 @@ export async function runHoldingsPipeline(
 
     // ── Step 4: Resolve CUSIPs to tickers ──
     const cusips = included.map(h => h.cusip).filter(Boolean);
-    console.log(`[holdings] Resolving ${cusips.length} CUSIPs via FMP...`);
+    console.log(`[holdings] Resolving ${cusips.length} CUSIPs via OpenFIGI...`);
 
     const cusipResult = await resolveCusips(
       cusips,
-      fmpApiKey,
+      openFigiKey,
       cacheLookup,
       cacheSave
     );

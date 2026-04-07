@@ -5,6 +5,12 @@
  * via the OpenFIGI API. Tickers are what FMP needs to fetch company
  * fundamentals (income statements, balance sheets, ratios, etc.).
  *
+ * Fallback chain (spec §4.6):
+ *   1. Supabase cusip_cache (persistent, avoids redundant API calls)
+ *   2. OpenFIGI v3 API (batch, 100 per request)
+ *   3. FMP search-by-name (for CUSIPs that OpenFIGI can't resolve)
+ *   4. Supabase manual entry (manual overrides always win)
+ *
  * OpenFIGI v3 API:
  * - POST https://api.openfigi.com/v3/mapping
  * - Max 100 jobs per request (with API key)
@@ -12,40 +18,110 @@
  * - Response array is index-matched to request array
  * - Failed lookups return { warning: "No identifier found" }
  *
- * This module also maintains a persistent cache in Supabase (cusip_cache
- * table) so we only call OpenFIGI once per CUSIP across all pipeline runs.
- *
- * Session 2 deliverable. References: Master Reference §5 (OpenFIGI),
- * §8 step 3.
+ * Session 2 deliverable. References: Master Spec §4.3, §4.6.
  */
 
 import { OPENFIGI, PIPELINE } from './constants.js';
 import {
   CusipResolution,
+  CusipCacheRow,
   FigiMappingJob,
   FigiResult,
   PipelineStepResult,
   delay,
 } from './types.js';
+import { supaFetch } from './supabase.js';
+import { searchByName } from './fmp.js';
+
+// ─── Supabase Cache Functions ─────────────────────────────────────────────
+
+/**
+ * Look up CUSIPs in the Supabase cusip_cache table.
+ * Returns a Map of CUSIP → CusipResolution for all found entries.
+ *
+ * Both resolved AND unresolved entries are cached (negative caching
+ * prevents re-querying OpenFIGI for CUSIPs known to not resolve).
+ */
+export async function cusipCacheLookup(
+  cusips: string[]
+): Promise<Map<string, CusipResolution>> {
+  const result = new Map<string, CusipResolution>();
+  if (cusips.length === 0) return result;
+
+  // PostgREST IN filter: cusip=in.(val1,val2,val3)
+  const inFilter = `in.(${cusips.join(',')})`;
+  const { data, error } = await supaFetch<CusipCacheRow[]>('cusip_cache', {
+    params: { cusip: inFilter, select: '*' },
+  });
+
+  if (error || !data) {
+    console.warn(`[cusip] Cache lookup failed: ${error || 'no data'}`);
+    return result;
+  }
+
+  for (const row of data) {
+    result.set(row.cusip, {
+      cusip: row.cusip,
+      ticker: row.ticker,
+      name: row.name,
+      securityType: row.security_type,
+      resolved: row.resolved,
+      warning: null,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Save CUSIP resolutions to the Supabase cusip_cache table.
+ * Uses upsert (ON CONFLICT DO UPDATE) so re-runs update existing entries.
+ *
+ * Saves BOTH resolved and unresolved CUSIPs (negative caching).
+ */
+export async function cusipCacheSave(
+  resolutions: CusipResolution[]
+): Promise<void> {
+  if (resolutions.length === 0) return;
+
+  const rows: Omit<CusipCacheRow, 'resolved_at'>[] = resolutions.map(r => ({
+    cusip: r.cusip,
+    ticker: r.ticker,
+    name: r.name,
+    security_type: r.securityType,
+    resolved: r.resolved,
+  }));
+
+  const { error } = await supaFetch('cusip_cache', {
+    method: 'POST',
+    body: rows,
+    upsert: true,
+  });
+
+  if (error) {
+    console.warn(`[cusip] Cache save failed: ${error}`);
+  } else {
+    console.log(`[cusip] Cached ${rows.length} CUSIP resolutions to Supabase`);
+  }
+}
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Resolve an array of CUSIPs to tickers via OpenFIGI.
+ * Resolve an array of CUSIPs to tickers via the full fallback chain.
  *
- * Checks the Supabase cache first (if a cache lookup function is provided),
- * then batches uncached CUSIPs to OpenFIGI in groups of 100.
+ * Chain: Supabase cache → OpenFIGI (batch) → FMP search (individual) → cache save.
  *
  * @param cusips - Array of 9-character CUSIP strings
  * @param apiKey - OpenFIGI API key (from OPENFIGI_API_KEY env var)
- * @param cacheLookup - Optional function to check Supabase cache
- * @param cacheSave - Optional function to persist new resolutions to Supabase
+ * @param cacheLookup - Function to check Supabase cache (default: cusipCacheLookup)
+ * @param cacheSave - Function to persist new resolutions to Supabase (default: cusipCacheSave)
  */
 export async function resolveCusips(
   cusips: string[],
   apiKey: string,
-  cacheLookup?: (cusips: string[]) => Promise<Map<string, CusipResolution>>,
-  cacheSave?: (resolutions: CusipResolution[]) => Promise<void>
+  cacheLookup: (cusips: string[]) => Promise<Map<string, CusipResolution>> = cusipCacheLookup,
+  cacheSave: (resolutions: CusipResolution[]) => Promise<void> = cusipCacheSave
 ): Promise<PipelineStepResult<Map<string, CusipResolution>>> {
   const start = Date.now();
 
@@ -62,20 +138,17 @@ export async function resolveCusips(
       };
     }
 
-    // Check cache first
-    let cached = new Map<string, CusipResolution>();
-    if (cacheLookup) {
-      cached = await cacheLookup(uniqueCusips);
-    }
+    // ── Step 1: Check Supabase cache ──
+    const cached = await cacheLookup(uniqueCusips);
 
-    // Filter out already-cached CUSIPs
+    // Filter out already-cached CUSIPs (both resolved and unresolved negatives)
     const uncached = uniqueCusips.filter(c => !cached.has(c));
 
     console.log(
       `[cusip] ${uniqueCusips.length} unique CUSIPs: ${cached.size} cached, ${uncached.length} to resolve`
     );
 
-    // Resolve uncached CUSIPs via OpenFIGI in batches
+    // ── Step 2: Resolve uncached CUSIPs via OpenFIGI in batches ──
     const newResolutions: CusipResolution[] = [];
 
     if (uncached.length > 0) {
@@ -84,7 +157,7 @@ export async function resolveCusips(
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
         console.log(
-          `[cusip] Resolving batch ${i + 1}/${batches.length} (${batch.length} CUSIPs)`
+          `[cusip] OpenFIGI batch ${i + 1}/${batches.length} (${batch.length} CUSIPs)`
         );
 
         const batchResults = await callOpenFigi(batch, apiKey);
@@ -95,11 +168,23 @@ export async function resolveCusips(
           await delay(PIPELINE.API_CALL_DELAY_MS);
         }
       }
+    }
 
-      // Persist new resolutions to cache
-      if (cacheSave && newResolutions.length > 0) {
-        await cacheSave(newResolutions);
-      }
+    // ── Step 3: FMP search fallback for unresolved CUSIPs ──
+    // For CUSIPs that OpenFIGI couldn't resolve, try FMP's name search
+    // as a fallback (spec §4.6). This helps with newer securities or
+    // CUSIPs not yet indexed by OpenFIGI.
+    const unresolvedFromFigi = newResolutions.filter(r => !r.resolved || !r.ticker);
+    if (unresolvedFromFigi.length > 0) {
+      console.log(
+        `[cusip] ${unresolvedFromFigi.length} CUSIPs unresolved by OpenFIGI, trying FMP search fallback`
+      );
+      await tryFmpSearchFallback(unresolvedFromFigi, newResolutions);
+    }
+
+    // ── Step 4: Persist ALL new resolutions to cache (including negatives) ──
+    if (newResolutions.length > 0) {
+      await cacheSave(newResolutions);
     }
 
     // Merge cached + new into final result map
@@ -109,7 +194,7 @@ export async function resolveCusips(
     }
 
     // Log stats
-    const resolved = [...allResolutions.values()].filter(r => r.resolved).length;
+    const resolved = [...allResolutions.values()].filter(r => r.resolved && r.ticker).length;
     const unresolved = allResolutions.size - resolved;
     console.log(
       `[cusip] Complete: ${resolved} resolved, ${unresolved} unresolved out of ${allResolutions.size} total`
@@ -129,6 +214,67 @@ export async function resolveCusips(
       error: `CUSIP resolution failed: ${message}`,
       durationMs: Date.now() - start,
     };
+  }
+}
+
+// ─── FMP Search Fallback ────────────────────────────────────────────────────
+
+/**
+ * For CUSIPs that OpenFIGI couldn't resolve, try FMP's search-by-name
+ * endpoint as a fallback (spec §4.6 fallback chain).
+ *
+ * This mutates the resolutions in-place: if FMP finds a match, the
+ * corresponding entry in newResolutions is updated with the ticker.
+ *
+ * We only attempt this for resolutions that have a name from OpenFIGI
+ * (even failed lookups sometimes return a partial name). For resolutions
+ * with no name at all, we skip — FMP can't search without a query.
+ */
+async function tryFmpSearchFallback(
+  unresolved: CusipResolution[],
+  allResolutions: CusipResolution[]
+): Promise<void> {
+  let fmpResolved = 0;
+
+  for (const resolution of unresolved) {
+    // Need a name to search — skip if we have nothing to query with
+    const searchQuery = resolution.name;
+    if (!searchQuery) continue;
+
+    try {
+      await delay(PIPELINE.API_CALL_DELAY_MS);
+      const results = await searchByName(searchQuery, 3);
+
+      if (results.length > 0) {
+        // Prefer US-listed result
+        const usResult = results.find(r =>
+          r.exchangeShortName === 'NYSE' ||
+          r.exchangeShortName === 'NASDAQ' ||
+          r.exchangeShortName === 'AMEX'
+        );
+        const bestResult = usResult || results[0];
+
+        // Update the resolution in-place (it's the same object in allResolutions)
+        const idx = allResolutions.findIndex(r => r.cusip === resolution.cusip);
+        if (idx >= 0) {
+          allResolutions[idx] = {
+            ...allResolutions[idx],
+            ticker: bestResult.symbol,
+            name: bestResult.name || allResolutions[idx].name,
+            resolved: true,
+            warning: 'Resolved via FMP search fallback',
+          };
+          fmpResolved++;
+        }
+      }
+    } catch {
+      // FMP search is best-effort — don't fail the whole pipeline
+      console.warn(`[cusip] FMP search fallback failed for "${searchQuery}"`);
+    }
+  }
+
+  if (fmpResolved > 0) {
+    console.log(`[cusip] FMP search fallback resolved ${fmpResolved} additional CUSIPs`);
   }
 }
 
@@ -193,6 +339,10 @@ async function callOpenFigi(
  *
  * Successful: { data: [{ figi, ticker, name, securityType, ... }] }
  * Failed:     { warning: "No identifier found" }
+ *
+ * Note: A match is only considered "resolved" if we get a non-empty ticker.
+ * OpenFIGI sometimes returns metadata without a usable ticker — those are
+ * treated as unresolved so the FMP fallback can attempt resolution.
  */
 function parseOpenFigiResponse(
   cusips: string[],
@@ -249,13 +399,16 @@ function parseOpenFigiResponse(
       data.find(d => d.exchCode === 'US') ||
       data[0];
 
+    const ticker = bestMatch.ticker || null;
+
     resolutions.push({
       cusip,
-      ticker: bestMatch.ticker || null,
+      ticker,
       name: bestMatch.name || null,
       securityType: bestMatch.securityType || null,
-      resolved: true,
-      warning: null,
+      // Only mark as resolved if we actually got a usable ticker
+      resolved: ticker !== null,
+      warning: ticker ? null : 'OpenFIGI matched but no ticker returned',
     });
   }
 
