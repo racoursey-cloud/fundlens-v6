@@ -57,14 +57,16 @@ const pipelineRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 3,                    // 3 pipeline runs per hour
   message: { error: 'Pipeline rate limit exceeded. Max 3 per hour.' },
-  keyGenerator: (req) => (req as AuthenticatedRequest).userId || req.ip || 'unknown',
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
+  validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
 const briefRateLimit = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 5,                         // 5 brief generations per day
   message: { error: 'Brief generation rate limit exceeded. Max 5 per day.' },
-  keyGenerator: (req) => (req as AuthenticatedRequest).userId || req.ip || 'unknown',
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
+  validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
 // ─── SESSION 0 SECURITY: Admin-only middleware ────────────────────────────

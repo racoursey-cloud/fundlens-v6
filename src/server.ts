@@ -25,6 +25,10 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+// Railway runs behind a reverse proxy — trust it for correct IP resolution.
+// Required by express-rate-limit to read X-Forwarded-For headers.
+app.set('trust proxy', 1);
+
 // ─── Middleware ──────────────────────────────────────────────────────────────
 
 // Parse JSON request bodies
