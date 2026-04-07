@@ -27,7 +27,7 @@
  *   - All Supabase calls route through supaFetch()
  *   - All Claude calls route through /api/claude proxy
  *
- * Session 4 deliverable. References: Master Reference §8.
+ * Session 3 updated. References: Spec §4.6, §5.4.
  */
 
 import { PIPELINE, CLAUDE } from './constants.js';

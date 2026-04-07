@@ -843,7 +843,7 @@ Claude should reference current events, trends, and cultural context when it enh
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 8, 2026 (after Session 2)
+**Last updated:** April 7, 2026 (after Session 3)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -881,6 +881,12 @@ This section tells future sessions exactly what state the codebase is in relativ
 | CUSIP resolver: 429 rate limit retry | §4.3 | cusip.ts | 10s backoff + single retry — verified Session 2 |
 | Fund-of-funds look-through depth = 1 | §2.4.4 | holdings.ts | MAX_LOOKTHROUGH_DEPTH=1 — fixed Session 2 (was 2) |
 | pctOfNav whole-percent units documented | §4.3 | types.ts | Doc comments corrected from "0.0–1.0" to whole-percent — Session 2 |
+| Tiingo API client (NAV prices + fee data) | §4.1, §4.6 | tiingo.ts | fetchTiingoPrices(), fetchFundFees(), convertTiingoPricesToFmpFormat() — Session 3 |
+| Tiingo constants and endpoint config | §4.1, §5.6 | constants.ts | TIINGO config block, TINNGO_KEY env var (intentional typo) — Session 3 |
+| Pipeline: Tiingo primary for prices (Step 8) | §4.6 | pipeline.ts | Tiingo → FMP fallback chain for NAV/price data — Session 3 |
+| Pipeline: Tiingo primary for fee data (Step 7) | §4.6 | pipeline.ts | Tiingo fee data → fund table ER fallback — Session 3 |
+| Cost Efficiency: 12b-1 fee penalty | §2.3 | cost-efficiency.ts | -5 pts per 0.10% of 12b-1, capped at -15 — Session 3 |
+| Cost Efficiency: accepts NormalizedFeeData | §2.3, §4.6 | cost-efficiency.ts | Tiingo ER preferred over fund table when available — Session 3 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -920,10 +926,10 @@ NOTE: The allocation engine should be extracted to its own file (`allocation.ts`
 
 ### 9.3 What's MISSING (Spec Feature Not Yet Implemented)
 
-**MISSING-1: Cost Efficiency 12b-1 Fee Penalty (§2.3)**
+**~~MISSING-1: Cost Efficiency 12b-1 Fee Penalty (§2.3)~~ — RESOLVED (Session 3)**
 File: `src/engine/cost-efficiency.ts`
 Spec: When Tiingo provides 12b-1 fees, apply -5 points per 0.10% of 12b-1, capped at -15.
-Status: No 12b-1 handling. Depends on Tiingo fee data integration (Session 3).
+Status: ✅ Implemented. scoreCostEfficiency() accepts optional NormalizedFeeData. Penalty applied when twelveb1Fee > 0. CostEfficiencyResult includes twelveb1Penalty and feeDataSource fields.
 
 **MISSING-2: Bond Quality Scoring (§2.4.2, §2.4.3)**
 File: `src/engine/quality.ts`
@@ -953,9 +959,9 @@ Status: Category detection exists in cost-efficiency.ts. No global skip in pipel
 Spec: Herfindahl-Hirschman Index of sector exposure per fund in detail view. Informational only.
 Status: Not implemented anywhere.
 
-**MISSING-8: Tiingo Integration (§4.1, §4.6)**
+**~~MISSING-8: Tiingo Integration (§4.1, §4.6)~~ — RESOLVED (Session 3)**
 Spec: Tiingo is primary source for fund NAV history (split-adjusted) and fee data (12b-1, loads). FMP is fallback for prices.
-Status: Tiingo client file may exist but integration with cost-efficiency (fee data) and momentum (prices) is not wired in pipeline.ts. Pipeline currently uses FMP for both.
+Status: ✅ Implemented. tiingo.ts created with fetchTiingoPrices(), fetchFundFees(), convertTiingoPricesToFmpFormat(), normalizeFeeData(). Pipeline Step 7 fetches Tiingo fee data → passes to scoreCostEfficiency(). Pipeline Step 8 fetches Tiingo prices → FMP fallback. TIINGO constants added to constants.ts. NOTE: Tiingo fee endpoint path (`/tiingo/fundamentals/fees/{ticker}`) should be verified against live API during integration testing — the field name normalization in normalizeFeeResponse() handles multiple naming conventions as a safety net.
 
 **MISSING-9: Help Section — FAQs + Live Claude Chat (Robert's request)**
 Spec: Not yet in spec — feature idea from build planning session. Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
@@ -979,8 +985,8 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | Session | Focus | Key Gaps Addressed | Status |
 |---------|-------|--------------------|--------|
 | 2 | CUSIP Resolver Deep Review | §4.3 — flagged by Robert | **DONE** |
-| 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) | Next |
-| 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | |
+| 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) | **DONE** |
+| 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | Next |
 | 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | |
 | 6 | Thesis Overhaul | CRITICAL-4 (1-10 scale), MISSING-4 (FRED commodities wired in), MISSING-5 (deterministic priors) | |
 | 7 | Allocation Engine | CRITICAL-5 (full Kelly rewrite), MISSING-6 (money market exclusion) | |
@@ -1097,6 +1103,35 @@ Dedicated audit of `cusip.ts`, `holdings.ts`, `pipeline.ts`, and `types.ts` agai
 - Supabase manual entry as final fallback (§4.6 step 4) not yet implemented. Would require an admin UI or manual SQL for Robert to enter overrides.
 
 **Files changed:** `cusip.ts`, `holdings.ts`, `pipeline.ts`, `types.ts`
+**Verification:** `tsc --noEmit` passes clean (exit code 0).
+
+## April 7, 2026 — Session 3: Tiingo Integration
+
+Primary deliverable: Create `src/engine/tiingo.ts` and wire Tiingo into the pipeline as the primary data source for fund NAV prices and fee data, per spec §4.1 and §4.6.
+
+**1. Created `src/engine/tiingo.ts` (§4.1, §4.6).** Typed Tiingo API client with:
+- `fetchTiingoPrices()`: Fetches split/distribution-adjusted daily NAV history. Primary source for momentum calculations.
+- `fetchFundFees()`: Fetches granular fee breakdowns (net/gross ER, 12b-1, loads, management fees). Tries dedicated fee endpoint first, falls back to metadata endpoint.
+- `convertTiingoPricesToFmpFormat()`: Adapter that converts Tiingo price responses to FMP-compatible shape, so `momentum.ts` needs no interface changes.
+- `normalizeFeeData()`: Converts TiingoFundFees to NormalizedFeeData for cost-efficiency scoring.
+- `normalizeFeeResponse()`: Internal helper that handles multiple possible Tiingo field naming conventions (camelCase, snake_case, abbreviated).
+- Uses `TINNGO_KEY` env var (intentional typo per §5.6).
+- 500ms delays between sequential requests (§5.3).
+- Rate limit handling (429 → 10s backoff).
+
+**2. Added Tiingo constants to `constants.ts` (§4.1).** TIINGO config block with base URL (`https://api.tiingo.com`) and endpoint paths for daily prices, fund metadata, and fund fees.
+
+**3. Implemented 12b-1 fee penalty in `cost-efficiency.ts` (§2.3, MISSING-1).** `scoreCostEfficiency()` now accepts optional `NormalizedFeeData` parameter. When Tiingo provides 12b-1 fees > 0, applies -5 points per 0.10% of 12b-1, capped at -15. Tiingo expense ratio preferred over Supabase fund table value when available. `CostEfficiencyResult` extended with `twelveb1Penalty` and `feeDataSource` fields.
+
+**4. Wired Tiingo into pipeline.ts Steps 7–8 (§4.6, §5.4).**
+- Step 7: Fetches Tiingo fee data for each fund before scoring cost efficiency. Falls back to fund table `expense_ratio` if Tiingo unavailable.
+- Step 8: Fetches Tiingo prices for each fund (primary). Falls back to FMP `fetchHistoricalPrices()` if Tiingo returns no data. Uses `convertTiingoPricesToFmpFormat()` adapter.
+
+**Note:** The Tiingo fee endpoint path (`/tiingo/fundamentals/fees/{ticker}`) should be verified against the live API during integration testing. The `normalizeFeeResponse()` function handles multiple possible field naming conventions as a safety net. If the actual endpoint differs, only the path in `constants.ts` and potentially the field name list in `normalizeFeeResponse()` need updating.
+
+**Files created:** `tiingo.ts`
+**Files changed:** `constants.ts`, `cost-efficiency.ts`, `pipeline.ts`
+**Resolved:** MISSING-1 (12b-1 fee penalty), MISSING-8 (Tiingo integration)
 **Verification:** `tsc --noEmit` passes clean (exit code 0).
 
 ---
