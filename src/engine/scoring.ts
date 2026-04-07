@@ -232,6 +232,10 @@ export function computeComposite(
  *
  * @param fundScores Array of raw scores + factor details per fund
  * @param weights Factor weights to use (defaults to system defaults)
+ * @param perFundWeights Optional per-fund weight overrides (for coverage scaling §2.4.1).
+ *   When coverage_pct < 0.40, quality weight is reduced and freed weight goes to momentum.
+ *   The z-standardization (Step 2) is the same for all funds; only the weighted composite
+ *   (Step 3) uses per-fund weights.
  */
 export function scoreAndRankFunds(
   fundScores: Array<{
@@ -240,7 +244,8 @@ export function scoreAndRankFunds(
     raw: FundRawScores;
     factorDetails: FundCompositeScore['factorDetails'];
   }>,
-  weights: FactorWeights = DEFAULT_FACTOR_WEIGHTS
+  weights: FactorWeights = DEFAULT_FACTOR_WEIGHTS,
+  perFundWeights?: Map<string, FactorWeights>
 ): ScoringResult {
   const n = fundScores.length;
 
@@ -262,6 +267,9 @@ export function scoreAndRankFunds(
     let composite: number;
     let zScores: FundZScores;
 
+    // Use per-fund weights if available (coverage scaling §2.4.1), else default
+    const fundWeights = perFundWeights?.get(f.ticker) ?? weights;
+
     if (useZSpace) {
       // Normal path: z-space + CDF
       zScores = {
@@ -271,7 +279,7 @@ export function scoreAndRankFunds(
         momentum: zMomentum[i],
       };
 
-      composite = computeCompositeFromZScores(zScores, weights);
+      composite = computeCompositeFromZScores(zScores, fundWeights);
     } else {
       // Fallback: raw weighted average (< 2 funds)
       zScores = {
@@ -281,7 +289,7 @@ export function scoreAndRankFunds(
         momentum: 0,
       };
 
-      composite = computeComposite(f.raw, weights);
+      composite = computeComposite(f.raw, fundWeights);
     }
 
     return { ...f, composite, zScores };

@@ -30,7 +30,7 @@
  * Session 3 updated. References: Spec §4.6, §5.4.
  */
 
-import { PIPELINE, CLAUDE } from './constants.js';
+import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS } from './constants.js';
 import { delay, ResolvedHolding, FundRow } from './types.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile } from './fmp.js';
@@ -42,7 +42,7 @@ import { NormalizedFeeData } from './tiingo.js';
 import { scoreCostEfficiency, CostEfficiencyResult } from './cost-efficiency.js';
 import { scoreQualityFactor, QualityFactorResult } from './quality.js';
 import { calculateFundMomentum, scoreMomentumCrossSectional, MomentumScore, FundMomentum } from './momentum.js';
-import { scoreAndRankFunds, FundRawScores, FundCompositeScore, ScoringResult } from './scoring.js';
+import { scoreAndRankFunds, FundRawScores, FundCompositeScore, ScoringResult, FactorWeights } from './scoring.js';
 import { getHeadlines } from './rss.js';
 import { fetchMacroSnapshot } from './fred.js';
 import { generateMacroThesis, MacroThesis } from './thesis.js';
@@ -430,7 +430,54 @@ export async function runFullPipeline(
     });
   }
 
-  const scoring = scoreAndRankFunds(fundScoreInputs);
+  // ── Coverage-based confidence scaling (§2.4.1, Grinold 1989) ──
+  // When coverage_pct < 0.40, reduce quality weight and redistribute to momentum.
+  // Ported from v5.1 scoring.js lines 391-415.
+  const perFundWeights = new Map<string, FactorWeights>();
+
+  for (const input of fundScoreInputs) {
+    const quality = qualityResults.get(input.ticker);
+    if (!quality) continue;
+
+    const coveragePct = quality.coveragePct;
+
+    if (coveragePct < 0.40) {
+      // quality_weight_adj = base × max(coverage / 0.40, 0.10) — spec §2.4.1
+      const scaleFactor = Math.max(coveragePct / 0.40, 0.10);
+      const baseQuality = DEFAULT_FACTOR_WEIGHTS.holdingsQuality;
+      const qualityAdj = baseQuality * scaleFactor;
+      const freedWeight = baseQuality - qualityAdj;
+
+      // Freed weight goes to momentum (most reliable — price data always available)
+      const momentumAdj = DEFAULT_FACTOR_WEIGHTS.momentum + freedWeight;
+
+      // Renormalize to sum to 1.0 (cost + quality_adj + momentum_adj + positioning)
+      const rawSum =
+        DEFAULT_FACTOR_WEIGHTS.costEfficiency +
+        qualityAdj +
+        momentumAdj +
+        DEFAULT_FACTOR_WEIGHTS.positioning;
+
+      perFundWeights.set(input.ticker, {
+        costEfficiency: DEFAULT_FACTOR_WEIGHTS.costEfficiency / rawSum,
+        holdingsQuality: qualityAdj / rawSum,
+        positioning: DEFAULT_FACTOR_WEIGHTS.positioning / rawSum,
+        momentum: momentumAdj / rawSum,
+      });
+
+      console.log(
+        `[pipeline] Coverage scaling for ${input.ticker}: coverage=${(coveragePct * 100).toFixed(0)}% → ` +
+        `quality weight ${(baseQuality * 100).toFixed(0)}%→${(qualityAdj / rawSum * 100).toFixed(0)}%, ` +
+        `momentum ${(DEFAULT_FACTOR_WEIGHTS.momentum * 100).toFixed(0)}%→${(momentumAdj / rawSum * 100).toFixed(0)}%`
+      );
+    }
+  }
+
+  const scoring = scoreAndRankFunds(
+    fundScoreInputs,
+    DEFAULT_FACTOR_WEIGHTS,
+    perFundWeights.size > 0 ? perFundWeights : undefined
+  );
 
   // ── Step 14: Persist to Supabase ──
   progress(14, 'Persisting scores to database');
