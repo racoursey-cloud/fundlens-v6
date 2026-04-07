@@ -170,10 +170,8 @@ export const TIINGO = {
   ENDPOINTS: {
     /** Daily prices / NAV history — works for mutual fund tickers */
     DAILY_PRICES: '/tiingo/daily',     // /{ticker}/prices
-    /** Mutual fund metadata (includes fee data) */
-    FUND_META: '/tiingo/daily',        // /{ticker} — metadata endpoint
-    /** Mutual fund & ETF fee data — dedicated fee endpoint */
-    FUND_FEES: '/tiingo/fundamentals/fees',  // /{ticker}
+    // FUND_META and FUND_FEES removed Session 5 — endpoints don't work for mutual funds.
+    // Fee data (12b-1, loads) now comes from Finnhub (finnhub.ts).
   },
 } as const;
 
