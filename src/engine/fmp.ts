@@ -346,6 +346,76 @@ export async function fetchFundamentalsBundle(
 }
 
 /**
+ * Fetch the FULL raw profile for a mutual fund ticker.
+ *
+ * The typed FmpProfile interface only captures equity-relevant fields.
+ * Mutual fund profiles from FMP may include additional fields like
+ * `expenseRatio`, `netExpenseRatio`, `category`, etc. that aren't
+ * in our TypeScript type.
+ *
+ * This function returns the raw JSON object so callers can extract
+ * whatever fields FMP provides for a given ticker.
+ *
+ * @param symbol Fund ticker (e.g. "FXAIX")
+ * @returns Raw profile object, or null if unavailable
+ */
+export async function fetchRawProfile(
+  symbol: string
+): Promise<Record<string, unknown> | null> {
+  const data = await fmpFetch<Record<string, unknown>[]>(FMP.ENDPOINTS.PROFILE, { symbol });
+  return data?.[0] || null;
+}
+
+/**
+ * Fetch ETF/fund info from FMP's dedicated endpoint.
+ *
+ * FMP's /etf-info endpoint works for both ETFs and mutual funds and
+ * typically includes expense ratio data. This is our primary source
+ * for automated expense ratio population.
+ *
+ * @param symbol Fund ticker (e.g. "FXAIX")
+ * @returns Raw info object, or null if unavailable
+ */
+export async function fetchFundInfo(
+  symbol: string
+): Promise<Record<string, unknown> | null> {
+  const data = await fmpFetch<Record<string, unknown>[]>('/etf-info', { symbol });
+  return data?.[0] || null;
+}
+
+/**
+ * Extract expense ratio from raw FMP data.
+ *
+ * Tries multiple field name conventions that FMP uses across its
+ * different endpoints for mutual funds and ETFs.
+ *
+ * @param data Raw JSON from fetchRawProfile or fetchFundInfo
+ * @returns Expense ratio as decimal (e.g. 0.0015 for 0.15%), or null
+ */
+export function extractExpenseRatio(data: Record<string, unknown>): number | null {
+  const candidates = [
+    'expenseRatio', 'netExpenseRatio', 'expense_ratio',
+    'annualHoldingsTurnover', 'totalExpenseRatio',
+    'netExpRatio', 'grossExpenseRatio',
+  ];
+
+  for (const key of candidates) {
+    const val = data[key];
+    if (typeof val === 'number' && !isNaN(val) && val > 0 && val < 1) {
+      return val;
+    }
+    if (typeof val === 'string') {
+      const parsed = parseFloat(val);
+      if (!isNaN(parsed) && parsed > 0 && parsed < 1) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Search FMP by name. Useful for resolving sub-fund tickers
  * (the fund-of-funds look-through from Session 2).
  */
