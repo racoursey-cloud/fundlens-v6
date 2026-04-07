@@ -36,6 +36,11 @@ export interface FundScore {
   holdings_quality: number;
   positioning: number;
   momentum: number;
+  /** Z-scores per factor (pre-computed server-side for client rescore, §2.1) */
+  z_cost_efficiency: number;
+  z_holdings_quality: number;
+  z_positioning: number;
+  z_momentum: number;
   composite_default: number;
   factor_details: Record<string, unknown>;
   scored_at: string;

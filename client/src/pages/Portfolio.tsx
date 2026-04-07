@@ -23,6 +23,26 @@ import {
 import { theme } from '../theme';
 import { FundDetail } from '../components/FundDetail';
 
+// ─── Normal CDF (Abramowitz & Stegun 7.1.26) ──────────────────────────────
+// Lightweight client-side implementation for slider rescore (§2.1).
+// Identical to server-side normalCDF in src/engine/scoring.ts.
+
+function normalCDF(z: number): number {
+  const a1 =  0.254829592;
+  const a2 = -0.284496736;
+  const a3 =  1.421413741;
+  const a4 = -1.453152027;
+  const a5 =  1.061405429;
+  const p  =  0.3275911;
+
+  const absZ = Math.abs(z);
+  const x = absZ / Math.SQRT2;
+  const t = 1.0 / (1.0 + p * x);
+  const erf = 1.0 - t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5)))) * Math.exp(-x * x);
+  const result = 0.5 * (1.0 + erf);
+  return z >= 0 ? result : 1.0 - result;
+}
+
 // ─── SVG Donut ─────────────────────────────────────────────────────────────
 
 interface DonutSlice {
@@ -290,15 +310,19 @@ export function Portfolio() {
     updateProfile({ risk_tolerance: val });
   }, []);
 
-  // Client-side rescore with custom weights
+  // Client-side rescore with custom weights using z-scores + CDF (§2.1)
+  // Z-scores are pre-computed server-side; client does weighted sum + normalCDF
   const rankedScores = useMemo(() => {
     return scores
       .map(s => {
-        const composite =
-          s.cost_efficiency * weights.cost +
-          s.holdings_quality * weights.quality +
-          s.positioning * weights.positioning +
-          s.momentum * weights.momentum;
+        // Weighted composite in z-space (Step 3 from §2.1)
+        const zComposite =
+          (s.z_cost_efficiency ?? 0) * weights.cost +
+          (s.z_holdings_quality ?? 0) * weights.quality +
+          (s.z_positioning ?? 0) * weights.positioning +
+          (s.z_momentum ?? 0) * weights.momentum;
+        // Map to 0–100 via normal CDF (Step 4 from §2.1)
+        const composite = Math.round(Math.max(0, Math.min(100, 100 * normalCDF(zComposite))));
         return { ...s, userComposite: composite };
       })
       .sort((a, b) => b.userComposite - a.userComposite);
