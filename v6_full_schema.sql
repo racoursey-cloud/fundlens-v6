@@ -211,6 +211,13 @@ CREATE TABLE IF NOT EXISTS fund_scores (
   positioning       NUMERIC(5, 2) NOT NULL DEFAULT 0,
   momentum          NUMERIC(5, 2) NOT NULL DEFAULT 0,
 
+  -- Z-scores per factor (Bessel-corrected across fund universe, Session 4 §2.1)
+  -- Used by client-side rescore: composite = 100 × Φ(Σ z_factor × weight)
+  z_cost_efficiency   NUMERIC(8, 5) NOT NULL DEFAULT 0,
+  z_holdings_quality  NUMERIC(8, 5) NOT NULL DEFAULT 0,
+  z_positioning       NUMERIC(8, 5) NOT NULL DEFAULT 0,
+  z_momentum          NUMERIC(8, 5) NOT NULL DEFAULT 0,
+
   -- Composite score using default weights (for server-side ranking)
   composite_default NUMERIC(5, 2) NOT NULL DEFAULT 0,
 
