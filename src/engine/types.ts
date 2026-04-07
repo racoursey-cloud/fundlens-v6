@@ -273,6 +273,13 @@ export interface FundScoresRow {
   holdings_quality: number;
   positioning: number;
   momentum: number;
+  /** Z-scores per factor (standardized across fund universe, Bessel-corrected).
+   *  Used by client-side rescore: weighted sum of z-scores + normalCDF → composite.
+   *  Added Session 4 per spec §2.1. */
+  z_cost_efficiency: number;
+  z_holdings_quality: number;
+  z_positioning: number;
+  z_momentum: number;
   /** Composite score using default weights (25/30/25/20) */
   composite_default: number;
   /** JSON blob with per-factor detail (CostEfficiencyResult, QualityFactorResult, etc.) */

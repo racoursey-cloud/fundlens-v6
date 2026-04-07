@@ -1,23 +1,19 @@
 /**
  * FundLens v6 — Composite Scoring Engine
  *
- * Combines the four factor scores (Cost Efficiency, Holdings Quality,
- * Positioning, Momentum) into a single composite score per fund.
+ * Implements the z-space + CDF scoring pipeline from spec §2.1:
+ *   1. Raw factor scores (0–100) → z-standardize across fund universe (Bessel-corrected, n-1)
+ *   2. Weighted composite in z-space (not in raw space)
+ *   3. Map back to 0–100 via normal CDF (Abramowitz & Stegun approximation)
  *
  * Two layers of scoring:
- *   1. RAW scores — computed by the server pipeline, same for everyone.
- *      These are the per-factor 0–100 scores stored in Supabase.
- *   2. WEIGHTED composite — computed client-side using the user's custom
- *      factor weights. Pure math, no API calls. This is what the user sees.
+ *   1. SERVER-SIDE: scoreAndRankFunds() runs the full z-space + CDF pipeline
+ *      across the entire fund universe. Stores raw scores AND z-scores to Supabase.
+ *   2. CLIENT-SIDE: computeCompositeFromZScores() uses pre-computed z-scores
+ *      to do weighted sum + CDF. Runs instantly when users adjust weight sliders.
+ *      Only requires normalCDF() — no universe data, no z-standardization.
  *
- * The server stores raw factor scores. The React client multiplies each
- * factor score by the user's weight and sums them. When a user drags a
- * weight slider, the composite updates instantly without hitting the server.
- *
- * This module provides both the server-side aggregation (for pipeline runs)
- * and the pure-math weighting function (shared with client via types).
- *
- * Session 3 deliverable. References: Master Reference §4 (Scoring Model).
+ * Session 4 deliverable. References: FUNDLENS_SPEC.md §2.1, §2.2, §2.8.
  */
 
 import { DEFAULT_FACTOR_WEIGHTS } from './constants.js';
@@ -43,6 +39,14 @@ export interface FundRawScores {
   momentum: number;
 }
 
+/** Z-scores for a single fund's four factors (computed across the fund universe) */
+export interface FundZScores {
+  costEfficiency: number;
+  holdingsQuality: number;
+  positioning: number;
+  momentum: number;
+}
+
 /** User's factor weight configuration */
 export interface FactorWeights {
   costEfficiency: number;
@@ -51,12 +55,14 @@ export interface FactorWeights {
   momentum: number;
 }
 
-/** Composite score for a fund (raw scores + weighted composite) */
+/** Composite score for a fund (raw scores + z-scores + weighted composite) */
 export interface FundCompositeScore {
   ticker: string;
   name: string;
   /** Raw factor scores (same for all users) */
   raw: FundRawScores;
+  /** Z-scores per factor (standardized across the fund universe, Bessel-corrected) */
+  zScores: FundZScores;
   /** Weighted composite score (0–100, personalized to user's weights) */
   composite: number;
   /** Rank among all funds in the menu (1 = best) */
@@ -80,13 +86,115 @@ export interface ScoringResult {
   scoredAt: string;
 }
 
+// ─── Mathematical Functions (§2.1) ──────────────────────────────────────────
+
+/**
+ * Standard normal CDF using Abramowitz & Stegun approximation (formula 7.1.26).
+ * Max error ≈ 7.5 × 10⁻⁸. Spec §2.1 requires this exact method.
+ *
+ * The A&S coefficients approximate erf(x) for x ≥ 0:
+ *   erf(x) ≈ 1 - (a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵) · e^(-x²)
+ *   where t = 1/(1 + px)
+ *
+ * The standard normal CDF relates to erf via:
+ *   Φ(z) = 0.5 · (1 + erf(z / √2))
+ *
+ * Reference: Abramowitz, M. and Stegun, I.A. (1964), Handbook of Mathematical
+ * Functions, National Bureau of Standards, formula 7.1.26.
+ *
+ * @param z Standard normal z-value
+ * @returns Φ(z) — probability that Z ≤ z
+ */
+export function normalCDF(z: number): number {
+  // Constants from Abramowitz & Stegun 7.1.26
+  const a1 =  0.254829592;
+  const a2 = -0.284496736;
+  const a3 =  1.421413741;
+  const a4 = -1.453152027;
+  const a5 =  1.061405429;
+  const p  =  0.3275911;
+
+  // erf(x) is defined for x ≥ 0; use symmetry erf(-x) = -erf(x)
+  const absZ = Math.abs(z);
+  const x = absZ / Math.SQRT2;  // Convert from z to erf argument
+
+  const t = 1.0 / (1.0 + p * x);
+
+  // Horner form for numerical stability
+  const erf = 1.0 - t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5)))) * Math.exp(-x * x);
+
+  // Φ(z) = 0.5 * (1 + erf(z/√2)), with symmetry for negative z
+  const result = 0.5 * (1.0 + erf);
+
+  return z >= 0 ? result : 1.0 - result;
+}
+
+/**
+ * Z-standardize an array of values across the universe.
+ * Uses Bessel correction (n-1) for sample standard deviation per spec §2.1.
+ *
+ * @param values Raw scores for a single factor across all funds
+ * @returns Array of z-scores in the same order, or null if standardization is undefined
+ */
+export function zStandardize(values: number[]): number[] | null {
+  const n = values.length;
+
+  // Spec §2.1: If fewer than 2 funds, z-standardization is undefined
+  if (n < 2) return null;
+
+  // Mean
+  const mean = values.reduce((sum, v) => sum + v, 0) / n;
+
+  // Bessel-corrected standard deviation (divide by n-1)
+  const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (n - 1);
+  const stdev = Math.sqrt(variance);
+
+  // If all values are identical (stdev = 0), z-scores are all 0
+  if (stdev === 0) {
+    return values.map(() => 0);
+  }
+
+  return values.map(v => (v - mean) / stdev);
+}
+
 // ─── Core Scoring Functions ─────────────────────────────────────────────────
 
 /**
- * Compute the weighted composite score from raw factor scores.
+ * Compute composite score from pre-computed z-scores and user weights.
  *
- * THIS IS THE FUNCTION THAT RUNS CLIENT-SIDE when the user adjusts sliders.
- * Pure math — no API calls, no side effects. Must stay fast and simple.
+ * THIS IS THE FUNCTION FOR CLIENT-SIDE RESCORE when users adjust weight sliders.
+ * Pure math — no API calls, no side effects, no universe data needed.
+ * Takes z-scores (already stored in Supabase) and applies user weights + CDF.
+ *
+ * Also used by brief-engine.ts for per-user composite with custom weights.
+ *
+ * @param zScores Pre-computed z-scores for one fund's four factors
+ * @param weights User's factor weights (must sum to 1.0)
+ * @returns Weighted composite score (0–100)
+ */
+export function computeCompositeFromZScores(
+  zScores: FundZScores,
+  weights: FactorWeights = DEFAULT_FACTOR_WEIGHTS
+): number {
+  // Step 3 from §2.1: Weighted composite in z-space
+  const zComposite =
+    zScores.costEfficiency * weights.costEfficiency +
+    zScores.holdingsQuality * weights.holdingsQuality +
+    zScores.positioning * weights.positioning +
+    zScores.momentum * weights.momentum;
+
+  // Step 4 from §2.1: Map back to 0–100 via normal CDF
+  const composite = 100 * normalCDF(zComposite);
+
+  return Math.round(Math.max(0, Math.min(100, composite)));
+}
+
+/**
+ * Legacy computeComposite — raw weighted average fallback.
+ *
+ * Used when z-standardization is not possible (fewer than 2 funds in universe).
+ * Also maintained for backward compatibility with brief-engine.ts and persist.ts
+ * until those callers are updated to use z-scores.
  *
  * @param raw Raw factor scores (0–100 each)
  * @param weights User's factor weights (must sum to 1.0)
@@ -106,10 +214,19 @@ export function computeComposite(
 }
 
 /**
- * Score and rank all funds in the menu.
+ * Score and rank all funds in the menu using the z-space + CDF pipeline.
  *
- * Takes raw factor scores (from individual factor modules) and produces
- * a ranked list of funds with composite scores.
+ * This is the server-side scoring function called by pipeline.ts (Step 14).
+ * It has the full fund universe, so it can z-standardize across all funds.
+ *
+ * Pipeline per spec §2.1:
+ *   Step 1: Raw factor scores are already computed (passed in)
+ *   Step 2: Z-standardize each factor across the fund universe (Bessel-corrected)
+ *   Step 3: Weighted composite in z-space
+ *   Step 4: Map back to 0–100 via normal CDF
+ *
+ * Edge case: If fewer than 2 funds, z-standardization is undefined.
+ * Falls back to raw weighted average per spec §2.1.
  *
  * @param fundScores Array of raw scores + factor details per fund
  * @param weights Factor weights to use (defaults to system defaults)
@@ -123,11 +240,50 @@ export function scoreAndRankFunds(
   }>,
   weights: FactorWeights = DEFAULT_FACTOR_WEIGHTS
 ): ScoringResult {
-  // Compute composites
-  const withComposites = fundScores.map(f => ({
-    ...f,
-    composite: computeComposite(f.raw, weights),
-  }));
+  const n = fundScores.length;
+
+  // ── Step 2: Z-standardize each factor across the fund universe ──
+  const costValues = fundScores.map(f => f.raw.costEfficiency);
+  const qualityValues = fundScores.map(f => f.raw.holdingsQuality);
+  const momentumValues = fundScores.map(f => f.raw.momentum);
+  const positioningValues = fundScores.map(f => f.raw.positioning);
+
+  const zCost = zStandardize(costValues);
+  const zQuality = zStandardize(qualityValues);
+  const zMomentum = zStandardize(momentumValues);
+  const zPositioning = zStandardize(positioningValues);
+
+  // If z-standardization is undefined (< 2 funds), fall back to raw weighted average
+  const useZSpace = zCost !== null && zQuality !== null && zMomentum !== null && zPositioning !== null;
+
+  const withComposites = fundScores.map((f, i) => {
+    let composite: number;
+    let zScores: FundZScores;
+
+    if (useZSpace) {
+      // Normal path: z-space + CDF
+      zScores = {
+        costEfficiency: zCost[i],
+        holdingsQuality: zQuality[i],
+        positioning: zPositioning[i],
+        momentum: zMomentum[i],
+      };
+
+      composite = computeCompositeFromZScores(zScores, weights);
+    } else {
+      // Fallback: raw weighted average (< 2 funds)
+      zScores = {
+        costEfficiency: 0,
+        holdingsQuality: 0,
+        positioning: 0,
+        momentum: 0,
+      };
+
+      composite = computeComposite(f.raw, weights);
+    }
+
+    return { ...f, composite, zScores };
+  });
 
   // Sort by composite descending (best first)
   withComposites.sort((a, b) => b.composite - a.composite);
@@ -137,6 +293,7 @@ export function scoreAndRankFunds(
     ticker: f.ticker,
     name: f.name,
     raw: f.raw,
+    zScores: f.zScores,
     composite: f.composite,
     rank: i + 1,
     factorDetails: f.factorDetails,
@@ -153,7 +310,8 @@ export function scoreAndRankFunds(
  * Re-score and re-rank funds with new weights. Used client-side when
  * the user adjusts factor weight sliders.
  *
- * Takes existing raw scores (no recalculation) and applies new weights.
+ * Takes existing z-scores (no recalculation — they don't change when weights
+ * change) and applies new weights via computeCompositeFromZScores().
  * This is instant — pure math on data already in memory.
  *
  * @param currentScores Existing scored funds (from a previous scoreAndRankFunds call)
@@ -163,19 +321,30 @@ export function rescoreWithNewWeights(
   currentScores: ScoringResult,
   newWeights: FactorWeights
 ): ScoringResult {
-  const fundInputs = currentScores.funds.map(f => ({
-    ticker: f.ticker,
-    name: f.name,
-    raw: f.raw,
-    factorDetails: f.factorDetails,
+  const rescored = currentScores.funds.map(f => ({
+    ...f,
+    composite: computeCompositeFromZScores(f.zScores, newWeights),
   }));
 
-  return scoreAndRankFunds(fundInputs, newWeights);
+  // Re-sort by new composite
+  rescored.sort((a, b) => b.composite - a.composite);
+
+  // Re-assign ranks
+  const funds: FundCompositeScore[] = rescored.map((f, i) => ({
+    ...f,
+    rank: i + 1,
+  }));
+
+  return {
+    funds,
+    weights: newWeights,
+    scoredAt: currentScores.scoredAt,
+  };
 }
 
 /**
- * Validate that factor weights sum to 1.0 (within floating-point tolerance).
- * Called before scoring to ensure user-adjusted weights are valid.
+ * Validate that factor weights sum to 1.0 (within tolerance per spec §2.2).
+ * Spec: ±0.02 tolerance. Minimum 5% per factor.
  */
 export function validateWeights(weights: FactorWeights): {
   valid: boolean;
@@ -188,15 +357,35 @@ export function validateWeights(weights: FactorWeights): {
     weights.positioning +
     weights.momentum;
 
-  const valid = Math.abs(sum - 1.0) < 0.001;
+  // Spec §2.2: ±0.02 tolerance
+  if (Math.abs(sum - 1.0) >= 0.02) {
+    return {
+      valid: false,
+      sum,
+      error: `Factor weights must sum to 1.0 ±0.02 (currently ${sum.toFixed(4)})`,
+    };
+  }
 
-  return {
-    valid,
-    sum,
-    error: valid
-      ? null
-      : `Factor weights must sum to 1.0 (currently ${sum.toFixed(4)})`,
-  };
+  // Spec §2.2: Minimum 5% per factor
+  const minWeight = 0.05;
+  const factors: Array<{ name: string; value: number }> = [
+    { name: 'Cost Efficiency', value: weights.costEfficiency },
+    { name: 'Holdings Quality', value: weights.holdingsQuality },
+    { name: 'Positioning', value: weights.positioning },
+    { name: 'Momentum', value: weights.momentum },
+  ];
+
+  for (const f of factors) {
+    if (f.value < minWeight) {
+      return {
+        valid: false,
+        sum,
+        error: `${f.name} weight (${(f.value * 100).toFixed(0)}%) is below minimum 5%`,
+      };
+    }
+  }
+
+  return { valid: true, sum, error: null };
 }
 
 /**

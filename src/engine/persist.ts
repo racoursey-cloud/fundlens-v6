@@ -17,7 +17,7 @@
  */
 
 import { supaFetch, supaInsert, supaUpdate } from './supabase.js';
-import { computeComposite } from './scoring.js';
+import { computeCompositeFromZScores } from './scoring.js';
 import { DEFAULT_FACTOR_WEIGHTS } from './constants.js';
 import type { FundRow, FundScoresRow } from './types.js';
 import type { PipelineResult } from './pipeline.js';
@@ -66,8 +66,8 @@ export async function persistPipelineResults(
       continue;
     }
 
-    // Compute composite with default weights (for server-side ranking)
-    const compositeDefault = computeComposite(fundScore.raw, DEFAULT_FACTOR_WEIGHTS);
+    // Compute composite with default weights using z-scores + CDF (§2.1)
+    const compositeDefault = computeCompositeFromZScores(fundScore.zScores, DEFAULT_FACTOR_WEIGHTS);
 
     const scoreRow = {
       fund_id: fund.id,
@@ -76,6 +76,11 @@ export async function persistPipelineResults(
       holdings_quality: fundScore.raw.holdingsQuality,
       positioning: fundScore.raw.positioning,
       momentum: fundScore.raw.momentum,
+      // Z-scores for client-side rescore (Session 4, §2.1)
+      z_cost_efficiency: fundScore.zScores.costEfficiency,
+      z_holdings_quality: fundScore.zScores.holdingsQuality,
+      z_positioning: fundScore.zScores.positioning,
+      z_momentum: fundScore.zScores.momentum,
       composite_default: compositeDefault,
       factor_details: fundScore.factorDetails,
       scored_at: new Date().toISOString(),

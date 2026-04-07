@@ -29,7 +29,8 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { CLAUDE, BRIEF, DEFAULT_FACTOR_WEIGHTS, KELLY_RISK_TABLE, RISK_MAX } from './constants.js';
-import { computeComposite } from './scoring.js';
+import { computeCompositeFromZScores } from './scoring.js';
+import type { FundZScores } from './scoring.js';
 import { delay } from './types.js';
 import type { UserProfileRow, FundScoresRow, InvestmentBriefRow } from './types.js';
 import type { FundCompositeScore, FactorWeights } from './scoring.js';
@@ -524,7 +525,15 @@ export async function assembleDataPacket(
       momentum: Number(row.momentum),
     };
 
-    const userComposite = computeComposite(raw, userWeights);
+    // Use pre-computed z-scores for composite calculation (Session 4, §2.1)
+    const zScores: FundZScores = {
+      costEfficiency: Number(row.z_cost_efficiency ?? 0),
+      holdingsQuality: Number(row.z_holdings_quality ?? 0),
+      positioning: Number(row.z_positioning ?? 0),
+      momentum: Number(row.z_momentum ?? 0),
+    };
+
+    const userComposite = computeCompositeFromZScores(zScores, userWeights);
 
     // Fetch top holdings for this fund
     const { data: holdings } = await supaSelect<Array<{
