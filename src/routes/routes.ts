@@ -475,12 +475,15 @@ router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Respon
   const latestRun = runs && runs.length > 0 ? runs[0] : null;
   const isRunning = latestRun?.status === 'running';
 
+  // Read step data from in-memory map (instant, always in order)
+  const stepData = isRunning && latestRun ? activePipelineSteps.get(latestRun.id) : null;
+
   res.json({
     latestRun,
     isRunning,
-    currentStep: isRunning ? (latestRun as unknown as Record<string, unknown>)?.current_step ?? null : null,
-    stepMessage: isRunning ? (latestRun as unknown as Record<string, unknown>)?.step_message ?? null : null,
-    totalSteps: isRunning ? (latestRun as unknown as Record<string, unknown>)?.total_steps ?? null : null,
+    currentStep: stepData?.currentStep ?? null,
+    stepMessage: stepData?.stepMessage ?? null,
+    totalSteps: stepData?.totalSteps ?? null,
     recentRuns: runs || [],
   });
 });
@@ -542,6 +545,17 @@ router.post('/api/pipeline/run', requireAuth, requireAdmin, pipelineRateLimit, a
   });
 });
 
+// ─── In-memory pipeline step tracking ─────────────────────────────────────
+// Avoids DB round-trips for real-time step data. The progress callback
+// writes here synchronously; the status endpoint reads from here.
+// Keyed by runId, cleared when the pipeline finishes.
+
+const activePipelineSteps = new Map<string, {
+  currentStep: number;
+  stepMessage: string;
+  totalSteps: number;
+}>();
+
 /**
  * Async wrapper that runs the pipeline and persists results.
  * Called from POST /api/pipeline/run — runs in background.
@@ -570,16 +584,12 @@ async function runPipelineAsync(runId: string): Promise<void> {
     const pipelineLog: string[] = [];
     const logStart = Date.now();
 
-    // Progress callback: update DB + accumulate log
+    // Progress callback: in-memory (instant) + log accumulator
     const onProgress = async (step: number, total: number, message: string) => {
       const elapsed = ((Date.now() - logStart) / 1000).toFixed(1);
       pipelineLog.push(`[${elapsed}s] Step ${step}/${total}: ${message}`);
-      // Update pipeline_runs with current step (non-blocking)
-      supaUpdate('pipeline_runs', {
-        current_step: step,
-        step_message: message,
-        total_steps: total,
-      }, { id: `eq.${runId}` }).catch(() => {});
+      // Synchronous in-memory update — no DB round-trip, no ordering issues
+      activePipelineSteps.set(runId, { currentStep: step, stepMessage: message, totalSteps: total });
     };
 
     // Run the full pipeline
@@ -600,16 +610,16 @@ async function runPipelineAsync(runId: string): Promise<void> {
     // Save pipeline log to the run record
     const totalElapsed = ((Date.now() - logStart) / 1000).toFixed(1);
     pipelineLog.push(`[${totalElapsed}s] Pipeline completed successfully`);
+    activePipelineSteps.delete(runId);
     await supaUpdate('pipeline_runs', {
       pipeline_log: pipelineLog.join('\n'),
-      current_step: null,
-      step_message: null,
     }, { id: `eq.${runId}` }).catch(() => {});
 
     console.log(`[routes] Pipeline run ${runId} completed successfully`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[routes] Pipeline run ${runId} failed: ${msg}`);
+    activePipelineSteps.delete(runId);
 
     await supaUpdate('pipeline_runs', {
       status: 'failed',
