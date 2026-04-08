@@ -151,7 +151,7 @@ function nearestRiskLabel(value: number): string {
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export function Portfolio() {
-  const { user } = useAuth();
+  const { user: _user } = useAuth();
   const [scores, setScores] = useState<FundScore[]>([]);
   const [pipelineRun, setPipelineRun] = useState<PipelineRun | null>(null);
   const [_profile, setProfile] = useState<UserProfile | null>(null);

@@ -14,7 +14,7 @@
  * References: Spec §6.7 (SVG-only charts, no canvas, no third-party libraries)
  */
 
-import { useState, useMemo, type CSSProperties } from 'react';
+import { useState, useMemo } from 'react';
 import { theme } from '../theme';
 
 // ─── Types ──────────────────────────────────────────────────────────────────

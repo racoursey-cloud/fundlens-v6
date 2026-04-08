@@ -43,10 +43,6 @@ function nearestRiskLabel(value: number): string {
   return RISK_LABELS[nearest] ?? 'Moderate';
 }
 
-function fmtPct(val: number): string {
-  return `${Math.round(val * 100)}%`;
-}
-
 // ─── Section header (v5.1 pattern) ──────────────────────────────────────────
 
 function SectionHeader({ children }: { children: React.ReactNode }) {

@@ -30,8 +30,8 @@ const STANCE_CONFIG: Record<string, {
   transitional: { label: 'Transitional', color: '#f97316', bg: 'rgba(249,115,22,0.08)', border: 'rgba(249,115,22,0.2)' },
 };
 
-function getStance(macroStance: string) {
-  return STANCE_CONFIG[macroStance?.toLowerCase()] ?? STANCE_CONFIG.neutral;
+function getStance(macroStance: string): { label: string; color: string; bg: string; border: string } {
+  return STANCE_CONFIG[macroStance?.toLowerCase()] ?? STANCE_CONFIG['neutral']!;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
