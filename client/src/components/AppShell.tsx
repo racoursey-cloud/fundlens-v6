@@ -19,6 +19,7 @@ import { useAuth } from '../context/AuthContext';
 import { fetchPipelineStatus, triggerPipeline } from '../api';
 import { theme } from '../theme';
 import { PipelineOverlay } from './PipelineOverlay';
+import { HelpChat } from './HelpChat';
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
@@ -345,6 +346,9 @@ export function AppShell() {
 
       {/* ═══ PIPELINE OVERLAY (v5.1 pattern) ══════════════════════════ */}
       <PipelineOverlay isRunning={isRunning} currentStep={currentStep} stepMessage={stepMessage} />
+
+      {/* ═══ HELP CHAT (floating widget) ═════════════════════════════ */}
+      <HelpChat />
     </div>
   );
 }

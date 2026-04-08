@@ -900,3 +900,46 @@ router.get('/api/monitor/cron', requireAuth, async (req: Request, res: Response)
   const status = getCronStatus();
   res.json(status);
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELP AGENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/help/chat
+ * Send a message to the Help Agent and get a response.
+ * Uses Claude Haiku with an admin-configurable system prompt.
+ *
+ * Body: { message: string, history?: Array<{ role, content }> }
+ * Returns: { reply: string }
+ */
+router.post('/api/help/chat', requireAuth, async (req: Request, res: Response) => {
+  const { message, history } = req.body;
+
+  if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    res.status(400).json({ error: 'Message is required' });
+    return;
+  }
+
+  if (message.length > 2000) {
+    res.status(400).json({ error: 'Message too long (max 2000 characters)' });
+    return;
+  }
+
+  const { helpChat } = await import('../engine/help-agent.js');
+  const result = await helpChat({ message: message.trim(), history });
+
+  res.json(result);
+});
+
+/**
+ * POST /api/help/reload
+ * Admin-only: Reload the help agent prompt from disk.
+ * Call this after editing help-agent.md without restarting the server.
+ */
+router.post('/api/help/reload', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  const { reloadHelpPrompt } = await import('../engine/help-agent.js');
+  reloadHelpPrompt();
+  res.json({ message: 'Help agent prompt reloaded' });
+});

@@ -220,3 +220,15 @@ export const fetchThesis = () =>
 // Monitoring
 export const fetchSystemHealth = () =>
   apiFetch<{ status: string; issues: string[] }>('/api/monitor/health');
+
+// Help Agent
+export interface HelpMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export const helpChat = (message: string, history?: HelpMessage[]) =>
+  apiFetch<{ reply: string }>('/api/help/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, history }),
+  });
