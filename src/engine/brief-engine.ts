@@ -721,11 +721,12 @@ ${allocation.map(a =>
 ).join('\n')}
 `;
 
-  // Include allocation changes for "What Happened" section (§7.7)
+  // Allocation delta is woven into "What Happened" (§7.2: macro + allocation changes
+  // as one cohesive cause-and-effect narrative, NOT separate sections)
   if (allocationDelta && allocationDelta.length > 0) {
     prompt += `
-## Portfolio Changes Since Last Brief
-Use these changes in Section 2 ("What Happened") to explain what moved and why.
+## Allocation Changes (for Section 2 — "What Happened")
+Weave these changes INTO the macro narrative in Section 2. Do NOT create a separate section for them — the market story and the portfolio changes should read as one cohesive cause-and-effect narrative. Example: "With tech earnings strong and rates holding steady, we moved FXAIX up from 30% to 40%..."
 ${allocationDelta.map(d => {
   if (d.change === 'new') return `- NEW: ${d.name} (${d.ticker}) added at ${d.currentPct}%`;
   if (d.change === 'removed') return `- REMOVED: ${d.ticker} (was ${d.previousPct}%)`;
@@ -735,8 +736,8 @@ ${allocationDelta.map(d => {
 `;
   } else if (allocationDelta === null) {
     prompt += `
-## Portfolio Changes Since Last Brief
-This is the user's first Brief — no prior allocation exists. Welcome them.
+## Note: First Brief
+This is the user's first Brief — no prior allocation exists. Welcome them in Section 2.
 `;
   }
 
