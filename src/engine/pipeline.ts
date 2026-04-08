@@ -106,7 +106,7 @@ export async function runFullPipeline(
   funds: FundRow[],
   onProgress?: PipelineProgressCallback
 ): Promise<PipelineResult> {
-  const TOTAL_STEPS = 14;
+  const TOTAL_STEPS = 16;
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
   const errors: PipelineStats['errors'] = [];
@@ -739,12 +739,9 @@ export async function runFullPipeline(
     perFundWeights.size > 0 ? perFundWeights : undefined
   );
 
-  // ── Step 14: Persist to Supabase ──
-  progress(14, 'Persisting scores to database');
-
-  // Note: Supabase persistence is wired up in Session 5 (Database Schema + API).
-  // For now, the pipeline returns the complete result in memory.
-  // The Express API routes (Session 5) will call supaFetch() to store these.
+  // ── Step 14: Scores computed — pipeline returns to routes.ts ──
+  // Steps 15-16 (fund summaries + DB persist) happen in routes.ts
+  progress(14, 'Scores computed');
 
   const completedAt = new Date().toISOString();
   const durationMs = Date.now() - startMs;

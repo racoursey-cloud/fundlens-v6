@@ -17,7 +17,7 @@ import { theme } from '../theme';
 
 // ─── Pipeline step labels (informational — matches server pipeline.ts) ──────
 
-// Must match server pipeline.ts progress() calls exactly (steps 1–14)
+// Must match server pipeline.ts + routes.ts progress calls (steps 1–16)
 const PIPELINE_STEPS = [
   'Loading fund list',                   // 1
   'Fetching holdings from EDGAR',        // 2
@@ -32,7 +32,9 @@ const PIPELINE_STEPS = [
   'Generating investment brief',         // 11
   'Evaluating sector positioning',       // 12
   'Computing composite scores',          // 13
-  'Saving results',                      // 14
+  'Scores computed',                     // 14
+  'Generating fund summaries',           // 15
+  'Saving results',                      // 16
 ];
 
 interface Props {

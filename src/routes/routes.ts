@@ -595,7 +595,8 @@ async function runPipelineAsync(runId: string): Promise<void> {
     // Run the full pipeline
     const result = await runFullPipeline(funds, onProgress);
 
-    // Generate natural-language fund summaries (editorial voice)
+    // ── Step 15: Generate natural-language fund summaries (editorial voice) ──
+    activePipelineSteps.set(runId, { currentStep: 15, stepMessage: 'Generating fund summaries', totalSteps: 16 });
     let fundSummaries = {};
     try {
       const { generateFundSummaries } = await import('../engine/fund-summaries.js');
@@ -604,7 +605,8 @@ async function runPipelineAsync(runId: string): Promise<void> {
       console.warn(`[routes] Fund summary generation failed (non-fatal): ${err}`);
     }
 
-    // Persist results to Supabase
+    // ── Step 16: Persist results to Supabase ──
+    activePipelineSteps.set(runId, { currentStep: 16, stepMessage: 'Saving results', totalSteps: 16 });
     await persistPipelineResults(runId, result, funds, fundSummaries);
 
     // Save pipeline log to the run record
