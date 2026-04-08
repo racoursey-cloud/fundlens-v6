@@ -503,6 +503,7 @@ router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Respon
  */
 // SESSION 0 SECURITY: Admin-only + rate limited
 router.post('/api/pipeline/run', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
+  console.log(`[routes] POST /api/pipeline/run — user: ${(req as AuthenticatedRequest).userEmail}`);
   // Check if a pipeline is already running
   const { data: running } = await supaFetch<PipelineRunRow>('pipeline_runs', {
     params: {
@@ -513,12 +514,27 @@ router.post('/api/pipeline/run', requireAuth, requireAdmin, pipelineRateLimit, a
   });
 
   if (running) {
-    res.status(409).json({
-      error: 'A pipeline run is already in progress',
-      runId: running.id,
-      startedAt: running.started_at,
-    });
-    return;
+    // Check if this is a stale run from a previous container
+    const startedAt = new Date(running.started_at).getTime();
+    const ageMinutes = (Date.now() - startedAt) / 60000;
+    console.warn(`[routes] Pipeline blocked: existing run ${running.id} started ${ageMinutes.toFixed(0)}m ago`);
+
+    // If the "running" row is older than 15 minutes, it's stale — mark it failed and proceed
+    if (ageMinutes > 15) {
+      console.warn(`[routes] Stale run detected (${ageMinutes.toFixed(0)}m old) — marking failed`);
+      await supaUpdate('pipeline_runs', {
+        status: 'failed',
+        error_message: 'Stale run — server restarted during execution',
+        completed_at: new Date().toISOString(),
+      }, { id: `eq.${running.id}` });
+    } else {
+      res.status(409).json({
+        error: 'A pipeline run is already in progress',
+        runId: running.id,
+        startedAt: running.started_at,
+      });
+      return;
+    }
   }
 
   // Create pipeline_runs record
