@@ -123,35 +123,40 @@ export async function persistPipelineResults(
     thesisSaved = true;
   }
 
-  // ── 3. Upsert holdings to holdings_cache ──────────────────────────────
+  // ── 3. Upsert holdings to holdings_cache (batched) ────────────────────
   // Write all resolved holdings for each fund so the UI can show
   // company-level drill-in (inline fund detail, sector donut drill).
   // Uses upsert on (fund_id, cusip) to avoid duplicates.
+  // Batched per-fund: one Supabase call per fund instead of per holding.
 
   for (const [ticker, detail] of result.fundDetails) {
     const fund = funds.find(f => f.ticker === ticker);
     if (!fund) continue;
 
-    for (const holding of detail.holdings) {
-      const row = {
-        fund_id: fund.id,
-        name: holding.name,
-        cusip: holding.cusip,
-        ticker: holding.ticker,
-        pct_of_nav: holding.pctOfNav,
-        value_usd: holding.valueUsd,
-        asset_category: holding.assetCategory,
-        country: holding.countryOfIssuer,
-        sector: holding.sector,
-        is_look_through: holding.isLookThrough,
-        parent_fund_name: holding.parentFundName,
-        accession_number: '',
-        report_date: new Date().toISOString().slice(0, 10),
-      };
+    const rows = detail.holdings.map(holding => ({
+      fund_id: fund.id,
+      name: holding.name,
+      cusip: holding.cusip,
+      ticker: holding.ticker,
+      pct_of_nav: holding.pctOfNav,
+      value_usd: holding.valueUsd,
+      asset_category: holding.assetCategory,
+      country: holding.countryOfIssuer,
+      sector: holding.sector,
+      is_look_through: holding.isLookThrough,
+      parent_fund_name: holding.parentFundName,
+      accession_number: '',
+      report_date: new Date().toISOString().slice(0, 10),
+    }));
 
-      const { error } = await supaInsert('holdings_cache', row, { upsert: true });
+    if (rows.length === 0) continue;
 
-      if (!error) holdingsWritten++;
+    const { error } = await supaInsert('holdings_cache', rows, { upsert: true });
+
+    if (!error) {
+      holdingsWritten += rows.length;
+    } else {
+      errors.push(`Holdings ${ticker}: batch upsert failed — ${error}`);
     }
   }
 
