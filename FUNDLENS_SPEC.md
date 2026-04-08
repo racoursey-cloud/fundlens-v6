@@ -680,8 +680,7 @@ Each step wrapped in try/catch. Partial results flow forward. Non-fatal failures
 | positioning.ts | Positioning factor scoring (sector alignment × thesis) |
 | scoring.ts | Composite scoring engine (z-standardize, weight, CDF map, tier badges) |
 | allocation.ts | Allocation engine (MAD z-score, Kelly exponential, de minimis, rounding) |
-| classify.ts | Claude Haiku sector classification (with Supabase cache layer — Session 10) |
-| cache.ts | Supabase cache helpers: fundamentals_cache + sector_classifications (Session 10) |
+| classify.ts | Claude Haiku sector classification |
 | thesis.ts | Claude Sonnet macro thesis generation |
 | fred.ts | FRED macro data + commodity prices |
 | rss.ts | RSS feed fetcher |
@@ -964,7 +963,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 7, 2026 (after Session 10)
+**Last updated:** April 7, 2026 (after Session 9)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1109,18 +1108,9 @@ Status: ✅ Complete. `interpolateK()` in allocation.ts implements linear interp
 Spec: allocation_history table stores each brief's recommended allocation for "What Changed" delta and future performance tracking.
 Status: ✅ Complete. Migration creates `allocation_history` table with RLS policies. `persistAllocationHistory()` called after each Brief save in generateBrief(). `fetchPreviousAllocation()` queries most recent prior allocation. `computeAllocationDelta()` computes new/removed/changed positions (1% threshold). Delta passed to Claude prompt in "Portfolio Changes Since Last Brief" section for "What Happened" narrative.
 
-**~~MISSING-13: Pipeline Performance — 9 min → <3 min~~ — RESOLVED (Session 10)**
+**MISSING-13: Pipeline Performance — 9 min → <3 min**
 Spec: v6 pipeline takes 9 minutes vs v5.1's 2 minutes. Root causes identified: 500ms delays (v5.1 uses 200-300ms), no Supabase caching layer (v5.1 batch-queries cache before API calls), no Claude classification batching (v5.1 batches 25 holdings per call).
-Status: ✅ Complete. Four optimizations implemented:
-1. **API delays reduced** from 500ms → 300ms (general), 200ms (Tiingo). Matches v5.1 production levels.
-2. **Fundamentals cache** added (`fundamentals_cache` Supabase table, 7-day TTL). Batch-queries all unique tickers before FMP calls. Only cache misses hit the API. Saves ~120s on subsequent runs.
-3. **Sector classification cache** added (`sector_classifications` Supabase table, 15-day TTL). Two-layer strategy: Layer 1 (holdings_cache.sector), Layer 2 (dedicated table). Batch size increased 15→25. Saves ~60s on subsequent runs.
-4. **Pipeline parallelized** into three lanes via `Promise.allSettled()` with per-lane timeouts:
-   - Lane A: fundamentals → classification → quality (180s timeout)
-   - Lane B: expense ratios → prices → momentum (120s timeout)
-   - Lane C: headlines → thesis generation (60s timeout)
-   Convergence gate after all lanes: Lane A+B failure = graceful abort with partial results. Lane C failure = fallback neutral thesis. Data dependency order preserved within each lane.
-Expected performance: First run ~8min (cold caches). Subsequent runs ~2.5-3min (warm caches + parallelism).
+Status: Diagnosed (Session 7). Implementation pending.
 
 ### 9.4 CUSIP Resolver — COMPLETED (Session 2)
 
@@ -1147,7 +1137,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 7 | Tier Badges + Brief/Slider Spec | §6.3 tier badges E2E. §7 brief redesign (4-section, advisor voice). §3.4 continuous slider. §7.7 allocation persistence. Spec-only for MISSING-10 through MISSING-13. | **DONE** |
 | 8 | Brief Engine Redesign | MISSING-10: Rewrite editorial-policy.md + brief-engine.ts prompt. Raw data feed. 4-section output. Advisor voice. | **DONE** |
 | 9 | Allocation Persistence + Continuous Slider | MISSING-11 + MISSING-12: allocation_history table, risk slider float, interpolation | **DONE** |
-| 10 | Pipeline Performance | MISSING-13: Reduce delays, add Supabase caching, batch Claude classification. Target <3 min. | **DONE** |
+| 10 | Pipeline Performance | MISSING-13: Reduce delays, add Supabase caching, batch Claude classification. Target <3 min. | |
 | 11 | v5.1 UI Port | Port v5.1 layout/UX to v6 React client. All 4 factors visible. Sector scorecard. Inline Brief rendering. | |
 | 12 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
 | 13 | HHI + Polish | MISSING-7 (HHI concentration display). Final UI polish. | |
@@ -1607,71 +1597,6 @@ File: `migrations/session9_continuous_risk_and_alloc_history.sql`
 **Resolved:** MISSING-11 (continuous risk slider), MISSING-12 (allocation history persistence)
 **Database migration required:** Run `migrations/session9_continuous_risk_and_alloc_history.sql` in Supabase SQL Editor before deploying.
 **Verification:** `tsc --noEmit` passes clean on both server and client.
-
-### April 7, 2026 — Session 10: Pipeline Performance (MISSING-13)
-
-**Goal:** Reduce pipeline runtime from ~9 minutes to under 3 minutes on subsequent runs.
-
-**Gaps addressed:** MISSING-13 (pipeline performance).
-
-**1. API delay reduction.**
-File: `constants.ts`
-- `API_CALL_DELAY_MS` reduced from 500ms → 300ms. Matches v5.1 production. FMP Starter allows ~10 req/s, EDGAR is generous with proper User-Agent, Finnhub allows 60 req/min. 300ms is well within all rate limits.
-- New `TIINGO_DELAY_MS` at 200ms. Tiingo's rate limit is more generous (~50/min).
-- New lane timeout constants: `LANE_A_TIMEOUT_MS` (180s), `LANE_B_TIMEOUT_MS` (120s), `LANE_C_TIMEOUT_MS` (60s).
-- New cache TTL constants: `FUNDAMENTALS_CACHE_TTL_DAYS` (7), `SECTOR_CACHE_TTL_DAYS` (15).
-
-**2. Fundamentals cache layer.**
-Files: `cache.ts` (new), `pipeline.ts`
-- New `fundamentals_cache` Supabase table: ticker (PK), ratios (JSONB), key_metrics (JSONB), cached_at. 7-day TTL.
-- `getCachedFundamentals()`: Batch-queries all unique tickers from cache in groups of 100 (PostgREST IN filter). Returns Map of fresh entries.
-- `saveCachedFundamentals()`: Batch-upserts new FMP results in groups of 50. Fire-and-forget (non-blocking).
-- Pipeline Step 4 now: query cache → apply hits → fetch only cache misses from FMP → save new entries to cache.
-- Expected savings: ~120s on subsequent runs (80-90% cache hit rate for stable holding universes).
-
-**3. Sector classification cache layer.**
-Files: `cache.ts` (new), `classify.ts`
-- New `sector_classifications` Supabase table: holding_name (PK), sector (TEXT), confidence (TEXT), cached_at. 15-day TTL.
-- Two-layer cache strategy: Layer 1 checks holdings_cache.sector (existing), Layer 2 checks sector_classifications table (new).
-- `getCachedSectors()`: Batch-queries holding names in groups of 50 with URL-encoded names (lesson from v5.1 A13 — special characters break PostgREST).
-- `saveCachedSectors()`: Batch-upserts new Claude results in groups of 50.
-- Batch size increased from 15 → 25 holdings per Claude call (matching v5.1 production).
-- Expected savings: ~60s on subsequent runs (eliminates ~90% of Claude classification calls).
-
-**4. Pipeline parallelization.**
-File: `pipeline.ts`
-- After Steps 2-3 (holdings fetch — sequential, all lanes need this), pipeline splits into three lanes:
-  - **Lane A** (Steps 4→5→6): fundamentals → classification → quality scoring. Needs holdings data. Contains Claude Haiku calls (classification).
-  - **Lane B** (Steps 7→8→9): expense ratios → prices → momentum. Needs only fund list. Uses Finnhub, Tiingo, FMP price APIs.
-  - **Lane C** (Steps 10→11): headlines/FRED → macro thesis. Fully independent. Contains Claude Sonnet call (thesis).
-- Lanes run via `Promise.allSettled()` with `withTimeout()` wrapper per lane.
-- **Claude safety:** Haiku (Lane A) and Sonnet (Lane C) are different models on different endpoints. No concurrent calls to the same model. The "no Promise.all for Claude" rule applies within a lane (classification batches stay sequential).
-- **Convergence gate:** After all lanes settle:
-  - Lane A rejected → FATAL → graceful abort with `buildAbortResult()` (returns money market scores only)
-  - Lane B rejected → FATAL → graceful abort
-  - Lane C rejected → NON-FATAL → fallback neutral thesis (all sectors score 50)
-- `buildAbortResult()`: Returns a valid `PipelineResult` with money market funds scored and all errors logged. UI can show partial results rather than a blank error.
-- Step 12 (positioning) runs after convergence — needs Lane A classified holdings + Lane C thesis.
-- Step 13 (composite) runs after positioning — needs all factor scores from all lanes.
-
-**5. Migration SQL.**
-File: `migrations/session10_pipeline_cache_tables.sql`
-- Part 1: `CREATE TABLE fundamentals_cache` with ticker PK, JSONB columns for ratios and key_metrics, cached_at index. RLS enabled.
-- Part 2: `CREATE TABLE sector_classifications` with holding_name PK, sector, confidence, cached_at index. RLS enabled.
-
-**Performance estimates:**
-| Scenario | Before | After |
-|---|---|---|
-| First run (cold caches) | ~9 min | ~7-8 min |
-| Subsequent run (warm caches) | ~9 min | ~2.5-3 min |
-
-The "under 3 minutes" target is achievable for the common case (subsequent runs with warm caches). First runs are inherently slower but only happen once per TTL window (7-15 days).
-
-**Files created:** `src/engine/cache.ts`, `migrations/session10_pipeline_cache_tables.sql`
-**Files changed:** `src/engine/constants.ts`, `src/engine/classify.ts`, `src/engine/pipeline.ts`, `FUNDLENS_SPEC.md`
-**Resolved:** MISSING-13 (pipeline performance)
-**Database migration required:** Run `migrations/session10_pipeline_cache_tables.sql` in Supabase SQL Editor before deploying.
-**Verification:** `tsc --noEmit` passes clean.
 
 ---
 

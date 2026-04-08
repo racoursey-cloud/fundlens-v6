@@ -240,29 +240,11 @@ export const BRIEF = {
 } as const;
 
 // ─── Pipeline Configuration ──────────────────────────────────────────────────
-// Session 10: Reduced API_CALL_DELAY_MS from 500→300 to match v5.1 production
-// levels. 500ms was a conservative safety margin during initial development.
-// FMP Starter allows ~10 req/s, Tiingo ~50/min, SEC EDGAR is generous with
-// proper User-Agent. 300ms is well within all rate limits.
-// Added TIINGO_DELAY_MS at 200ms (Tiingo's limit is generous).
-// LANE_TIMEOUT_MS: max time each parallel pipeline lane gets before abort.
 export const PIPELINE = {
   /** Delay between sequential API calls to avoid rate limiting (ms) */
-  API_CALL_DELAY_MS: 300,
-  /** Delay between Tiingo API calls — more generous rate limit (ms) */
-  TIINGO_DELAY_MS: 200,
+  API_CALL_DELAY_MS: 500,
   /** Delay between sequential Claude calls (ms) — MUST use this, never Promise.all */
   CLAUDE_CALL_DELAY_MS: 1200,
-  /** Max time for the fundamentals+classify lane before graceful abort (ms) */
-  LANE_A_TIMEOUT_MS: 180_000,
-  /** Max time for the prices+momentum lane before graceful abort (ms) */
-  LANE_B_TIMEOUT_MS: 120_000,
-  /** Max time for the headlines+thesis lane before graceful abort (ms) */
-  LANE_C_TIMEOUT_MS: 60_000,
-  /** Fundamentals cache TTL in days (fundamentals change quarterly) */
-  FUNDAMENTALS_CACHE_TTL_DAYS: 7,
-  /** Sector classification cache TTL in days */
-  SECTOR_CACHE_TTL_DAYS: 15,
 } as const;
 
 // ─── UI Theme ────────────────────────────────────────────────────────────────
