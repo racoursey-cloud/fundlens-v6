@@ -133,10 +133,10 @@ export function AppShell() {
     });
   }, []);
 
-  // Poll while running
+  // Poll while running — immediate first poll, then every 2s
   useEffect(() => {
     if (!isRunning) return;
-    const interval = setInterval(async () => {
+    const poll = async () => {
       const res = await fetchPipelineStatus();
       if (res.data) {
         if (!res.data.isRunning) {
@@ -150,7 +150,9 @@ export function AppShell() {
           if (d.stepMessage != null) setStepMessage(d.stepMessage as string);
         }
       }
-    }, 3000);
+    };
+    poll(); // immediate first poll
+    const interval = setInterval(poll, 2000);
     return () => clearInterval(interval);
   }, [isRunning]);
 

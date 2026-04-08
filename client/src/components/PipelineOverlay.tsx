@@ -17,21 +17,22 @@ import { theme } from '../theme';
 
 // ─── Pipeline step labels (informational — matches server pipeline.ts) ──────
 
+// Must match server pipeline.ts progress() calls exactly (steps 1–14)
 const PIPELINE_STEPS = [
-  'Loading fund list',
-  'Fetching economic indicators',
-  'Generating investment brief',
-  'Resolving fund holdings',
-  'Classifying holdings by sector',
-  'Fetching price data',
-  'Computing cost efficiency',
-  'Scoring holdings quality',
-  'Calculating momentum',
-  'Evaluating sector positioning',
-  'Computing composite scores',
-  'Running allocation engine',
-  'Generating investment brief',
-  'Saving results',
+  'Loading fund list',                   // 1
+  'Fetching holdings from EDGAR',        // 2
+  'Resolving holdings',                  // 3
+  'Fetching company fundamentals',       // 4
+  'Classifying holdings by sector',      // 5
+  'Scoring holdings quality',            // 6
+  'Scoring cost efficiency',             // 7
+  'Fetching price data',                 // 8
+  'Scoring momentum',                    // 9
+  'Fetching news & macro data',          // 10
+  'Generating investment brief',         // 11
+  'Evaluating sector positioning',       // 12
+  'Computing composite scores',          // 13
+  'Saving results',                      // 14
 ];
 
 interface Props {
@@ -99,7 +100,7 @@ export function PipelineOverlay({ isRunning, currentStep, stepMessage }: Props) 
         if (prev >= PIPELINE_STEPS.length - 1) return prev;
         return prev + 1;
       });
-    }, 8000);
+    }, 3000);
     return () => clearInterval(interval);
   }, [isRunning]);
 
