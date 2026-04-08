@@ -241,8 +241,10 @@ export const BRIEF = {
 
 // ─── Pipeline Configuration ──────────────────────────────────────────────────
 export const PIPELINE = {
-  /** Delay between sequential API calls to avoid rate limiting (ms) */
-  API_CALL_DELAY_MS: 500,
+  /** Delay between sequential API calls to avoid rate limiting (ms)
+   *  Session 10: Reduced from 500ms to 250ms. v5.1 uses 200-300ms successfully.
+   *  This is still conservative — FMP allows 250/day on Starter, Tiingo 500/hr free tier. */
+  API_CALL_DELAY_MS: 250,
   /** Delay between sequential Claude calls (ms) — MUST use this, never Promise.all */
   CLAUDE_CALL_DELAY_MS: 1200,
 } as const;

@@ -71,8 +71,9 @@ export async function classifyHoldingSectors(
 
   const client = new Anthropic({ apiKey });
 
-  // Batch holdings into groups of 15 for efficient API usage
-  const batches = chunkArray(needsClassification, 15);
+  // Batch holdings into groups of 25 for efficient API usage
+  // Session 10: Increased from 15 to 25 to match v5.1 (fewer Claude calls = faster)
+  const batches = chunkArray(needsClassification, 25);
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];

@@ -27,17 +27,17 @@
  *   - All Supabase calls route through supaFetch()
  *   - All Claude calls route through /api/claude proxy
  *
- * Session 3 updated. References: Spec §4.6, §5.4.
+ * Session 3 updated, Session 10 cache layer added. References: Spec §4.6, §5.4.
  */
 
 import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS } from './constants.js';
 import { delay, ResolvedHolding, FundRow } from './types.js';
 import { runHoldingsPipeline } from './holdings.js';
-import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile } from './fmp.js';
+import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics } from './fmp.js';
 import { supaUpdate } from './supabase.js';
 import { fetchExpenseRatio, fetchFinnhubExpenseRatio } from './finnhub.js';
-import { fetchTiingoPrices, convertTiingoPricesToFmpFormat } from './tiingo.js';
+import { fetchTiingoPrices, convertTiingoPricesToFmpFormat, TiingoDailyPrice } from './tiingo.js';
 import { NormalizedFeeData } from './tiingo.js';
 import { scoreCostEfficiency, CostEfficiencyResult } from './cost-efficiency.js';
 import { scoreQualityFactor, QualityFactorResult } from './quality.js';
@@ -48,6 +48,12 @@ import { fetchMacroSnapshot } from './fred.js';
 import { generateMacroThesis, MacroThesis } from './thesis.js';
 import { scorePositioning, PositioningResult } from './positioning.js';
 import { classifyHoldingSectors } from './classify.js';
+import {
+  getFmpCache, saveFmpCache,
+  getTiingoPriceCache, saveTiingoPriceCache,
+  getFinnhubFeeCache, saveFinnhubFeeCache,
+  getSectorClassifications, saveSectorClassifications,
+} from './cache.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -151,7 +157,9 @@ export async function runFullPipeline(
 
   progress(3, `Holdings fetched for ${fundHoldings.size}/${scorableFunds.length} funds`);
 
-  // ── Step 4: Fetch company fundamentals from FMP ──
+  // ── Step 4: Fetch company fundamentals from FMP (with cache) ──
+  // Session 10: Pre-fetch all unique tickers from Supabase cache in ONE query.
+  // Only hit FMP for cache misses. Save misses to cache for next run.
   progress(4, 'Fetching company fundamentals from FMP');
 
   // Collect unique tickers across all funds
@@ -162,34 +170,141 @@ export async function runFullPipeline(
     }
   }
 
-  // Fetch fundamentals for each unique ticker (sequential with delays)
+  const allTickerArray = Array.from(allTickers);
   const fundamentals = new Map<string, { ratios: FmpRatios | null; keyMetrics: FmpKeyMetrics | null }>();
+
+  // Step 4a: Batch-check FMP cache (single Supabase query for all tickers)
+  let fmpCacheHits = 0;
+  try {
+    const cached = await getFmpCache(allTickerArray);
+    for (const [ticker, entry] of cached) {
+      fundamentals.set(ticker, { ratios: entry.ratios, keyMetrics: entry.keyMetrics });
+      fmpCacheHits++;
+    }
+    console.log(`[pipeline] FMP cache: ${fmpCacheHits}/${allTickerArray.length} tickers from cache`);
+  } catch (err) {
+    console.warn('[pipeline] FMP cache lookup failed, fetching all from API');
+  }
+
+  // Step 4b: Fetch cache misses from FMP API (sequential with delays)
+  const fmpMisses = allTickerArray.filter(t => !fundamentals.has(t));
   let fetchedCount = 0;
 
-  for (const ticker of allTickers) {
+  if (fmpMisses.length > 0) {
+    progress(4, `Fetching ${fmpMisses.length} tickers from FMP API (${fmpCacheHits} cached)`);
+  }
+
+  for (const ticker of fmpMisses) {
     try {
       const bundle = await fetchFundamentalsBundle(ticker);
       fundamentals.set(ticker, bundle);
+
+      // Save to cache for next run (fire-and-forget — don't block pipeline)
+      saveFmpCache(ticker, bundle.ratios, bundle.keyMetrics).catch(cacheErr => {
+        console.warn(`[pipeline] FMP cache save failed for ${ticker}: ${cacheErr}`);
+      });
     } catch (err) {
       fundamentals.set(ticker, { ratios: null, keyMetrics: null });
     }
     fetchedCount++;
     if (fetchedCount % 25 === 0) {
-      progress(4, `Fundamentals: ${fetchedCount}/${allTickers.size} tickers`);
+      progress(4, `Fundamentals: ${fetchedCount}/${fmpMisses.length} API calls`);
     }
     await delay(PIPELINE.API_CALL_DELAY_MS);
   }
 
-  // ── Step 5: Classify holdings into sectors via Claude Haiku ──
+  // ── Step 5: Classify holdings into sectors via Claude Haiku (with cache) ──
+  // Session 10: Collect ALL unique holding names across ALL funds, batch-check
+  // sector_classifications cache, then only classify uncached holdings.
+  // Saves ~4 Claude Haiku calls per run after the first.
   progress(5, 'Classifying holdings into sectors');
 
-  for (const [fundTicker, holdings] of fundHoldings) {
+  // 5a: Collect all unique unclassified holding names across all funds
+  const allHoldingsNeedingClassification: ResolvedHolding[] = [];
+  const holdingNameToSector = new Map<string, string>();
+
+  for (const [, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (!h.sector && h.name) {
+        allHoldingsNeedingClassification.push(h);
+      }
+    }
+  }
+
+  // Deduplicate by holding name
+  const uniqueNames = [...new Set(allHoldingsNeedingClassification.map(h => h.name))];
+
+  // 5b: Batch-check sector_classifications cache
+  let sectorCacheHits = 0;
+  if (uniqueNames.length > 0) {
     try {
-      await classifyHoldingSectors(holdings);
+      const cachedSectors = await getSectorClassifications(uniqueNames);
+      for (const [name, sector] of cachedSectors) {
+        holdingNameToSector.set(name, sector);
+        sectorCacheHits++;
+      }
+      console.log(`[pipeline] Sector cache: ${sectorCacheHits}/${uniqueNames.length} holdings from cache`);
+    } catch (err) {
+      console.warn('[pipeline] Sector cache lookup failed, classifying all via Claude');
+    }
+
+    // Apply cached sectors to holdings
+    for (const h of allHoldingsNeedingClassification) {
+      const cachedSector = holdingNameToSector.get(h.name);
+      if (cachedSector) {
+        h.sector = cachedSector;
+      }
+    }
+  }
+
+  // 5c: Classify remaining uncached holdings via Claude Haiku
+  // Collect holdings that still don't have a sector after cache check
+  const stillNeedClassification: ResolvedHolding[] = [];
+  for (const [, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (!h.sector && h.name) {
+        // Deduplicate — only add if we haven't already queued this name
+        if (!stillNeedClassification.some(existing => existing.name === h.name)) {
+          stillNeedClassification.push(h);
+        }
+      }
+    }
+  }
+
+  if (stillNeedClassification.length > 0) {
+    progress(5, `Classifying ${stillNeedClassification.length} holdings via Claude (${sectorCacheHits} cached)`);
+    try {
+      await classifyHoldingSectors(stillNeedClassification);
+
+      // Save new classifications to cache for next run
+      const newClassifications: Array<{ holdingName: string; sector: string }> = [];
+      for (const h of stillNeedClassification) {
+        if (h.sector) {
+          newClassifications.push({ holdingName: h.name, sector: h.sector });
+          holdingNameToSector.set(h.name, h.sector);
+        }
+      }
+      if (newClassifications.length > 0) {
+        saveSectorClassifications(newClassifications).catch(cacheErr => {
+          console.warn(`[pipeline] Sector cache save failed: ${cacheErr}`);
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push({ fund: fundTicker, step: 'classification', error: msg });
+      errors.push({ fund: 'ALL', step: 'classification', error: msg });
     }
+
+    // Apply newly classified sectors to ALL holdings across ALL funds
+    for (const [, holdings] of fundHoldings) {
+      for (const h of holdings) {
+        if (!h.sector && h.name) {
+          const sector = holdingNameToSector.get(h.name);
+          if (sector) h.sector = sector;
+        }
+      }
+    }
+  } else {
+    console.log('[pipeline] All holdings classified from cache — no Claude calls needed');
   }
 
   // ── Step 6: Score Holdings Quality factor ──
@@ -237,24 +352,60 @@ export async function runFullPipeline(
   // funds table so future runs skip the fetch (90-day effective TTL).
   // This makes the pipeline self-healing — no manual SQL needed.
 
-  // Store Finnhub fee data (12b-1, frontLoad) per fund for cost scoring (Session 5)
+  // ── Step 7a: Sync fund expense ratios + fee data (with cache) ──
+  // Session 10: Check finnhub_fee_cache first, only hit API for misses.
   const finnhubFeeMap = new Map<string, { fee12b1: number | null; frontLoad: number | null }>();
 
-  const fundsNeedingExpenseRatio = scorableFunds.filter(f => f.expense_ratio == null);
+  // 7a-i: Batch-check Finnhub fee cache for ALL scorable funds
+  const scorableTickers = scorableFunds.map(f => f.ticker);
+  let feeCacheHits = 0;
+  try {
+    const cachedFees = await getFinnhubFeeCache(scorableTickers);
+    for (const [ticker, entry] of cachedFees) {
+      finnhubFeeMap.set(ticker, { fee12b1: entry.fee12b1, frontLoad: entry.frontLoad });
+
+      // Also populate expense_ratio if the fund is missing it
+      const fund = scorableFunds.find(f => f.ticker === ticker);
+      if (fund && fund.expense_ratio == null && entry.expenseRatio != null && entry.expenseRatio > 0) {
+        fund.expense_ratio = entry.expenseRatio;
+        // Persist to funds table
+        supaUpdate('funds', { expense_ratio: entry.expenseRatio }, { id: `eq.${fund.id}` }).catch(err => {
+          console.warn(`[pipeline] Fee cache: failed to persist expense ratio for ${ticker}: ${err}`);
+        });
+      }
+      feeCacheHits++;
+    }
+    console.log(`[pipeline] Finnhub fee cache: ${feeCacheHits}/${scorableTickers.length} funds from cache`);
+  } catch (err) {
+    console.warn('[pipeline] Finnhub fee cache lookup failed, fetching from API');
+  }
+
+  // 7a-ii: Fetch expense ratios for funds missing them (not in cache)
+  const fundsNeedingExpenseRatio = scorableFunds.filter(
+    f => f.expense_ratio == null && !finnhubFeeMap.has(f.ticker)
+  );
   if (fundsNeedingExpenseRatio.length > 0) {
-    progress(7, `Fetching expense ratios for ${fundsNeedingExpenseRatio.length} funds`);
+    progress(7, `Fetching expense ratios for ${fundsNeedingExpenseRatio.length} funds (${feeCacheHits} cached)`);
 
     for (const fund of fundsNeedingExpenseRatio) {
       const result = await fetchExpenseRatio(fund.ticker);
       await delay(PIPELINE.API_CALL_DELAY_MS);
 
-      // Store fee data regardless of expense ratio status
       if (result.fee12b1 != null || result.frontLoad != null) {
         finnhubFeeMap.set(fund.ticker, { fee12b1: result.fee12b1, frontLoad: result.frontLoad });
       }
 
+      // Save to fee cache for next run
+      saveFinnhubFeeCache(fund.ticker, {
+        expenseRatio: result.expenseRatio,
+        fee12b1: result.fee12b1,
+        frontLoad: result.frontLoad,
+        source: result.source,
+      }).catch(cacheErr => {
+        console.warn(`[pipeline] Fee cache save failed for ${fund.ticker}: ${cacheErr}`);
+      });
+
       if (result.source !== 'none' && result.expenseRatio > 0) {
-        // Persist to funds table so future runs don't need to refetch
         const { error } = await supaUpdate('funds', {
           expense_ratio: result.expenseRatio,
         }, { id: `eq.${fund.id}` });
@@ -271,7 +422,7 @@ export async function runFullPipeline(
     }
   }
 
-  // For funds that already had expense_ratio, fetch Finnhub fee data (12b-1, frontLoad) if not yet cached
+  // 7a-iii: Fetch fee data (12b-1, frontLoad) for funds with expense_ratio but missing fee breakdown
   const fundsNeedingFeeData = scorableFunds.filter(f => f.expense_ratio != null && !finnhubFeeMap.has(f.ticker));
   if (fundsNeedingFeeData.length > 0) {
     progress(7, `Fetching fee data (12b-1, loads) for ${fundsNeedingFeeData.length} funds`);
@@ -280,6 +431,17 @@ export async function runFullPipeline(
       if (finnhubResult && (finnhubResult.fee12b1 != null || finnhubResult.frontLoad != null)) {
         finnhubFeeMap.set(fund.ticker, { fee12b1: finnhubResult.fee12b1, frontLoad: finnhubResult.frontLoad });
       }
+
+      // Save to cache
+      saveFinnhubFeeCache(fund.ticker, {
+        expenseRatio: fund.expense_ratio,
+        fee12b1: finnhubResult?.fee12b1 ?? null,
+        frontLoad: finnhubResult?.frontLoad ?? null,
+        source: 'finnhub',
+      }).catch(cacheErr => {
+        console.warn(`[pipeline] Fee cache save failed for ${fund.ticker}: ${cacheErr}`);
+      });
+
       await delay(PIPELINE.API_CALL_DELAY_MS);
     }
   }
@@ -312,8 +474,9 @@ export async function runFullPipeline(
     costResults.set(fund.ticker, result);
   }
 
-  // ── Steps 8–9: Fetch momentum data + cross-sectional scoring ──
+  // ── Steps 8–9: Fetch momentum data + cross-sectional scoring (with cache) ──
   // §4.6: Tiingo is PRIMARY for fund NAV/prices. FMP is FALLBACK.
+  // Session 10: Check tiingo_price_cache first, only hit API for misses.
   progress(8, 'Fetching price data (Tiingo primary, FMP fallback)');
 
   // Calculate date range: 13 months back (12 months + buffer)
@@ -324,22 +487,53 @@ export async function runFullPipeline(
 
   const fundMomentums: FundMomentum[] = [];
 
+  // 8a: Batch-check Tiingo price cache
+  let priceCacheHits = 0;
+  const cachedPrices = new Map<string, TiingoDailyPrice[]>();
+  try {
+    const priceCache = await getTiingoPriceCache(scorableTickers);
+    for (const [ticker, entry] of priceCache) {
+      if (entry.prices && entry.prices.length > 0) {
+        cachedPrices.set(ticker, entry.prices);
+        priceCacheHits++;
+      }
+    }
+    console.log(`[pipeline] Tiingo price cache: ${priceCacheHits}/${scorableFunds.length} funds from cache`);
+  } catch (err) {
+    console.warn('[pipeline] Tiingo price cache lookup failed, fetching all from API');
+  }
+
+  // 8b: Fetch prices — use cache or API
   for (const fund of scorableFunds) {
     try {
-      // Try Tiingo first (primary per §4.6)
       let prices = null;
-      const tiingoPrices = await fetchTiingoPrices(fund.ticker, fromDate, toDate);
-      if (tiingoPrices && tiingoPrices.length > 0) {
-        prices = convertTiingoPricesToFmpFormat(tiingoPrices);
-        console.log(`[pipeline] Tiingo prices for ${fund.ticker}: ${tiingoPrices.length} days`);
+
+      // Check cache first
+      const cached = cachedPrices.get(fund.ticker);
+      if (cached && cached.length > 0) {
+        // Convert cached Tiingo prices to FMP format for momentum calculation
+        prices = convertTiingoPricesToFmpFormat(cached);
       } else {
-        // Fallback to FMP (§4.6 fallback chain)
-        console.log(`[pipeline] Tiingo prices unavailable for ${fund.ticker}, falling back to FMP`);
-        await delay(PIPELINE.API_CALL_DELAY_MS);
-        prices = await fetchHistoricalPrices(fund.ticker, fromDate, toDate);
-        if (prices && prices.length > 0) {
-          console.log(`[pipeline] FMP prices for ${fund.ticker}: ${prices.length} days`);
+        // Cache miss — try Tiingo API (primary per §4.6)
+        const tiingoPrices = await fetchTiingoPrices(fund.ticker, fromDate, toDate);
+        if (tiingoPrices && tiingoPrices.length > 0) {
+          prices = convertTiingoPricesToFmpFormat(tiingoPrices);
+          console.log(`[pipeline] Tiingo API prices for ${fund.ticker}: ${tiingoPrices.length} days`);
+
+          // Save to cache for next run (fire-and-forget)
+          saveTiingoPriceCache(fund.ticker, tiingoPrices).catch(cacheErr => {
+            console.warn(`[pipeline] Tiingo cache save failed for ${fund.ticker}: ${cacheErr}`);
+          });
+        } else {
+          // Fallback to FMP (§4.6 fallback chain)
+          console.log(`[pipeline] Tiingo prices unavailable for ${fund.ticker}, falling back to FMP`);
+          await delay(PIPELINE.API_CALL_DELAY_MS);
+          prices = await fetchHistoricalPrices(fund.ticker, fromDate, toDate);
+          if (prices && prices.length > 0) {
+            console.log(`[pipeline] FMP prices for ${fund.ticker}: ${prices.length} days`);
+          }
         }
+        await delay(PIPELINE.API_CALL_DELAY_MS);
       }
 
       const momentum = calculateFundMomentum(fund.ticker, prices || []);
@@ -353,7 +547,6 @@ export async function runFullPipeline(
         hasData: false,
       });
     }
-    await delay(PIPELINE.API_CALL_DELAY_MS);
   }
 
   progress(9, 'Scoring Momentum (cross-sectional)');
