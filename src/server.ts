@@ -52,7 +52,8 @@ app.use(helmet({
             'https://*.supabase.co',   // Supabase auth + REST API
             'wss://*.supabase.co',     // Supabase realtime (future use)
           ],
-          fontSrc: ["'self'"],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+          styleSrcElem: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
           baseUri: ["'self'"],
