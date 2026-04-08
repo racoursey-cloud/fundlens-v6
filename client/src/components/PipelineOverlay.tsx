@@ -20,7 +20,7 @@ import { theme } from '../theme';
 const PIPELINE_STEPS = [
   'Loading fund list',
   'Fetching economic indicators',
-  'Generating investment thesis',
+  'Generating investment brief',
   'Resolving fund holdings',
   'Classifying holdings by sector',
   'Fetching price data',
