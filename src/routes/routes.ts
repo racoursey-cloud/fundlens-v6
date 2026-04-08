@@ -366,16 +366,17 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
     }
   }
 
-  // SESSION 1: Validate risk tolerance (spec §6.4: 7-point slider, 1–7)
+  // SESSION 9: Validate risk tolerance (spec §6.4: continuous slider, 1.0–7.0)
   if (allowed.risk_tolerance !== undefined) {
     const rt = Number(allowed.risk_tolerance);
-    if (!Number.isInteger(rt) || rt < RISK_MIN || rt > RISK_MAX) {
+    if (!Number.isFinite(rt) || rt < RISK_MIN || rt > RISK_MAX) {
       res.status(400).json({
-        error: `Invalid risk_tolerance. Must be an integer from ${RISK_MIN} to ${RISK_MAX}.`,
+        error: `Invalid risk_tolerance. Must be a number from ${RISK_MIN}.0 to ${RISK_MAX}.0.`,
       });
       return;
     }
-    allowed.risk_tolerance = rt;
+    // Round to one decimal to prevent excessive precision from client
+    allowed.risk_tolerance = Math.round(rt * 10) / 10;
   }
 
   const { data, error } = await supaUpdate<UserProfileRow>(
@@ -410,10 +411,10 @@ router.post('/api/profile/setup', requireAuth, async (req: Request, res: Respons
     return;
   }
 
-  // SESSION 1: 7-point risk scale (spec §6.4)
-  const rt = Number(riskTolerance);
-  if (!Number.isInteger(rt) || rt < RISK_MIN || rt > RISK_MAX) {
-    res.status(400).json({ error: `Invalid riskTolerance. Must be an integer from ${RISK_MIN} to ${RISK_MAX}.` });
+  // SESSION 9: Continuous risk scale (spec §6.4: 1.0–7.0)
+  const rt = Math.round(Number(riskTolerance) * 10) / 10;
+  if (!Number.isFinite(rt) || rt < RISK_MIN || rt > RISK_MAX) {
+    res.status(400).json({ error: `Invalid riskTolerance. Must be a number from ${RISK_MIN}.0 to ${RISK_MAX}.0.` });
     return;
   }
 

@@ -327,7 +327,8 @@ export interface UserProfileRow {
   weight_positioning: number;
   weight_momentum: number;
 
-  /** Risk tolerance: integer 1 (Very Conservative) to 7 (Very Aggressive) — spec §3.4, §6.4 */
+  /** Risk tolerance: continuous 1.0 (Very Conservative) to 7.0 (Very Aggressive) — spec §3.4, §6.4.
+   *  Supports fractional values (e.g. 5.3). k parameter interpolated between anchor points. */
   risk_tolerance: number;
 
   /** Setup wizard tracking */
@@ -374,6 +375,19 @@ export interface BriefDeliveryRow {
   status: 'pending' | 'sent' | 'failed' | 'bounced';
   error_message: string | null;
   sent_at: string | null;
+  created_at: string;
+}
+
+/** Row in the `allocation_history` table (§7.7) */
+export interface AllocationHistoryRow {
+  id: string;
+  user_id: string;
+  pipeline_run_id: string;
+  brief_id: string | null;
+  /** User's risk level at time of allocation (continuous 1.0–7.0) */
+  risk_tolerance: number;
+  /** Array of { ticker, pct, tier, tierColor } */
+  allocations: Array<{ ticker: string; pct: number; tier: string; tierColor: string }>;
   created_at: string;
 }
 

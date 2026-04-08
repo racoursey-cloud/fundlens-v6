@@ -71,10 +71,38 @@ function median(arr: number[]): number {
     : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/** Clamp risk tolerance to valid 1–7 range */
+/** Clamp risk tolerance to valid 1.0–7.0 range (continuous, §3.4) */
 function clampRisk(rt: number): number {
   if (!Number.isFinite(rt)) return DEFAULT_RISK_LEVEL;
-  return Math.min(RISK_MAX, Math.max(RISK_MIN, Math.round(rt)));
+  return Math.min(RISK_MAX, Math.max(RISK_MIN, rt));
+}
+
+/**
+ * Interpolate k parameter between KELLY_RISK_TABLE anchor points (§3.4).
+ *
+ * For integer values, returns the exact k from the table.
+ * For fractional values (e.g. 5.3), linearly interpolates:
+ *   k = k_table[floor] + (k_table[ceil] - k_table[floor]) × fraction
+ *
+ * Example: rt=5.3 → k = 1.20 + (1.50 - 1.20) × 0.3 = 1.29
+ */
+function interpolateK(rt: number): number {
+  const floorLevel = Math.floor(rt);
+  const ceilLevel = Math.ceil(rt);
+
+  // Build a lookup from the table (levels 1–7) — use number keys for flexibility
+  const kByLevel = new Map<number, number>(KELLY_RISK_TABLE.map(r => [r.level as number, r.k as number]));
+
+  if (floorLevel === ceilLevel) {
+    // Exact integer — return table value directly
+    return kByLevel.get(floorLevel) ?? 0.95;
+  }
+
+  const kFloor = kByLevel.get(floorLevel) ?? 0.95;
+  const kCeil = kByLevel.get(ceilLevel) ?? 0.95;
+  const fraction = rt - floorLevel;
+
+  return kFloor + (kCeil - kFloor) * fraction;
 }
 
 /** Get tier from modified z-score (§6.3) */
@@ -154,9 +182,8 @@ export function computeAllocations(
   });
 
   // ── STEP 3 — Exponential Allocation Curve (§3.4) ─────────────────────
-  // k parameter from the 7-point Kelly risk table
-  const kellyEntry = KELLY_RISK_TABLE.find(r => r.level === rt);
-  const k = kellyEntry?.k ?? 0.95; // default to Moderate if not found
+  // k parameter interpolated between Kelly risk table anchor points (continuous)
+  const k = interpolateK(rt);
 
   const eligible = withZ.filter(f => !f.excluded);
 

@@ -205,18 +205,30 @@ function FactorSlider({ label, shortLabel, value, onChange }: FactorSliderProps)
   );
 }
 
-// ─── Risk Toggle ───────────────────────────────────────────────────────────
+// ─── Risk Slider (Continuous, §3.4 + §6.4) ────────────────────────────────
 
-const RISK_LABEL: Record<number, string> = {
-  1: 'Very Conservative', 2: 'Conservative', 3: 'Mod. Conservative',
-  4: 'Mod. Low', 5: 'Moderate', 6: 'Mod. High',
-  7: 'Mod. Aggressive', 8: 'Aggressive', 9: 'Very Aggressive',
-};
+/** 7 anchor point labels from KELLY_RISK_TABLE (§3.4) */
+const RISK_ANCHORS: Array<{ level: number; label: string }> = [
+  { level: 1, label: 'Very Conservative' },
+  { level: 2, label: 'Conservative' },
+  { level: 3, label: 'Mod. Conservative' },
+  { level: 4, label: 'Moderate' },
+  { level: 5, label: 'Mod. Aggressive' },
+  { level: 6, label: 'Aggressive' },
+  { level: 7, label: 'Very Aggressive' },
+];
+
+/** Get the nearest anchor label for a continuous risk value */
+function nearestRiskLabel(value: number): string {
+  const nearest = Math.round(Math.min(7, Math.max(1, value)));
+  return RISK_ANCHORS.find(a => a.level === nearest)?.label ?? 'Moderate';
+}
 
 function RiskSlider({ value, onChange }: {
   value: number;
   onChange: (val: number) => void;
 }) {
+  const fillPct = ((value - 1) / 6) * 100;
   return (
     <div>
       <div style={{
@@ -224,28 +236,28 @@ function RiskSlider({ value, onChange }: {
         marginBottom: '6px',
       }}>
         <span style={{ fontSize: '13px', fontWeight: 500, color: theme.colors.text }}>
-          {RISK_LABEL[value] || 'Moderate'}
+          {nearestRiskLabel(value)}
         </span>
         <span style={{
           fontSize: '13px', fontFamily: theme.fonts.mono,
           color: theme.colors.accentBlue, fontWeight: 600,
         }}>
-          {value}/9
+          {value.toFixed(1)}/7
         </span>
       </div>
       <input
         type="range"
         min={1}
-        max={9}
-        step={1}
+        max={7}
+        step={0.1}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => onChange(Math.round(Number(e.target.value) * 10) / 10)}
         style={{
           width: '100%',
           height: '4px',
           appearance: 'none',
           WebkitAppearance: 'none',
-          background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${(value - 1) / 8 * 100}%, ${theme.colors.border} ${(value - 1) / 8 * 100}%, ${theme.colors.border} 100%)`,
+          background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${fillPct}%, ${theme.colors.border} ${fillPct}%, ${theme.colors.border} 100%)`,
           borderRadius: '2px',
           outline: 'none',
           cursor: 'pointer',
@@ -255,8 +267,8 @@ function RiskSlider({ value, onChange }: {
         display: 'flex', justifyContent: 'space-between', marginTop: '4px',
         fontSize: '10px', color: theme.colors.textDim,
       }}>
-        <span>Safe</span>
-        <span>Aggressive</span>
+        <span>Very Conservative</span>
+        <span>Very Aggressive</span>
       </div>
     </div>
   );
@@ -291,7 +303,7 @@ export function Portfolio() {
   const [weights, setWeights] = useState({
     cost: 0.25, quality: 0.30, positioning: 0.25, momentum: 0.20,
   });
-  const [risk, setRisk] = useState<number>(5);
+  const [risk, setRisk] = useState<number>(4.0);
 
   useEffect(() => {
     Promise.all([fetchScores(), fetchProfile()]).then(([scoresRes, profileRes]) => {

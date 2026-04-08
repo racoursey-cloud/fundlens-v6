@@ -28,7 +28,7 @@ import { CLAUDE, BRIEF, KELLY_RISK_TABLE, RISK_MAX, MONEY_MARKET_TICKERS } from 
 import { computeCompositeFromZScores } from './scoring.js';
 import type { FundZScores } from './scoring.js';
 import { delay } from './types.js';
-import type { UserProfileRow, FundScoresRow, InvestmentBriefRow } from './types.js';
+import type { UserProfileRow, FundScoresRow, InvestmentBriefRow, AllocationHistoryRow } from './types.js';
 import type { FactorWeights } from './scoring.js';
 import type { MacroThesis, SectorPreference } from './thesis.js';
 import { computeAllocations } from './allocation.js';
@@ -37,10 +37,107 @@ import { supaFetch, supaSelect, supaInsert } from './supabase.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-/** Human-readable label for risk tolerance 1-7 (spec §3.4, §6.4) */
+/** Human-readable label for risk tolerance 1.0–7.0 (spec §3.4, §6.4).
+ *  For exact integers, returns the anchor label. For fractional values,
+ *  returns the nearest anchor label (rounds to nearest integer). */
 function riskLabel(rt: number): string {
-  const entry = KELLY_RISK_TABLE.find(r => r.level === rt);
+  const nearest = Math.round(Math.min(RISK_MAX, Math.max(1, rt)));
+  const entry = KELLY_RISK_TABLE.find(r => r.level === nearest);
   return entry?.label ?? 'Moderate';
+}
+
+/**
+ * Fetch the user's most recent prior allocation from allocation_history (§7.7).
+ * Returns null if no prior allocation exists (first-time user).
+ */
+async function fetchPreviousAllocation(
+  userId: string
+): Promise<AllocationHistoryRow | null> {
+  const { data } = await supaFetch<AllocationHistoryRow>('allocation_history', {
+    params: {
+      user_id: `eq.${userId}`,
+      order: 'created_at.desc',
+      limit: '1',
+    },
+    single: true,
+  });
+  return data ?? null;
+}
+
+/**
+ * Persist the current allocation to allocation_history (§7.7).
+ * Called after each Brief generation so future Briefs can compute deltas.
+ */
+async function persistAllocationHistory(
+  userId: string,
+  pipelineRunId: string,
+  briefId: string | null,
+  riskTolerance: number,
+  allocation: Array<{ ticker: string; percentage: number; tier?: string; tierColor?: string }>
+): Promise<void> {
+  const allocations = allocation.map(a => ({
+    ticker: a.ticker,
+    pct: a.percentage,
+    tier: a.tier ?? '',
+    tierColor: a.tierColor ?? '',
+  }));
+
+  const { error } = await supaInsert('allocation_history', {
+    user_id: userId,
+    pipeline_run_id: pipelineRunId,
+    brief_id: briefId,
+    risk_tolerance: riskTolerance,
+    allocations,
+  });
+
+  if (error) {
+    console.error(`[brief-engine] Failed to persist allocation history: ${error}`);
+  } else {
+    console.log(`[brief-engine] Allocation history saved for user ${userId}`);
+  }
+}
+
+/**
+ * Compute allocation changes between current and previous allocation (§7.7).
+ * Returns null if no previous allocation exists.
+ */
+function computeAllocationDelta(
+  current: Array<{ ticker: string; name: string; percentage: number }>,
+  previous: AllocationHistoryRow | null
+): AllocationDelta[] | null {
+  if (!previous) return null;
+
+  const prevMap = new Map(
+    (previous.allocations || []).map(a => [a.ticker, a.pct])
+  );
+  const currMap = new Map(
+    current.map(a => [a.ticker, a.percentage])
+  );
+  const nameMap = new Map(
+    current.map(a => [a.ticker, a.name])
+  );
+
+  const deltas: AllocationDelta[] = [];
+
+  // New or changed positions
+  for (const { ticker, name, percentage } of current) {
+    const prevPct = prevMap.get(ticker);
+    if (prevPct === undefined) {
+      deltas.push({ ticker, name, change: 'new', currentPct: percentage, previousPct: 0 });
+    } else if (Math.abs(percentage - prevPct) >= 1) {
+      // Only report changes of 1% or more (below that is rounding noise)
+      deltas.push({ ticker, name, change: 'changed', currentPct: percentage, previousPct: prevPct });
+    }
+  }
+
+  // Removed positions (were in previous, not in current)
+  for (const [ticker, prevPct] of prevMap) {
+    if (!currMap.has(ticker)) {
+      deltas.push({ ticker, name: ticker, change: 'removed', currentPct: 0, previousPct: prevPct });
+    }
+  }
+
+  return deltas.length > 0 ? deltas : null;
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -114,6 +211,18 @@ interface FundBriefData {
 }
 
 /** Complete data packet sent to Claude for Brief generation */
+/** Change in a single fund's allocation between briefs */
+interface AllocationDelta {
+  ticker: string;
+  name: string;
+  /** 'new' = added this month, 'removed' = dropped, 'changed' = weight changed */
+  change: 'new' | 'removed' | 'changed';
+  /** Current allocation % (0 if removed) */
+  currentPct: number;
+  /** Previous allocation % (0 if new) */
+  previousPct: number;
+}
+
 export interface BriefDataPacket {
   /** User profile summary (no model internals) */
   user: {
@@ -135,6 +244,8 @@ export interface BriefDataPacket {
     percentage: number;
     reason: string;
   }>;
+  /** Changes since last allocation (null if no prior allocation exists) */
+  allocationDelta: AllocationDelta[] | null;
   /** Generation metadata */
   generatedAt: string;
   pipelineRunId: string;
@@ -532,9 +643,13 @@ export async function assembleDataPacket(
     profile.risk_tolerance
   );
 
+  // Fetch previous allocation for "What Changed" delta (§7.7)
+  const previousAllocation = await fetchPreviousAllocation(userId);
+  const allocationDelta = computeAllocationDelta(allocation, previousAllocation);
+
   return {
     user: {
-      riskTolerance: `${riskLabel(profile.risk_tolerance)} (${profile.risk_tolerance}/${RISK_MAX})`,
+      riskTolerance: `${riskLabel(profile.risk_tolerance)} (${profile.risk_tolerance.toFixed(1)}/${RISK_MAX})`,
       profileSummary: profileSummary(profile),
     },
     macro: {
@@ -544,6 +659,7 @@ export async function assembleDataPacket(
     },
     funds: fundsData,
     allocation,
+    allocationDelta,
     generatedAt: new Date().toISOString(),
     pipelineRunId,
   };
@@ -585,7 +701,7 @@ function formatHoldingForPrompt(h: HoldingFinancials): string {
  * names, no model internals. Claude forms its own narrative from the numbers.
  */
 function buildUserPrompt(dataPacket: BriefDataPacket): string {
-  const { user, macro, funds, allocation } = dataPacket;
+  const { user, macro, funds, allocation, allocationDelta } = dataPacket;
 
   // Separate allocated funds from non-allocated for emphasis ordering
   const allocatedTickers = new Set(allocation.map(a => a.ticker));
@@ -603,7 +719,28 @@ These are the funds and percentages to recommend. Lead the Brief with this alloc
 ${allocation.map(a =>
   `- ${a.name} (${a.ticker}): ${a.percentage}% — ${a.reason}`
 ).join('\n')}
+`;
 
+  // Include allocation changes for "What Happened" section (§7.7)
+  if (allocationDelta && allocationDelta.length > 0) {
+    prompt += `
+## Portfolio Changes Since Last Brief
+Use these changes in Section 2 ("What Happened") to explain what moved and why.
+${allocationDelta.map(d => {
+  if (d.change === 'new') return `- NEW: ${d.name} (${d.ticker}) added at ${d.currentPct}%`;
+  if (d.change === 'removed') return `- REMOVED: ${d.ticker} (was ${d.previousPct}%)`;
+  const dir = d.currentPct > d.previousPct ? 'increased' : 'decreased';
+  return `- CHANGED: ${d.name} (${d.ticker}) ${dir} from ${d.previousPct}% to ${d.currentPct}%`;
+}).join('\n')}
+`;
+  } else if (allocationDelta === null) {
+    prompt += `
+## Portfolio Changes Since Last Brief
+This is the user's first Brief — no prior allocation exists. Welcome them.
+`;
+  }
+
+  prompt += `
 ## Macro Environment
 ${macro.narrative}
 
@@ -776,6 +913,26 @@ export async function generateBrief(
   if (error || !savedBrief) {
     console.error(`[brief-engine] Failed to save Brief: ${error}`);
     return null;
+  }
+
+  // ── Step 6: Persist allocation to history (§7.7) ──
+  // Fetch user profile risk_tolerance for the history record
+  const { data: profileForHistory } = await supaFetch<UserProfileRow>('user_profiles', {
+    params: { id: `eq.${userId}` },
+    single: true,
+  });
+
+  if (profileForHistory) {
+    await persistAllocationHistory(
+      userId,
+      pipelineRunId,
+      savedBrief.id,
+      profileForHistory.risk_tolerance,
+      dataPacket.allocation.map(a => ({
+        ticker: a.ticker,
+        percentage: a.percentage,
+      }))
+    );
   }
 
   console.log(

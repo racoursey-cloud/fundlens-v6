@@ -959,7 +959,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 7, 2026 (after Session 7)
+**Last updated:** April 7, 2026 (after Session 9)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1026,6 +1026,8 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Money market global skip | §2.7 | pipeline.ts, constants.ts, allocation.ts | FDRXX/ADAXX fixed composite 50, skip all factor scoring, MM tier — Session 6 |
 | Portfolio: Invalid Date fix | §6 | Portfolio.tsx | Null/invalid timestamp guard for pipeline run display — Session 6 |
 | Tier badges: end-to-end wiring | §6.3 | scoring.ts, persist.ts, types.ts, api.ts, Portfolio.tsx, FundDetail.tsx | MAD z-score → tier computed in scoring engine, persisted to fund_scores, rendered in fund table + detail sidebar. Client-side recomputation on slider change. — Session 7 |
+| Continuous risk slider with interpolation | §3.4, §6.4 | allocation.ts, routes.ts, Portfolio.tsx, types.ts | `interpolateK()` linearly interpolates k between anchor points. Float risk_tolerance (1.0–7.0) throughout stack. — Session 9 |
+| Allocation history persistence | §7.7 | brief-engine.ts, types.ts | `allocation_history` table, `persistAllocationHistory()` after each Brief, `fetchPreviousAllocation()` + `computeAllocationDelta()` for "What Changed" delta. — Session 9 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -1092,15 +1094,15 @@ Status: Planned for Session 9 of the build roadmap.
 
 **MISSING-10: Investment Brief Redesign — 4-Section Structure + Advisor Voice (§7.2–7.9)**
 Spec: Complete rewrite of §7. 4-section brief ("Where Your Money Should Go" → "What Happened" → "What We're Watching" → "Where We Stand"). New voice guidelines (knowledgeable buddy, not research analyst). "Behind the curtain" rule prohibiting model language. Raw data feed to Claude (not scores). Allocation persistence for "What Changed" delta.
-Status: **PARTIALLY COMPLETE (Session 8).** editorial-policy.md rewritten (v2.0 — advisor voice, 4-section W structure, behind-the-curtain rule). brief-engine.ts rewritten (raw data feed, no scores/factor names in prompt, natural-language allocation reasons). Remaining: allocation_history table (→ Session 9), Briefs.tsx client redesign (→ Session 11).
+Status: **PARTIALLY COMPLETE (Session 8 + Session 9).** editorial-policy.md rewritten (v2.0 — advisor voice, 4-section W structure, behind-the-curtain rule). brief-engine.ts rewritten (raw data feed, no scores/factor names in prompt, natural-language allocation reasons). ✅ allocation_history table and delta computation added Session 9. Remaining: Briefs.tsx client redesign (→ Session 11).
 
-**MISSING-11: Continuous Risk Slider with Interpolation (§3.4, §6.4)**
+**~~MISSING-11: Continuous Risk Slider with Interpolation (§3.4, §6.4)~~ — RESOLVED (Session 9)**
 Spec: Risk slider accepts 1.0–7.0 continuous values. k parameter interpolated between anchor points. risk_tolerance stored as FLOAT.
-Status: Spec written (Session 7). Implementation pending: allocation.ts interpolation logic, routes.ts validation update (integer → float), Portfolio.tsx slider update, user_profiles column type change (integer → float).
+Status: ✅ Complete. `interpolateK()` in allocation.ts implements linear interpolation between anchor points. `clampRisk()` no longer rounds to integer. routes.ts validation accepts floats (1.0–7.0), rounds to one decimal. Portfolio.tsx slider updated: min=1, max=7, step=0.1, shows nearest anchor label + decimal value. types.ts doc comment updated. Migration changes user_profiles.risk_tolerance to DOUBLE PRECISION with CHECK constraint.
 
-**MISSING-12: Allocation History Persistence (§7.7)**
+**~~MISSING-12: Allocation History Persistence (§7.7)~~ — RESOLVED (Session 9)**
 Spec: allocation_history table stores each brief's recommended allocation for "What Changed" delta and future performance tracking.
-Status: Spec written (Session 7). Implementation pending: migration SQL, persist.ts update, brief-engine.ts integration.
+Status: ✅ Complete. Migration creates `allocation_history` table with RLS policies. `persistAllocationHistory()` called after each Brief save in generateBrief(). `fetchPreviousAllocation()` queries most recent prior allocation. `computeAllocationDelta()` computes new/removed/changed positions (1% threshold). Delta passed to Claude prompt in "Portfolio Changes Since Last Brief" section for "What Happened" narrative.
 
 **MISSING-13: Pipeline Performance — 9 min → <3 min**
 Spec: v6 pipeline takes 9 minutes vs v5.1's 2 minutes. Root causes identified: 500ms delays (v5.1 uses 200-300ms), no Supabase caching layer (v5.1 batch-queries cache before API calls), no Claude classification batching (v5.1 batches 25 holdings per call).
@@ -1130,7 +1132,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 6 | Thesis + Allocation + MM Skip | CRITICAL-4 (1-10 scale), CRITICAL-5 (Kelly allocation), MISSING-4 (FRED commodities), MISSING-5 (sector priors), MISSING-6 (money market skip) | **DONE** |
 | 7 | Tier Badges + Brief/Slider Spec | §6.3 tier badges E2E. §7 brief redesign (4-section, advisor voice). §3.4 continuous slider. §7.7 allocation persistence. Spec-only for MISSING-10 through MISSING-13. | **DONE** |
 | 8 | Brief Engine Redesign | MISSING-10: Rewrite editorial-policy.md + brief-engine.ts prompt. Raw data feed. 4-section output. Advisor voice. | **DONE** |
-| 9 | Allocation Persistence + Continuous Slider | MISSING-11 + MISSING-12: allocation_history table, risk slider float, interpolation | |
+| 9 | Allocation Persistence + Continuous Slider | MISSING-11 + MISSING-12: allocation_history table, risk slider float, interpolation | **DONE** |
 | 10 | Pipeline Performance | MISSING-13: Reduce delays, add Supabase caching, batch Claude classification. Target <3 min. | |
 | 11 | v5.1 UI Port | Port v5.1 layout/UX to v6 React client. All 4 factors visible. Sector scorecard. Inline Brief rendering. | |
 | 12 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
@@ -1552,6 +1554,45 @@ File: `migrations/session7_add_tier_columns.sql`
 3. **Zero regressions.** `tsc --noEmit` clean on both server and client. No external API signature changes — `generateBrief()` and `assembleDataPacket()` retain their existing signatures.
 
 **Files modified:** `src/prompts/editorial-policy.md`, `src/engine/brief-engine.ts`, `FUNDLENS_SPEC.md` (§9.3 MISSING-10 status, §9.5 roadmap, §10 changelog)
+
+### April 7, 2026 — Session 9: Continuous Risk Slider (MISSING-11) + Allocation History (MISSING-12)
+
+**Goal:** Make the risk slider continuous (1.0–7.0 with fractional values) and persist allocation history for month-over-month delta tracking in Briefs.
+
+**Gaps addressed:** MISSING-11, MISSING-12. Also fixed Portfolio.tsx risk slider range from incorrect 1–9 to correct 1–7.
+
+**1. Continuous risk slider with k-parameter interpolation (MISSING-11).**
+Files: `allocation.ts`, `routes.ts`, `Portfolio.tsx`, `types.ts`, `brief-engine.ts`
+- `clampRisk()` no longer calls `Math.round()` — float values pass through.
+- New `interpolateK()` function: linear interpolation between KELLY_RISK_TABLE anchor points. `floor_level = Math.floor(rt)`, `ceil_level = Math.ceil(rt)`, `k = k_table[floor] + (k_table[ceil] - k_table[floor]) × fraction`. Example: rt=5.3 → k = 1.20 + (1.50 - 1.20) × 0.3 = 1.29.
+- `computeAllocations()` now uses `interpolateK(rt)` instead of exact table lookup.
+- routes.ts: Both PUT /api/profile and POST /api/profile/setup validation changed from `Number.isInteger(rt)` to `Number.isFinite(rt)`. Values rounded to one decimal server-side.
+- Portfolio.tsx: RiskSlider component changed from min=1/max=9/step=1 to min=1/max=7/step=0.1. Display shows nearest anchor label + decimal value (e.g. "Moderate-Aggressive 5.3/7"). Default risk state changed from 5 to 4.0 (spec §6.4 default).
+- types.ts: UserProfileRow.risk_tolerance doc comment updated from "integer" to "continuous 1.0–7.0".
+- brief-engine.ts: `riskLabel()` updated to find nearest anchor label via `Math.round()` for float values. Risk tolerance display in data packet uses `.toFixed(1)`.
+
+**2. Allocation history persistence (MISSING-12).**
+Files: `brief-engine.ts`, `types.ts`
+- New `AllocationHistoryRow` interface in types.ts matching §7.7 schema.
+- `fetchPreviousAllocation()`: queries `allocation_history` for user's most recent prior entry.
+- `persistAllocationHistory()`: saves current allocation after each Brief generation in `generateBrief()` (Step 6, after saving investment_briefs row).
+- `computeAllocationDelta()`: compares current vs. previous allocation. Identifies new positions, removed positions, and weight changes (≥1% threshold to filter rounding noise).
+- `BriefDataPacket` extended with `allocationDelta: AllocationDelta[] | null`.
+- `assembleDataPacket()` now fetches previous allocation and computes delta.
+- `buildUserPrompt()` includes "Portfolio Changes Since Last Brief" section in prompt with NEW/REMOVED/CHANGED labels so Claude can write the "What Happened" narrative with specific allocation changes.
+
+**3. Migration SQL.**
+File: `migrations/session9_continuous_risk_and_alloc_history.sql`
+- Part 1: `ALTER TABLE user_profiles ALTER COLUMN risk_tolerance TYPE DOUBLE PRECISION` with CHECK constraint (1.0–7.0).
+- Part 2: `CREATE TABLE allocation_history` with UUID PK, user_id FK, pipeline_run_id, brief_id (nullable), risk_tolerance, allocations JSONB. Indexes on (user_id, created_at DESC) and (pipeline_run_id). RLS enabled with select policy for own rows.
+
+**Bug fix — Portfolio.tsx risk slider range.** The slider had min=1/max=9 (leftover from v5.1's 1–9 scale), but routes.ts has validated 1–7 since Session 1. Users on the old slider could see values 8–9 that would be rejected by the API. Now correctly 1–7.
+
+**Files created:** `migrations/session9_continuous_risk_and_alloc_history.sql`
+**Files changed:** `allocation.ts`, `routes.ts`, `Portfolio.tsx`, `types.ts`, `brief-engine.ts`, `FUNDLENS_SPEC.md`
+**Resolved:** MISSING-11 (continuous risk slider), MISSING-12 (allocation history persistence)
+**Database migration required:** Run `migrations/session9_continuous_risk_and_alloc_history.sql` in Supabase SQL Editor before deploying.
+**Verification:** `tsc --noEmit` passes clean on both server and client.
 
 ---
 
