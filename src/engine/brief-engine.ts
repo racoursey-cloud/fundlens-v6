@@ -1,43 +1,39 @@
 /**
- * FundLens v6 — Investment Brief Engine
+ * FundLens v6 — Investment Brief Engine (Session 8 Rewrite)
  *
- * Generates personalized Investment Briefs for each user. This is the
- * core of what makes FundLens valuable — a monthly research document
- * that tells each user why their funds matter (or don't) given their
- * specific preferences and the current market environment.
+ * Generates personalized Investment Briefs for each user. The brief reads
+ * like advice from a knowledgeable friend — never like output from a model.
  *
  * Two-layer personalization (Master Reference §7):
  *
- *   Layer 1 — Data Packet:
- *     Before Claude writes a word, we assemble a structured factual
- *     dossier for each user. Same underlying data, but with pre-computed
- *     "relevance tags" that highlight which data points matter most to
- *     THIS user based on their risk tolerance and factor weights.
+ *   Layer 1 — Raw Data Packet:
+ *     Before Claude writes a word, we assemble actual financial data:
+ *     expense ratios, company margins, returns, sector weights. NO scores,
+ *     NO factor names, NO model internals. Claude forms its own narrative
+ *     from the raw numbers.
  *
  *   Layer 2 — Editorial Policy:
- *     A versioned prompt file (editorial-policy.md) that governs how
- *     Claude writes the Brief. Every claim must cite a metric. Material
- *     negatives are never hidden. Personalization selects which truths
- *     to emphasize, never alters the truth.
+ *     A versioned prompt file (editorial-policy.md) that governs voice,
+ *     structure, and the "behind the curtain" rule — model mechanics
+ *     never leak into the Brief.
  *
  * MANDATORY: Claude API calls are sequential with 1.2s delays.
  * NEVER Promise.all() — has crashed production 5+ times.
  *
- * Session 6 deliverable. Destination: src/engine/brief-engine.ts
- * References: Master Reference §7 (The Investment Brief).
+ * Session 8 deliverable. References: Master Reference §7.1–§7.9.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { CLAUDE, BRIEF, DEFAULT_FACTOR_WEIGHTS, KELLY_RISK_TABLE, RISK_MAX, MONEY_MARKET_TICKERS } from './constants.js';
+import { CLAUDE, BRIEF, KELLY_RISK_TABLE, RISK_MAX, MONEY_MARKET_TICKERS } from './constants.js';
 import { computeCompositeFromZScores } from './scoring.js';
 import type { FundZScores } from './scoring.js';
 import { delay } from './types.js';
 import type { UserProfileRow, FundScoresRow, InvestmentBriefRow } from './types.js';
-import type { FundCompositeScore, FactorWeights } from './scoring.js';
+import type { FactorWeights } from './scoring.js';
 import type { MacroThesis, SectorPreference } from './thesis.js';
 import { computeAllocations } from './allocation.js';
 import type { AllocationInput } from './allocation.js';
-import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
+import { supaFetch, supaSelect, supaInsert } from './supabase.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -49,75 +45,90 @@ function riskLabel(rt: number): string {
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-/** Relevance tag attached to a fund in the data packet */
-interface RelevanceTag {
-  /** What the tag highlights (e.g. "Low expense ratio", "Precious metals exposure") */
-  label: string;
-  /** Why it matters for this user's profile */
-  reason: string;
-  /** The underlying data point */
-  metric: string;
+/** Key financial metrics for a single holding (extracted from factor_details) */
+interface HoldingFinancials {
+  name: string;
+  ticker: string | null;
+  /** Approximate weight in the fund (% of NAV) */
+  weightPct: number;
+  sector: string | null;
+  /** Key profitability metrics (actual values, not scores) */
+  profitability: {
+    grossMargin: number | null;
+    operatingMargin: number | null;
+    netMargin: number | null;
+    returnOnEquity: number | null;
+    returnOnAssets: number | null;
+  };
+  /** Balance sheet health */
+  balanceSheet: {
+    debtToEquity: number | null;
+    currentRatio: number | null;
+    interestCoverage: number | null;
+  };
+  /** Cash flow metrics */
+  cashFlow: {
+    freeCashFlowPerShare: number | null;
+    operatingCashFlowPerShare: number | null;
+  };
+  /** Valuation multiples */
+  valuation: {
+    peRatio: number | null;
+    priceToBook: number | null;
+    priceToSales: number | null;
+  };
 }
 
-/** Per-fund data assembled for the Brief prompt */
+/** Fund return data (extracted from factor_details) */
+interface FundReturns {
+  threeMonth: number | null;
+  sixMonth: number | null;
+  nineMonth: number | null;
+  twelveMonth: number | null;
+}
+
+/** Per-fund data assembled for the Brief prompt — raw data only, NO scores */
 interface FundBriefData {
   ticker: string;
   name: string;
+  /** Expense ratio as decimal (e.g. 0.0003 = 0.03%) */
   expenseRatio: number | null;
-  /** Raw factor scores (0-100) */
-  scores: {
-    costEfficiency: number;
-    holdingsQuality: number;
-    positioning: number;
-    momentum: number;
-  };
-  /** Composite score using THIS user's weights */
-  userComposite: number;
-  /** Rank among all funds using this user's weights */
-  userRank: number;
-  /** Composite score using default weights (for reference) */
-  defaultComposite: number;
-  /** Top holdings with sectors and weights */
-  topHoldings: Array<{
-    name: string;
-    ticker: string | null;
-    sector: string | null;
-    weight: number;
-  }>;
+  /** Top holdings with actual financial metrics */
+  holdingFinancials: HoldingFinancials[];
+  /** Fund-level return data */
+  returns: FundReturns;
   /** Sector exposure breakdown */
   sectorExposure: Array<{
     sector: string;
+    /** Weight as decimal (e.g. 0.35 = 35%) */
     weight: number;
   }>;
-  /** Factor-level detail (from scoring engine) */
-  factorDetails: Record<string, unknown>;
-  /** Pre-computed relevance tags for this user */
-  relevanceTags: RelevanceTag[];
+  /** Coverage: what fraction of the fund's holdings had financial data */
+  dataCoverage: number;
+  /** Whether this is a bond-heavy fund */
+  isBondFund: boolean;
+  /** Internal only — used for allocation computation, NOT sent to Claude */
+  _composite: number;
+  /** Internal only — used for ordering */
+  _rank: number;
 }
 
 /** Complete data packet sent to Claude for Brief generation */
 export interface BriefDataPacket {
-  /** User profile summary */
+  /** User profile summary (no model internals) */
   user: {
-    riskTolerance: string; // e.g. "Moderate (5/9)"
-    factorWeights: {
-      costEfficiency: number;
-      holdingsQuality: number;
-      positioning: number;
-      momentum: number;
-    };
-    /** What this user's profile emphasizes */
+    riskTolerance: string;
     profileSummary: string;
   };
-  /** Current macro thesis */
+  /** Current macro environment */
   macro: {
     narrative: string;
     sectorPreferences: SectorPreference[];
     keyThemes: string[];
   };
-  /** Per-fund data with relevance tags */
+  /** Per-fund raw data */
   funds: FundBriefData[];
-  /** Recommended allocation for this user */
+  /** Recommended allocation with natural-language reasoning */
   allocation: Array<{
     ticker: string;
     name: string;
@@ -139,222 +150,198 @@ export interface BriefGenerationResult {
   model: string;
 }
 
-// ─── Data Packet Assembly ───────────────────────────────────────────────────
+// ─── Raw Data Extraction ───────────────────────────────────────────────────
 
 /**
- * Compute relevance tags for a fund based on the user's profile.
+ * Extract actual financial ratio values from a holding's quality dimensions.
  *
- * This is Layer 1 personalization — selecting which truths to emphasize.
- * A conservative user and an aggressive user see the same fund data, but
- * different aspects are highlighted as relevant to THEIR posture.
+ * The factor_details JSON contains per-holding dimension breakdowns with
+ * individual ratio scores. We pull the RAW VALUES (not scores) to feed Claude.
  */
-function computeRelevanceTags(
-  fund: {
+function extractRatioValue(
+  ratios: Array<{ name: string; value: number | null }> | undefined,
+  name: string
+): number | null {
+  if (!ratios) return null;
+  const found = ratios.find(r => r.name === name);
+  return found?.value ?? null;
+}
+
+function extractHoldingFinancials(
+  holdingScore: {
     ticker: string;
-    scores: FundBriefData['scores'];
-    expenseRatio: number | null;
-    sectorExposure: Array<{ sector: string; weight: number }>;
-    factorDetails: Record<string, unknown>;
+    name: string;
+    dimensions?: {
+      profitability?: { ratios?: Array<{ name: string; value: number | null }> };
+      balanceSheet?: { ratios?: Array<{ name: string; value: number | null }> };
+      cashFlow?: { ratios?: Array<{ name: string; value: number | null }> };
+      valuation?: { ratios?: Array<{ name: string; value: number | null }> };
+    };
   },
-  userProfile: {
-    riskTolerance: number;
-    weights: FactorWeights;
-  },
-  thesis: MacroThesis
-): RelevanceTag[] {
-  const tags: RelevanceTag[] = [];
-  const { riskTolerance, weights } = userProfile;
+  weight: number,
+  sector: string | null
+): HoldingFinancials {
+  const dims = holdingScore.dimensions;
 
-  // ── Cost Efficiency tags ──
-  if (weights.costEfficiency >= 0.25) {
-    if (fund.scores.costEfficiency >= 80) {
-      tags.push({
-        label: 'Low cost leader',
-        reason: 'Cost Efficiency is weighted heavily in your profile',
-        metric: `Cost Efficiency score: ${fund.scores.costEfficiency}/100` +
-          (fund.expenseRatio != null ? `, expense ratio: ${(fund.expenseRatio * 100).toFixed(2)}%` : ''),
-      });
-    }
-    if (fund.scores.costEfficiency <= 30) {
-      tags.push({
-        label: 'High cost concern',
-        reason: 'You weight Cost Efficiency highly, and this fund scores poorly',
-        metric: `Cost Efficiency score: ${fund.scores.costEfficiency}/100`,
-      });
-    }
-  }
-
-  // ── Holdings Quality tags ──
-  if (weights.holdingsQuality >= 0.25) {
-    if (fund.scores.holdingsQuality >= 75) {
-      tags.push({
-        label: 'Strong fundamentals',
-        reason: 'Holdings Quality aligns with your emphasis on company health',
-        metric: `Holdings Quality score: ${fund.scores.holdingsQuality}/100`,
-      });
-    }
-    if (fund.scores.holdingsQuality <= 35) {
-      tags.push({
-        label: 'Weak fundamentals',
-        reason: 'You prioritize holdings quality, and this fund\'s companies show weakness',
-        metric: `Holdings Quality score: ${fund.scores.holdingsQuality}/100`,
-      });
-    }
-  }
-
-  // ── Positioning tags (thesis alignment) ──
-  if (weights.positioning >= 0.20) {
-    // Find sectors where the fund has heavy exposure AND thesis has strong preference
-    for (const exposure of fund.sectorExposure) {
-      if (exposure.weight < 0.10) continue; // skip small exposures
-
-      const pref = thesis.sectorPreferences.find(
-        p => p.sector.toLowerCase() === exposure.sector.toLowerCase()
-      );
-      if (!pref) continue;
-
-      // Thesis uses 1.0–10.0 scale: ≥7.0 = favorable, ≤4.0 = unfavorable (§2.6.1)
-      if (pref.score >= 7.0 && exposure.weight >= 0.15) {
-        tags.push({
-          label: `${exposure.sector} alignment`,
-          reason: `Thesis is bullish on ${exposure.sector}, fund has ${(exposure.weight * 100).toFixed(1)}% exposure`,
-          metric: `Positioning score: ${fund.scores.positioning}/100, thesis sector score: ${pref.score.toFixed(1)}/10`,
-        });
-      }
-      if (pref.score <= 4.0 && exposure.weight >= 0.15) {
-        tags.push({
-          label: `${exposure.sector} headwind`,
-          reason: `Thesis is bearish on ${exposure.sector}, fund has ${(exposure.weight * 100).toFixed(1)}% exposure`,
-          metric: `Positioning score: ${fund.scores.positioning}/100, thesis sector score: ${pref.score.toFixed(1)}/10`,
-        });
-      }
-    }
-  }
-
-  // ── Momentum tags ──
-  if (weights.momentum >= 0.15) {
-    if (fund.scores.momentum >= 80) {
-      tags.push({
-        label: 'Strong momentum',
-        reason: 'Recent price trend confirms other factor signals',
-        metric: `Momentum score: ${fund.scores.momentum}/100`,
-      });
-    }
-    if (fund.scores.momentum <= 25) {
-      tags.push({
-        label: 'Weak momentum',
-        reason: 'Recent price trend is lagging despite other factors',
-        metric: `Momentum score: ${fund.scores.momentum}/100`,
-      });
-    }
-  }
-
-  // ── Risk-tolerance-specific tags ──
-  if (riskTolerance <= 3) {
-    // Conservative users (1-3) care about stability and cost
-    const hasFixedIncome = fund.sectorExposure.find(
-      s => s.sector.toLowerCase() === 'fixed income' && s.weight >= 0.20
-    );
-    if (hasFixedIncome) {
-      tags.push({
-        label: 'Fixed income anchor',
-        reason: 'Conservative profile benefits from bond exposure for stability',
-        metric: `Fixed income weight: ${(hasFixedIncome.weight * 100).toFixed(1)}%`,
-      });
-    }
-  }
-
-  if (riskTolerance >= 7) {
-    // Aggressive users (7-9) care about growth and momentum
-    const hasTech = fund.sectorExposure.find(
-      s => s.sector.toLowerCase() === 'technology' && s.weight >= 0.20
-    );
-    if (hasTech && fund.scores.momentum >= 60) {
-      tags.push({
-        label: 'Growth + momentum combo',
-        reason: 'Aggressive profile aligns with tech exposure backed by positive trend',
-        metric: `Tech weight: ${(hasTech.weight * 100).toFixed(1)}%, Momentum: ${fund.scores.momentum}/100`,
-      });
-    }
-  }
-
-  return tags;
+  return {
+    name: holdingScore.name,
+    ticker: holdingScore.ticker,
+    weightPct: weight,
+    sector,
+    profitability: {
+      grossMargin: extractRatioValue(dims?.profitability?.ratios, 'grossProfitMargin'),
+      operatingMargin: extractRatioValue(dims?.profitability?.ratios, 'operatingProfitMargin'),
+      netMargin: extractRatioValue(dims?.profitability?.ratios, 'netProfitMargin'),
+      returnOnEquity: extractRatioValue(dims?.profitability?.ratios, 'returnOnEquity'),
+      returnOnAssets: extractRatioValue(dims?.profitability?.ratios, 'returnOnAssets'),
+    },
+    balanceSheet: {
+      debtToEquity: extractRatioValue(dims?.balanceSheet?.ratios, 'debtEquityRatio'),
+      currentRatio: extractRatioValue(dims?.balanceSheet?.ratios, 'currentRatio'),
+      interestCoverage: extractRatioValue(dims?.balanceSheet?.ratios, 'interestCoverage'),
+    },
+    cashFlow: {
+      freeCashFlowPerShare: extractRatioValue(dims?.cashFlow?.ratios, 'freeCashFlowPerShare'),
+      operatingCashFlowPerShare: extractRatioValue(dims?.cashFlow?.ratios, 'operatingCashFlowPerShare'),
+    },
+    valuation: {
+      peRatio: extractRatioValue(dims?.valuation?.ratios, 'priceEarningsRatio'),
+      priceToBook: extractRatioValue(dims?.valuation?.ratios, 'priceToBookRatio'),
+      priceToSales: extractRatioValue(dims?.valuation?.ratios, 'priceToSalesRatio'),
+    },
+  };
 }
 
 /**
- * Bridge to the allocation engine (allocation.ts, spec §3).
+ * Extract fund returns from factor_details.momentum
+ */
+function extractReturns(factorDetails: Record<string, unknown>): FundReturns {
+  const momentum = factorDetails?.momentum as {
+    returns?: { threeMonth: number | null; sixMonth: number | null; nineMonth: number | null; twelveMonth: number | null };
+  } | undefined;
+
+  return {
+    threeMonth: momentum?.returns?.threeMonth ?? null,
+    sixMonth: momentum?.returns?.sixMonth ?? null,
+    nineMonth: momentum?.returns?.nineMonth ?? null,
+    twelveMonth: momentum?.returns?.twelveMonth ?? null,
+  };
+}
+
+// ─── Allocation Bridge ─────────────────────────────────────────────────────
+
+/**
+ * Bridge to the allocation engine with natural-language reason strings.
  *
- * Converts ranked fund data into AllocationInput[], runs the MAD-based
- * Kelly allocation engine, and maps results back to the shape that the
- * Brief data packet expects.
+ * The reason strings must NEVER reference model internals (scores, tiers,
+ * z-scores, composites). Instead, they describe the fund in terms a human
+ * advisor would use.
  */
 function computeAllocationForBrief(
-  rankedFunds: Array<{ ticker: string; name: string; composite: number; rank: number }>,
+  rankedFunds: Array<{ ticker: string; name: string; composite: number; expenseRatio: number | null; isBondFund: boolean }>,
   riskTolerance: number
 ): Array<{ ticker: string; name: string; percentage: number; reason: string }> {
 
   if (rankedFunds.length === 0) return [];
 
-  // Convert to AllocationInput[] for the real engine
   const inputs: AllocationInput[] = rankedFunds.map(f => ({
     ticker: f.ticker,
     compositeScore: f.composite,
     isMoneyMarket: MONEY_MARKET_TICKERS.has(f.ticker),
-    fallbackCount: 0,  // Brief doesn't have fallback data; quality gate runs in pipeline
+    fallbackCount: 0,
   }));
 
   const results = computeAllocations(inputs, riskTolerance);
 
-  // Map back to Brief's expected shape, including only funds with >0% allocation
   const nameMap = new Map(rankedFunds.map(f => [f.ticker, f]));
 
   return results
     .filter(r => r.allocationPct > 0)
     .map(r => {
       const fund = nameMap.get(r.ticker);
+      // Natural-language reason — no model internals
+      const reason = buildAllocationReason(fund, r.allocationPct, rankedFunds.length);
       return {
         ticker: r.ticker,
         name: fund?.name ?? r.ticker,
         percentage: r.allocationPct,
-        reason: `${r.tier} tier, composite ${r.compositeScore}/100` +
-          (r.modZ != null ? `, mod-z ${r.modZ.toFixed(2)}σ` : ''),
+        reason,
       };
     });
 }
 
 /**
- * Generate a profile summary string for the prompt.
+ * Build a natural-language allocation reason.
+ * This is included in the data packet so Claude has context for WHY
+ * a fund was selected — but in terms Claude can repeat without
+ * exposing model internals.
  */
-function profileSummary(profile: UserProfileRow): string {
-  const emphasis: string[] = [];
-  if (profile.weight_quality >= 0.30) emphasis.push('company fundamentals');
-  if (profile.weight_cost >= 0.30) emphasis.push('low costs');
-  if (profile.weight_positioning >= 0.30) emphasis.push('macro positioning');
-  if (profile.weight_momentum >= 0.25) emphasis.push('recent performance trends');
+function buildAllocationReason(
+  fund: { ticker: string; name: string; expenseRatio: number | null; isBondFund: boolean } | undefined,
+  pct: number,
+  totalFunds: number
+): string {
+  if (!fund) return 'Included in allocation.';
 
-  // SESSION 1: Updated for 7-point scale (spec §3.4)
-  const toleranceDesc =
-    profile.risk_tolerance <= 1 ? 'prefers stability and maximum diversification' :
-    profile.risk_tolerance <= 2 ? 'prefers stability and broad diversification' :
-    profile.risk_tolerance <= 3 ? 'leans conservative, favoring diversification with some selectivity' :
-    profile.risk_tolerance <= 4 ? 'balances growth with risk management' :
-    profile.risk_tolerance <= 5 ? 'prioritizes growth and is comfortable with concentration' :
-    profile.risk_tolerance <= 6 ? 'seeks high conviction with concentrated positions' :
-             'seeks maximum conviction with highly concentrated positions';
+  const parts: string[] = [];
 
-  const toleranceLabel = riskLabel(profile.risk_tolerance);
+  if (pct >= 25) {
+    parts.push('Core position');
+  } else if (pct >= 15) {
+    parts.push('Significant allocation');
+  } else if (pct >= 8) {
+    parts.push('Supporting position');
+  } else {
+    parts.push('Smaller allocation for diversification');
+  }
 
-  return `${toleranceLabel} investor (${profile.risk_tolerance}/${RISK_MAX}) who ${toleranceDesc}` +
-    (emphasis.length > 0 ? `. Emphasizes: ${emphasis.join(', ')}` : '');
+  if (fund.expenseRatio != null) {
+    if (fund.expenseRatio <= 0.001) {
+      parts.push('very low cost');
+    } else if (fund.expenseRatio <= 0.005) {
+      parts.push('low cost');
+    } else if (fund.expenseRatio >= 0.01) {
+      parts.push('higher cost but justified by other merits');
+    }
+  }
+
+  if (fund.isBondFund) {
+    parts.push('provides fixed income exposure');
+  }
+
+  return parts.join('; ') + '.';
 }
 
-// ─── Brief Generation ───────────────────────────────────────────────────────
+/**
+ * Generate a profile summary without exposing factor weights or model terms.
+ */
+function profileSummary(profile: UserProfileRow): string {
+  const rt = profile.risk_tolerance;
+  const label = riskLabel(rt);
+
+  if (rt <= 2) {
+    return `${label} investor who prefers stability, broad diversification, and keeping costs low.`;
+  } else if (rt <= 3) {
+    return `${label} investor who leans toward diversification with some willingness to be selective.`;
+  } else if (rt <= 4) {
+    return `${label} investor who balances growth potential with risk management.`;
+  } else if (rt <= 5) {
+    return `${label} investor who prioritizes growth and is comfortable with more concentrated positions.`;
+  } else if (rt <= 6) {
+    return `${label} investor who seeks high-conviction positions and accepts higher concentration.`;
+  } else {
+    return `${label} investor who seeks maximum conviction with highly concentrated positions.`;
+  }
+}
+
+// ─── Data Packet Assembly ───────────────────────────────────────────────────
 
 /**
  * Assemble the data packet for a user's Investment Brief.
  *
- * This is pure data assembly — no AI calls. Gathers scores, holdings,
- * thesis, and computes relevance tags based on the user's profile.
+ * Pure data assembly — no AI calls. Gathers raw financial data from
+ * Supabase and structures it for the prompt. NO scores, NO factor names,
+ * NO model internals make it into the packet that Claude sees.
  */
 export async function assembleDataPacket(
   userId: string,
@@ -408,7 +395,7 @@ export async function assembleDataPacket(
     narrative: thesisRow.narrative,
     sectorPreferences: (thesisRow.sector_preferences || []).map(sp => ({
       sector: String(sp.sector || ''),
-      score: Number(sp.score ?? sp.preference ?? 5.0),  // backward compat: old rows used 'preference'
+      score: Number(sp.score ?? sp.preference ?? 5.0),
       reasoning: String(sp.reasoning || sp.reason || ''),
     })),
     keyThemes: thesisRow.key_themes || [],
@@ -428,7 +415,7 @@ export async function assembleDataPacket(
     model: CLAUDE.THESIS_MODEL,
   };
 
-  // Build user weights
+  // Build user weights (used internally for composite, never sent to Claude)
   const userWeights: FactorWeights = {
     costEfficiency: profile.weight_cost,
     holdingsQuality: profile.weight_quality,
@@ -436,31 +423,35 @@ export async function assembleDataPacket(
     momentum: profile.weight_momentum,
   };
 
-  // Build per-fund data with user-specific composites and relevance tags
+  // Build per-fund data with RAW financials (no scores)
   const fundsData: FundBriefData[] = [];
 
   for (const row of scoreRows) {
     const fund = row.funds;
-    const raw = {
-      ticker: fund.ticker,
-      name: fund.name,
-      costEfficiency: Number(row.cost_efficiency),
-      holdingsQuality: Number(row.holdings_quality),
-      positioning: Number(row.positioning),
-      momentum: Number(row.momentum),
-    };
 
-    // Use pre-computed z-scores for composite calculation (Session 4, §2.1)
+    // Compute user composite internally (for allocation only)
     const zScores: FundZScores = {
       costEfficiency: Number(row.z_cost_efficiency ?? 0),
       holdingsQuality: Number(row.z_holdings_quality ?? 0),
       positioning: Number(row.z_positioning ?? 0),
       momentum: Number(row.z_momentum ?? 0),
     };
+    const composite = computeCompositeFromZScores(zScores, userWeights);
 
-    const userComposite = computeCompositeFromZScores(zScores, userWeights);
+    // Extract raw financial data from factor_details
+    const fd = row.factor_details as Record<string, unknown> || {};
+    const qualityData = fd.holdingsQuality as {
+      holdingScores?: Array<{
+        ticker: string;
+        name: string;
+        weight?: number;
+        dimensions?: Record<string, { ratios?: Array<{ name: string; value: number | null }> }>;
+      }>;
+      coveragePct?: number;
+      bondRatio?: number;
+    } | undefined;
 
-    // Fetch top holdings for this fund
+    // Fetch top holdings for sector data
     const { data: holdings } = await supaSelect<Array<{
       name: string; ticker: string | null; sector: string | null; pct_of_nav: number;
     }>>(
@@ -472,6 +463,27 @@ export async function assembleDataPacket(
         select: 'name,ticker,sector,pct_of_nav',
       }
     );
+
+    // Build holding financials by matching quality scores with holdings cache
+    const holdingFinancials: HoldingFinancials[] = [];
+    const holdingScores = qualityData?.holdingScores ?? [];
+
+    for (const hs of holdingScores.slice(0, 8)) {
+      // Find matching holding from cache for sector info
+      const cachedHolding = holdings?.find(
+        h => h.ticker === hs.ticker || h.name === hs.name
+      );
+      const sector = cachedHolding?.sector ?? null;
+      const weight = hs.weight ?? cachedHolding?.pct_of_nav ?? 0;
+
+      holdingFinancials.push(
+        extractHoldingFinancials(
+          hs as Parameters<typeof extractHoldingFinancials>[0],
+          weight,
+          sector
+        )
+      );
+    }
 
     // Build sector exposure from holdings
     const sectorMap = new Map<string, number>();
@@ -485,58 +497,44 @@ export async function assembleDataPacket(
       .map(([sector, weight]) => ({ sector, weight }))
       .sort((a, b) => b.weight - a.weight);
 
-    const scores = {
-      costEfficiency: Number(row.cost_efficiency),
-      holdingsQuality: Number(row.holdings_quality),
-      positioning: Number(row.positioning),
-      momentum: Number(row.momentum),
-    };
+    // Extract returns from momentum data
+    const returns = extractReturns(fd);
 
-    const relevanceTags = computeRelevanceTags(
-      { ticker: fund.ticker, scores, expenseRatio: fund.expense_ratio, sectorExposure, factorDetails: row.factor_details },
-      { riskTolerance: profile.risk_tolerance, weights: userWeights },
-      thesis
-    );
+    const isBondFund = (qualityData?.bondRatio ?? 0) > 0.5;
 
     fundsData.push({
       ticker: fund.ticker,
       name: fund.name,
       expenseRatio: fund.expense_ratio,
-      scores,
-      userComposite,
-      userRank: 0, // assigned after sorting
-      defaultComposite: Number(row.composite_default),
-      topHoldings: (holdings || []).map(h => ({
-        name: h.name,
-        ticker: h.ticker,
-        sector: h.sector,
-        weight: Number(h.pct_of_nav),
-      })),
+      holdingFinancials,
+      returns,
       sectorExposure,
-      factorDetails: row.factor_details,
-      relevanceTags,
+      dataCoverage: qualityData?.coveragePct ?? 0,
+      isBondFund,
+      _composite: composite,
+      _rank: 0,
     });
   }
 
-  // Sort by user's composite and assign ranks
-  fundsData.sort((a, b) => b.userComposite - a.userComposite);
-  fundsData.forEach((f, i) => { f.userRank = i + 1; });
+  // Sort by composite and assign internal ranks
+  fundsData.sort((a, b) => b._composite - a._composite);
+  fundsData.forEach((f, i) => { f._rank = i + 1; });
 
-  // Compute allocation via MAD-based Kelly engine (§3)
+  // Compute allocation via MAD-based Kelly engine
   const allocation = computeAllocationForBrief(
-    fundsData.map(f => ({ ticker: f.ticker, name: f.name, composite: f.userComposite, rank: f.userRank })),
+    fundsData.map(f => ({
+      ticker: f.ticker,
+      name: f.name,
+      composite: f._composite,
+      expenseRatio: f.expenseRatio,
+      isBondFund: f.isBondFund,
+    })),
     profile.risk_tolerance
   );
 
   return {
     user: {
       riskTolerance: `${riskLabel(profile.risk_tolerance)} (${profile.risk_tolerance}/${RISK_MAX})`,
-      factorWeights: {
-        costEfficiency: profile.weight_cost,
-        holdingsQuality: profile.weight_quality,
-        positioning: profile.weight_positioning,
-        momentum: profile.weight_momentum,
-      },
       profileSummary: profileSummary(profile),
     },
     macro: {
@@ -551,15 +549,149 @@ export async function assembleDataPacket(
   };
 }
 
+// ─── Prompt Building ────────────────────────────────────────────────────────
+
+/**
+ * Format a holding's financials as a concise text block for the prompt.
+ * Only includes metrics that have actual values.
+ */
+function formatHoldingForPrompt(h: HoldingFinancials): string {
+  const lines: string[] = [];
+  lines.push(`  ${h.name}${h.ticker ? ` (${h.ticker})` : ''} — ${(h.weightPct * 100).toFixed(1)}% of fund${h.sector ? `, ${h.sector}` : ''}`);
+
+  const profParts: string[] = [];
+  if (h.profitability.operatingMargin != null) profParts.push(`operating margin ${(h.profitability.operatingMargin * 100).toFixed(1)}%`);
+  if (h.profitability.netMargin != null) profParts.push(`net margin ${(h.profitability.netMargin * 100).toFixed(1)}%`);
+  if (h.profitability.returnOnEquity != null) profParts.push(`ROE ${(h.profitability.returnOnEquity * 100).toFixed(1)}%`);
+  if (profParts.length > 0) lines.push(`    Profitability: ${profParts.join(', ')}`);
+
+  const balParts: string[] = [];
+  if (h.balanceSheet.debtToEquity != null) balParts.push(`debt/equity ${h.balanceSheet.debtToEquity.toFixed(2)}`);
+  if (h.balanceSheet.currentRatio != null) balParts.push(`current ratio ${h.balanceSheet.currentRatio.toFixed(2)}`);
+  if (balParts.length > 0) lines.push(`    Balance sheet: ${balParts.join(', ')}`);
+
+  const valParts: string[] = [];
+  if (h.valuation.peRatio != null) valParts.push(`P/E ${h.valuation.peRatio.toFixed(1)}`);
+  if (h.valuation.priceToBook != null) valParts.push(`P/B ${h.valuation.priceToBook.toFixed(1)}`);
+  if (valParts.length > 0) lines.push(`    Valuation: ${valParts.join(', ')}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Build the user prompt with raw data in the 4-section "W" structure.
+ *
+ * This prompt contains ONLY raw financial data — no scores, no factor
+ * names, no model internals. Claude forms its own narrative from the numbers.
+ */
+function buildUserPrompt(dataPacket: BriefDataPacket): string {
+  const { user, macro, funds, allocation } = dataPacket;
+
+  // Separate allocated funds from non-allocated for emphasis ordering
+  const allocatedTickers = new Set(allocation.map(a => a.ticker));
+  const allocatedFunds = funds.filter(f => allocatedTickers.has(f.ticker));
+  const otherFunds = funds.filter(f => !allocatedTickers.has(f.ticker));
+
+  let prompt = `Write this user's Investment Brief following the editorial policy exactly.
+
+## User Profile
+- ${user.riskTolerance}
+- ${user.profileSummary}
+
+## Recommended Allocation
+These are the funds and percentages to recommend. Lead the Brief with this allocation in Section 1 ("Where Your Money Should Go").
+${allocation.map(a =>
+  `- ${a.name} (${a.ticker}): ${a.percentage}% — ${a.reason}`
+).join('\n')}
+
+## Macro Environment
+${macro.narrative}
+
+### Sector Outlook
+${macro.sectorPreferences.map(p =>
+  `- ${p.sector}: ${p.reasoning || 'No detail available'}`
+).join('\n')}
+
+### Key Themes
+${macro.keyThemes.map(t => `- ${t}`).join('\n')}
+
+## Fund Data — Recommended Funds (cover in depth)
+`;
+
+  for (const fund of allocatedFunds) {
+    prompt += formatFundBlock(fund);
+  }
+
+  prompt += `\n## Fund Data — Other Funds (cover briefly — why they didn't make the cut)\n`;
+
+  for (const fund of otherFunds) {
+    prompt += formatFundBlock(fund);
+  }
+
+  prompt += `\nWrite the complete Investment Brief now. Use the 4-section structure from the editorial policy: "Where Your Money Should Go" → "What Happened" → "What We're Watching" → "Where We Stand". Target 800-1200 words.`;
+
+  return prompt;
+}
+
+/**
+ * Format a single fund's raw data as a text block for the prompt.
+ */
+function formatFundBlock(fund: FundBriefData): string {
+  let block = `\n### ${fund.name} (${fund.ticker})\n`;
+
+  // Expense ratio
+  if (fund.expenseRatio != null) {
+    block += `- Annual expense ratio: ${(fund.expenseRatio * 100).toFixed(2)}%\n`;
+  }
+
+  // Returns
+  const retParts: string[] = [];
+  if (fund.returns.threeMonth != null) retParts.push(`3-mo: ${(fund.returns.threeMonth * 100).toFixed(1)}%`);
+  if (fund.returns.sixMonth != null) retParts.push(`6-mo: ${(fund.returns.sixMonth * 100).toFixed(1)}%`);
+  if (fund.returns.nineMonth != null) retParts.push(`9-mo: ${(fund.returns.nineMonth * 100).toFixed(1)}%`);
+  if (fund.returns.twelveMonth != null) retParts.push(`12-mo: ${(fund.returns.twelveMonth * 100).toFixed(1)}%`);
+  if (retParts.length > 0) {
+    block += `- Returns: ${retParts.join(', ')}\n`;
+  }
+
+  // Sector exposure
+  if (fund.sectorExposure.length > 0) {
+    block += `- Sector exposure: ${fund.sectorExposure.slice(0, 5).map(s =>
+      `${s.sector} ${(s.weight * 100).toFixed(1)}%`
+    ).join(', ')}\n`;
+  }
+
+  // Bond fund flag
+  if (fund.isBondFund) {
+    block += `- This is primarily a bond fund\n`;
+  }
+
+  // Top holdings with financials
+  if (fund.holdingFinancials.length > 0) {
+    block += `- Top holdings:\n`;
+    for (const h of fund.holdingFinancials.slice(0, 6)) {
+      block += formatHoldingForPrompt(h) + '\n';
+    }
+  }
+
+  // Data coverage note
+  if (fund.dataCoverage < 0.40) {
+    block += `- Note: Financial data available for only ${(fund.dataCoverage * 100).toFixed(0)}% of this fund's holdings\n`;
+  }
+
+  return block;
+}
+
+// ─── Brief Generation ───────────────────────────────────────────────────────
+
 /**
  * Generate an Investment Brief for a user.
  *
- * This is the main entry point. It:
- *   1. Assembles the data packet (Layer 1 — personalized data selection)
- *   2. Reads the editorial policy (Layer 2 — how to write)
+ * Main entry point:
+ *   1. Assembles raw data packet (no scores, no model internals)
+ *   2. Reads editorial policy (voice and structure rules)
  *   3. Calls Claude Opus to write the Brief
- *   4. Saves the Brief to Supabase
- *   5. Returns the Brief ID and content
+ *   4. Saves to Supabase
  */
 export async function generateBrief(
   userId: string,
@@ -579,48 +711,7 @@ export async function generateBrief(
 
   // ── Step 2: Build prompt ──
   const systemPrompt = editorialPolicy;
-
-  const userPrompt = `Here is the data packet for this user's Investment Brief. Write the Brief following the editorial policy exactly.
-
-## User Profile
-- Risk tolerance: ${dataPacket.user.riskTolerance}
-- Profile: ${dataPacket.user.profileSummary}
-- Factor weights: Cost Efficiency ${(dataPacket.user.factorWeights.costEfficiency * 100).toFixed(0)}%, Holdings Quality ${(dataPacket.user.factorWeights.holdingsQuality * 100).toFixed(0)}%, Positioning ${(dataPacket.user.factorWeights.positioning * 100).toFixed(0)}%, Momentum ${(dataPacket.user.factorWeights.momentum * 100).toFixed(0)}%
-
-## Macro Environment
-${dataPacket.macro.narrative}
-
-### Sector Preferences
-${dataPacket.macro.sectorPreferences.map((p: { sector: string; score: number; reasoning?: string }) =>
-  `- ${p.sector}: ${p.score.toFixed(1)}/10 (${p.reasoning || 'no detail'})`
-).join('\n')}
-
-### Key Themes
-${dataPacket.macro.keyThemes.map(t => `- ${t}`).join('\n')}
-
-## Fund Scores and Data
-${dataPacket.funds.map(f => `
-### ${f.name} (${f.ticker})
-- **Composite score**: ${f.userComposite}/100 (rank #${f.userRank} of ${dataPacket.funds.length})
-- **Factor scores**: Cost Efficiency ${f.scores.costEfficiency}, Holdings Quality ${f.scores.holdingsQuality}, Positioning ${f.scores.positioning}, Momentum ${f.scores.momentum}
-${f.expenseRatio != null ? `- **Expense ratio**: ${(f.expenseRatio * 100).toFixed(2)}%` : ''}
-- **Top holdings**: ${f.topHoldings.slice(0, 5).map(h =>
-    `${h.name}${h.ticker ? ` (${h.ticker})` : ''} at ${(h.weight * 100).toFixed(1)}%${h.sector ? ` [${h.sector}]` : ''}`
-  ).join('; ')}
-- **Sector exposure**: ${f.sectorExposure.slice(0, 5).map(s =>
-    `${s.sector} ${(s.weight * 100).toFixed(1)}%`
-  ).join(', ')}
-${f.relevanceTags.length > 0 ? `- **Relevance to your profile**:\n${f.relevanceTags.map(t =>
-    `  - ${t.label}: ${t.reason} (${t.metric})`
-  ).join('\n')}` : ''}
-`).join('\n')}
-
-## Recommended Allocation
-${dataPacket.allocation.map(a =>
-  `- ${a.name} (${a.ticker}): ${a.percentage}% — ${a.reason}`
-).join('\n')}
-
-Write the complete Investment Brief now. Follow the Content Structure in the editorial policy (Macro Environment Summary → Thesis and Sector Views → Fund-by-Fund Highlights → Allocation Recommendation). Target 800-1200 words.`;
+  const userPrompt = buildUserPrompt(dataPacket);
 
   // ── Step 3: Call Claude Opus ──
   console.log(`[brief-engine] Calling Claude ${CLAUDE.BRIEF_MODEL} for Brief generation`);
@@ -636,7 +727,6 @@ Write the complete Investment Brief now. Follow the Content Structure in the edi
       messages: [{ role: 'user', content: userPrompt }],
     });
 
-    // Extract text from response
     for (const block of response.content) {
       if (block.type === 'text') {
         contentMd += block.text;
@@ -646,7 +736,6 @@ Write the complete Investment Brief now. Follow the Content Structure in the edi
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[brief-engine] Claude API error: ${msg}`);
 
-    // Save failed brief for debugging
     await supaInsert('investment_briefs', {
       user_id: userId,
       pipeline_run_id: pipelineRunId,

@@ -1,6 +1,6 @@
 # FundLens — Master Specification
 ## Version 7.0 — Single Source of Truth
-**Last updated:** April 7, 2026 (Session 4 continuation)
+**Last updated:** April 7, 2026 (Session 8)
 **Owner:** Robert Coursey (racoursey@gmail.com)
 
 ---
@@ -1092,7 +1092,7 @@ Status: Planned for Session 9 of the build roadmap.
 
 **MISSING-10: Investment Brief Redesign — 4-Section Structure + Advisor Voice (§7.2–7.9)**
 Spec: Complete rewrite of §7. 4-section brief ("Where Your Money Should Go" → "What Happened" → "What We're Watching" → "Where We Stand"). New voice guidelines (knowledgeable buddy, not research analyst). "Behind the curtain" rule prohibiting model language. Raw data feed to Claude (not scores). Allocation persistence for "What Changed" delta.
-Status: Spec written (Session 7). Implementation pending: editorial-policy.md rewrite, brief-engine.ts prompt redesign, allocation_history table, Briefs.tsx client redesign.
+Status: **PARTIALLY COMPLETE (Session 8).** editorial-policy.md rewritten (v2.0 — advisor voice, 4-section W structure, behind-the-curtain rule). brief-engine.ts rewritten (raw data feed, no scores/factor names in prompt, natural-language allocation reasons). Remaining: allocation_history table (→ Session 9), Briefs.tsx client redesign (→ Session 11).
 
 **MISSING-11: Continuous Risk Slider with Interpolation (§3.4, §6.4)**
 Spec: Risk slider accepts 1.0–7.0 continuous values. k parameter interpolated between anchor points. risk_tolerance stored as FLOAT.
@@ -1129,7 +1129,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | **DONE** |
 | 6 | Thesis + Allocation + MM Skip | CRITICAL-4 (1-10 scale), CRITICAL-5 (Kelly allocation), MISSING-4 (FRED commodities), MISSING-5 (sector priors), MISSING-6 (money market skip) | **DONE** |
 | 7 | Tier Badges + Brief/Slider Spec | §6.3 tier badges E2E. §7 brief redesign (4-section, advisor voice). §3.4 continuous slider. §7.7 allocation persistence. Spec-only for MISSING-10 through MISSING-13. | **DONE** |
-| 8 | Brief Engine Redesign | MISSING-10: Rewrite editorial-policy.md + brief-engine.ts prompt. Raw data feed. 4-section output. Advisor voice. | |
+| 8 | Brief Engine Redesign | MISSING-10: Rewrite editorial-policy.md + brief-engine.ts prompt. Raw data feed. 4-section output. Advisor voice. | **DONE** |
 | 9 | Allocation Persistence + Continuous Slider | MISSING-11 + MISSING-12: allocation_history table, risk slider float, interpolation | |
 | 10 | Pipeline Performance | MISSING-13: Reduce delays, add Supabase caching, batch Claude classification. Target <3 min. | |
 | 11 | v5.1 UI Port | Port v5.1 layout/UX to v6 React client. All 4 factors visible. Sector scorecard. Inline Brief rendering. | |
@@ -1533,6 +1533,25 @@ File: `migrations/session7_add_tier_columns.sql`
 8. **Pipeline performance diagnosed.** v6 at 9 minutes vs v5.1 at 2 minutes. Root causes: 500ms delays (v5.1 uses 200-300ms), no Supabase caching (v5.1 batch-queries before API calls), no Claude classification batching. Fix deferred to Session 10.
 
 **Spec sections updated:** §3.4 (continuous slider), §5.4 (pipeline Step 17), §5.5 (file inventory), §6.4 (slider control), §7.1–7.9 (complete rewrite), §9.3 (MISSING-10 through MISSING-13), §9.5 (roadmap Sessions 7–14)
+
+### April 7, 2026 — Session 8: Brief Engine Redesign (MISSING-10)
+
+**What changed:**
+
+1. **editorial-policy.md rewritten to v2.0.** Old: research analyst voice, 4-section structure (Macro → Thesis → Fund-by-Fund → Allocation). New: "buddy who's good at markets" voice, 4-section W structure (Where Your Money Should Go → What Happened → What We're Watching → Where We Stand). Added "Behind the Curtain" rule with explicit prohibited terms list and positive/negative examples. Recommendation leads the Brief instead of concluding it.
+
+2. **brief-engine.ts completely rewritten.** Key changes:
+   - `FundBriefData` stripped of: `scores` (factor scores 0-100), `userComposite`, `defaultComposite`, `factorDetails`, `relevanceTags`. Replaced with: `holdingFinancials` (actual margins, ROE, debt ratios, P/E from factor_details dimensions), `returns` (3/6/9/12-month), `sectorExposure`, `dataCoverage`, `isBondFund`.
+   - `BriefDataPacket.user` stripped of: `factorWeights` (was sending "Cost Efficiency 25%, Holdings Quality 30%..." to Claude). Now sends only risk tolerance label and natural-language profile summary.
+   - `computeRelevanceTags()` deleted entirely. Replaced by `extractHoldingFinancials()` which pulls actual ratio values from quality dimension breakdowns.
+   - `computeAllocationForBrief()` reason strings rewritten. Old: "Breakaway tier, composite 85/100, mod-z 2.34σ". New: "Core position; very low cost." Natural language that Claude can echo without model leakage.
+   - `profileSummary()` rewritten to avoid factor weight names. Old: "Emphasizes: company fundamentals, low costs". New: plain investor description.
+   - Prompt template rebuilt for 4-section W structure. Separates allocated funds (covered in depth) from non-allocated (covered briefly). Feeds actual financial ratios per holding, not scores.
+   - Internal fields `_composite` and `_rank` prefixed with underscore to signal they are never sent to Claude — used only for allocation computation and fund ordering.
+
+3. **Zero regressions.** `tsc --noEmit` clean on both server and client. No external API signature changes — `generateBrief()` and `assembleDataPacket()` retain their existing signatures.
+
+**Files modified:** `src/prompts/editorial-policy.md`, `src/engine/brief-engine.ts`, `FUNDLENS_SPEC.md` (§9.3 MISSING-10 status, §9.5 roadmap, §10 changelog)
 
 ---
 
