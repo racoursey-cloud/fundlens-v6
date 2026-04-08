@@ -37,6 +37,7 @@ const VALID_SECTORS = [
   'Precious Metals',
   'Fixed Income',
   'Cash & Equivalents',
+  'Other',
 ] as const;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ export async function classifyHoldingSectors(
           holding.sector = sector;
         } else {
           // If classification didn't match a valid sector, try fuzzy matching
-          holding.sector = fuzzyMatchSector(sector || '') || 'Technology';
+          holding.sector = fuzzyMatchSector(sector || '') || 'Other';
         }
       }
     } catch (err) {
@@ -239,12 +240,27 @@ function fuzzyMatchSector(input: string): string | null {
     'media': 'Communication Services',
     'precious metals': 'Precious Metals',
     'gold': 'Precious Metals',
+    'silver': 'Precious Metals',
+    'bullion': 'Precious Metals',
+    'mining': 'Precious Metals',
     'fixed income': 'Fixed Income',
     'bonds': 'Fixed Income',
     'bond': 'Fixed Income',
+    'treasury': 'Fixed Income',
+    'treasuries': 'Fixed Income',
+    'government bonds': 'Fixed Income',
+    'sovereign': 'Fixed Income',
+    'corporate bonds': 'Fixed Income',
+    'municipal bonds': 'Fixed Income',
+    'debt': 'Fixed Income',
     'cash': 'Cash & Equivalents',
     'money market': 'Cash & Equivalents',
     'cash & equivalents': 'Cash & Equivalents',
+    'cash equivalents': 'Cash & Equivalents',
+    'currency': 'Cash & Equivalents',
+    't-bills': 'Fixed Income',
+    't-bill': 'Fixed Income',
+    'notes': 'Fixed Income',
   };
 
   return aliases[lower] || null;
