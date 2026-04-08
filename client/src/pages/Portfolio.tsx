@@ -318,7 +318,7 @@ export function Portfolio() {
           positioning: p.weight_positioning,
           momentum: p.weight_momentum,
         });
-        setRisk(p.risk_tolerance);
+        setRisk(Number(p.risk_tolerance) || 4.0);
       }
       setLoading(false);
     });
