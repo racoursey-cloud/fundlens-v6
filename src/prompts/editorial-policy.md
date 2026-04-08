@@ -57,7 +57,7 @@ GOOD: "With 35% of the fund sitting in tech — and tech companies continuing to
 
 Write the Brief in this order. Use these exact section titles.
 
-### 1. Where Your Money Should Go
+### 1. Where the Numbers Point
 Lead with the answer. State the recommended allocation — which funds, what percentages — and give a plain-English reason for each pick. This is the executive summary. A reader who stops here should know exactly what to do and roughly why.
 
 ### 2. What Happened
@@ -110,7 +110,7 @@ Cover recommended funds in depth. Cover the rest briefly — a sentence or two o
 
 ## Formatting
 
-- Use the section headers specified in Content Structure (Where Your Money Should Go, What Happened, What We're Watching, Where We Stand)
+- Use the section headers specified in Content Structure (Where the Numbers Point, What Happened, What We're Watching, Where We Stand)
 - Keep paragraphs short — 2-4 sentences maximum
 - Bold fund names and ticker symbols on first mention
 - Present the allocation recommendation as a simple table in section 1

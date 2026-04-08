@@ -821,7 +821,7 @@ A personalized monthly Investment Brief delivered to each user. Named "Investmen
 
 The Brief follows a "lead with the answer" structure. The recommendation is the opening, not the conclusion. Everything after it is the evidence that backs it up. This signals confidence and respects the reader's time — your buddy who's good at markets leads with what they'd do, then explains why.
 
-**Section 1: "Where Your Money Should Go"** — The Recommendation
+**Section 1: "Where the Numbers Point"** — The Recommendation
 Named funds, allocation percentages, and a sentence or two per fund explaining why in plain investment language. This is the most valuable section — a reader who only has 30 seconds gets the full actionable answer here. Example of good fund reasoning: "FXAIX at 40% — it holds profitable, well-run companies, it's been on a solid run, and at 0.015% it's basically free. Hard to beat that combination." Every recommended fund gets a brief, genuine explanation.
 
 **Section 2: "What Happened"** — Market Narrative + Portfolio Changes
@@ -1097,7 +1097,7 @@ Spec: Not yet in spec — feature idea from build planning session. Help section
 Status: Planned for Session 9 of the build roadmap.
 
 **MISSING-10: Investment Brief Redesign — 4-Section Structure + Advisor Voice (§7.2–7.9)**
-Spec: Complete rewrite of §7. 4-section brief ("Where Your Money Should Go" → "What Happened" → "What We're Watching" → "Where We Stand"). New voice guidelines (knowledgeable buddy, not research analyst). "Behind the curtain" rule prohibiting model language. Raw data feed to Claude (not scores). Allocation persistence for "What Changed" delta.
+Spec: Complete rewrite of §7. 4-section brief ("Where the Numbers Point" → "What Happened" → "What We're Watching" → "Where We Stand"). New voice guidelines (knowledgeable buddy, not research analyst). "Behind the curtain" rule prohibiting model language. Raw data feed to Claude (not scores). Allocation persistence for "What Changed" delta.
 Status: **PARTIALLY COMPLETE (Session 8 + Session 9).** editorial-policy.md rewritten (v2.0 — advisor voice, 4-section W structure, behind-the-curtain rule). brief-engine.ts rewritten (raw data feed, no scores/factor names in prompt, natural-language allocation reasons). ✅ allocation_history table and delta computation added Session 9. Remaining: Briefs.tsx client redesign (→ Session 11).
 
 **~~MISSING-11: Continuous Risk Slider with Interpolation (§3.4, §6.4)~~ — RESOLVED (Session 9)**
@@ -1519,7 +1519,7 @@ File: `migrations/session7_add_tier_columns.sql`
 1. **Investment Brief voice: "Your buddy who's good at markets."** Not a research analyst in a suit (old v1 editorial policy), not a Reddit poster. The kind of person at the company cookout who people pull aside to ask about their 401(k). Confident, clear, occasionally witty, never condescending. Leads with the answer.
 
 2. **4-section brief structure with "W" titles:**
-   - "Where Your Money Should Go" — The Recommendation (leads, not concludes)
+   - "Where the Numbers Point" — The Recommendation (leads, not concludes)
    - "What Happened" — Market narrative + what changed in allocation (combined, not separate sections — avoids redundancy)
    - "What We're Watching" — Risks + catalysts
    - "Where We Stand" — Sector scorecard deep dive
@@ -1544,7 +1544,7 @@ File: `migrations/session7_add_tier_columns.sql`
 
 **What changed:**
 
-1. **editorial-policy.md rewritten to v2.0.** Old: research analyst voice, 4-section structure (Macro → Thesis → Fund-by-Fund → Allocation). New: "buddy who's good at markets" voice, 4-section W structure (Where Your Money Should Go → What Happened → What We're Watching → Where We Stand). Added "Behind the Curtain" rule with explicit prohibited terms list and positive/negative examples. Recommendation leads the Brief instead of concluding it.
+1. **editorial-policy.md rewritten to v2.0.** Old: research analyst voice, 4-section structure (Macro → Thesis → Fund-by-Fund → Allocation). New: "buddy who's good at markets" voice, 4-section W structure (Where the Numbers Point → What Happened → What We're Watching → Where We Stand). Added "Behind the Curtain" rule with explicit prohibited terms list and positive/negative examples. Recommendation leads the Brief instead of concluding it.
 
 2. **brief-engine.ts completely rewritten.** Key changes:
    - `FundBriefData` stripped of: `scores` (factor scores 0-100), `userComposite`, `defaultComposite`, `factorDetails`, `relevanceTags`. Replaced with: `holdingFinancials` (actual margins, ROE, debt ratios, P/E from factor_details dimensions), `returns` (3/6/9/12-month), `sectorExposure`, `dataCoverage`, `isBondFund`.

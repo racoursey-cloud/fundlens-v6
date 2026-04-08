@@ -715,7 +715,7 @@ function buildUserPrompt(dataPacket: BriefDataPacket): string {
 - ${user.profileSummary}
 
 ## Recommended Allocation
-These are the funds and percentages to recommend. Lead the Brief with this allocation in Section 1 ("Where Your Money Should Go").
+These are the funds and percentages to recommend. Lead the Brief with this allocation in Section 1 ("Where the Numbers Point").
 ${allocation.map(a =>
   `- ${a.name} (${a.ticker}): ${a.percentage}% — ${a.reason}`
 ).join('\n')}
@@ -766,7 +766,7 @@ ${macro.keyThemes.map(t => `- ${t}`).join('\n')}
     prompt += formatFundBlock(fund);
   }
 
-  prompt += `\nWrite the complete Investment Brief now. Use the 4-section structure from the editorial policy: "Where Your Money Should Go" → "What Happened" → "What We're Watching" → "Where We Stand". Target 800-1200 words.`;
+  prompt += `\nWrite the complete Investment Brief now. Use the 4-section structure from the editorial policy: "Where the Numbers Point" → "What Happened" → "What We're Watching" → "Where We Stand". Target 800-1200 words.`;
 
   return prompt;
 }
