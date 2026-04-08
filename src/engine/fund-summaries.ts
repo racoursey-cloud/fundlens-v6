@@ -110,7 +110,12 @@ TICKER: summary text here
 ${fundBlocks.join('\n\n')}`;
 
   try {
-    const client = new Anthropic();
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      console.warn('[fund-summaries] No ANTHROPIC_API_KEY — skipping summaries');
+      return summaries;
+    }
+    const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model: CLAUDE.CLASSIFICATION_MODEL, // Haiku — fast + cheap
       max_tokens: 4096,
