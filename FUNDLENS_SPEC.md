@@ -1,6 +1,6 @@
 # FundLens — Master Specification
 ## Version 7.0 — Single Source of Truth
-**Last updated:** April 7, 2026 (Session 11)
+**Last updated:** April 8, 2026 (Session 12 — Full Assessment)
 **Owner:** Robert Coursey (racoursey@gmail.com)
 
 ---
@@ -688,6 +688,7 @@ Each step wrapped in try/catch. Partial results flow forward. Non-fatal failures
 | brief-email.ts | Brief email delivery via Resend |
 | brief-scheduler.ts | Brief eligibility checker (30-day cadence) |
 | cache.ts | Supabase cache service (FMP, Tiingo, Finnhub fees, sector classifications) |
+| fund-summaries.ts | Natural-language fund summary generation (Claude Haiku, batched) |
 | persist.ts | Supabase persistence (scores, thesis, holdings) |
 | monitor.ts | System health checks |
 
@@ -1027,7 +1028,7 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Positioning: correct normalization | §2.6.3 | positioning.ts | `(score - 1) / 9` maps 1–10 → 0–1. Unclassified = neutral 0.5 — Session 6 |
 | Deterministic FRED sector priors | §2.6.2 | thesis.ts | `computeSectorPriors()`: yield curve, CPI, fed stance, employment rules — Session 6 |
 | FRED commodity series | §4.4 | fred.ts, constants.ts | WTI, Brent, Gold, Dollar Index in INDICATOR_META + fetchMacroSnapshot — Session 6 |
-| Allocation: MAD + Kelly exponential | §3.1–3.6 | allocation.ts | MAD z-score, quality gate, e^(k×modZ), 5% de minimis, rounding absorption — Session 6 |
+| Allocation: MAD + Kelly exponential | §3.1–3.4, §3.6 | allocation.ts | MAD z-score, quality gate, e^(k×modZ), rounding absorption — Session 6. **NOTE: Step 4 uses capture threshold, NOT de minimis floor per §3.5. See CRITICAL-6.** |
 | Money market global skip | §2.7 | pipeline.ts, constants.ts, allocation.ts | FDRXX/ADAXX fixed composite 50, skip all factor scoring, MM tier — Session 6 |
 | Portfolio: Invalid Date fix | §6 | Portfolio.tsx | Null/invalid timestamp guard for pipeline run display — Session 6 |
 | Tier badges: end-to-end wiring | §6.3 | scoring.ts, persist.ts, types.ts, api.ts, Portfolio.tsx, FundDetail.tsx | MAD z-score → tier computed in scoring engine, persisted to fund_scores, rendered in fund table + detail sidebar. Client-side recomputation on slider change. — Session 7 |
@@ -1051,6 +1052,21 @@ This section tells future sessions exactly what state the codebase is in relativ
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
 These are the highest priority. The code runs but produces wrong results.
+
+**CRITICAL-6: Allocation Engine — Capture Threshold Instead of De Minimis Floor (§3.5)**
+File: `src/engine/allocation.ts`, lines 218-241
+Spec: §3.5 — "Drop any fund with allocation < 5%. Renormalize survivors to sum to 100%."
+Code: Step 4 implements a capture threshold trim (v5.1 pattern):
+```
+targetCapture = CAPTURE_HIGH - (rt - 1) * CAPTURE_STEP
+// = 70 - (risk - 1) × 5
+// risk=1: 70%, risk=4: 55%, risk=7: 40%
+```
+Ranks funds by weight, walks down until cumulative weight hits targetCapture, cuts everything below. This is the v5.1 pattern that §3.4 and changelog item 11 explicitly say was replaced.
+Constants.ts has `CAPTURE_HIGH: 70` and `CAPTURE_STEP: 5` but does NOT define `DE_MINIMIS_PCT`.
+The file header comment claims "5% de minimis floor" was implemented, but the code implements capture threshold.
+Impact: Every allocation computed by v6 differs from spec. De minimis removes individual funds below 5%; capture threshold removes by cumulative weight from bottom — fundamentally different behavior.
+Fix: Replace capture threshold with iterative de minimis (drop < 5%, renormalize, repeat). Remove `CAPTURE_HIGH`/`CAPTURE_STEP` from constants. Add `DE_MINIMIS_PCT: 0.05`.
 
 **~~CRITICAL-1: Scoring Engine — Missing Z-Space + CDF (§2.1)~~ — RESOLVED (Session 4)**
 File: `src/engine/scoring.ts`
@@ -1101,7 +1117,7 @@ Status: ✅ MONEY_MARKET_TICKERS set (FDRXX, ADAXX) in constants.ts. pipeline.ts
 
 **MISSING-7: HHI Concentration Display (§6.6)**
 Spec: Herfindahl-Hirschman Index of sector exposure per fund in detail view. Informational only.
-Status: Not implemented anywhere.
+Status: Not implemented anywhere. Low priority — informational UI, no scoring impact.
 
 **~~MISSING-8: Tiingo Integration (§4.1, §4.6)~~ — FULLY RESOLVED (Session 3 + Session 4 + Session 5)**
 Spec: Tiingo is primary source for fund NAV history (split-adjusted). Fee data (12b-1, loads) from Finnhub.
@@ -1127,6 +1143,21 @@ Status: ✅ Complete. Migration creates `allocation_history` table with RLS poli
 Spec: v6 pipeline takes 9 minutes vs v5.1's 2 minutes. Root causes identified: 500ms delays (v5.1 uses 200-300ms), no Supabase caching layer (v5.1 batch-queries cache before API calls), no Claude classification batching (v5.1 batches 25 holdings per call).
 Status: ✅ Complete. Created `cache.ts` with 4 cache layers (FMP 7-day, Tiingo 1-day, Finnhub 90-day, sector classifications 15-day). Pipeline rewritten to batch-check caches before API loops, skip cached data, save misses. API delay reduced 500ms→250ms. Classification batch size 15→25. Classification deduplicated across funds (same holding in 5 funds = 1 classification). Migration: `session10_cache_tables.sql`.
 
+**MISSING-14: Allocation Display on Portfolio Page**
+Spec: §6.4 — risk tolerance affects allocation sizing. v5.1 shows allocation_pct per fund in the Portfolio tab with a Fund Allocation donut chart powered by real Kelly-computed allocations.
+v6 status: Portfolio.tsx shows fund scores and a "Fund Allocation" donut, but the donut displays top 10 funds by composite score (NOT Kelly allocations). The allocation engine (`allocation.ts`) is only called during Brief generation. Users must generate a Brief to see their personalized allocation.
+Impact: HIGH — allocation is the most actionable output of FundLens. Users can't see "put 40% in FXAIX" without generating a Brief.
+Fix: Call `computeAllocations()` from Portfolio.tsx (or via a new API endpoint), display allocation_pct in the fund table, power the donut with real allocations.
+
+**MISSING-15: Fund-of-Funds Look-Through Wiring (§2.4.4)**
+Spec: When a holding is itself another fund, fetch sub-fund's NPORT-P, score underlying holdings.
+Status: Scaffolding exists in holdings.ts but `resolveSubFundTicker()` is a stub (always returns null). Look-through cannot fire. Deferred since Session 2.
+Impact: LOW for TerrAscend fund universe (most are direct equity/bond funds), but needed for completeness.
+
+**MISSING-16: fund-summaries.ts Not in Spec File Inventory (§5.5)**
+`src/engine/fund-summaries.ts` exists in the codebase and generates natural-language fund summaries via Claude Haiku for the fund detail sidebar. This file is NOT listed in the spec §5.5 file inventory and was added without spec documentation.
+Fix: Add to §5.5 file inventory with purpose description.
+
 ### 9.4 CUSIP Resolver — COMPLETED (Session 2)
 
 Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip.ts`, `holdings.ts`, `pipeline.ts`, and `types.ts` against spec §4.3 and §4.6. Seven issues found and fixed:
@@ -1140,23 +1171,35 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 
 **Remaining:** `resolveSubFundTicker()` in holdings.ts is still a stub (always returns null). Fund-of-funds look-through scaffolding exists but cannot fire without sub-fund ticker resolution. This can be wired when FMP search is tested against real fund names (could be addressed in Session 3 or deferred).
 
-### 9.5 Build Roadmap (Remaining Sessions)
+### 9.5 Build Roadmap
 
-| Session | Focus | Key Gaps Addressed | Status |
-|---------|-------|--------------------|--------|
-| 2 | CUSIP Resolver Deep Review | §4.3 — flagged by Robert | **DONE** |
-| 3 | Tiingo Integration | MISSING-8, MISSING-1 (12b-1 fees depend on Tiingo) | **DONE** |
-| 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | **DONE** |
-| 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | **DONE** |
-| 6 | Thesis + Allocation + MM Skip | CRITICAL-4 (1-10 scale), CRITICAL-5 (Kelly allocation), MISSING-4 (FRED commodities), MISSING-5 (sector priors), MISSING-6 (money market skip) | **DONE** |
-| 7 | Tier Badges + Brief/Slider Spec | §6.3 tier badges E2E. §7 brief redesign (4-section, advisor voice). §3.4 continuous slider. §7.7 allocation persistence. Spec-only for MISSING-10 through MISSING-13. | **DONE** |
-| 8 | Brief Engine Redesign | MISSING-10: Rewrite editorial-policy.md + brief-engine.ts prompt. Raw data feed. 4-section output. Advisor voice. | **DONE** |
-| 9 | Allocation Persistence + Continuous Slider | MISSING-11 + MISSING-12: allocation_history table, risk slider float, interpolation | **DONE** |
-| 10 | Pipeline Performance | MISSING-13: Reduce delays, add Supabase caching, batch Claude classification. Target <3 min. | **DONE** |
-| 11 | v5.1 UI Port | Port v5.1 layout/UX to v6 React client. All 4 factors visible. Sector scorecard. Inline Brief rendering. | **DONE** |
-| 12 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
-| 13 | HHI + Polish | MISSING-7 (HHI concentration display). Final UI polish. | |
-| 14 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) | |
+**Completed Sessions (1–11):**
+
+| Session | Focus | Status |
+|---------|-------|--------|
+| 0 | Security Hardening | **DONE** |
+| 1 | Foundation — Constants, Types, Kelly Risk Model | **DONE** |
+| 2 | CUSIP Resolver Deep Review | **DONE** |
+| 3 | Tiingo Integration | **DONE** |
+| 4 | Scoring Engine (Z-Space + CDF) | **DONE** |
+| 5 | Factor Upgrades (Momentum, Bond Quality, Coverage) | **DONE** |
+| 6 | Thesis + Allocation + MM Skip | **DONE** |
+| 7 | Tier Badges + Brief/Slider Spec | **DONE** |
+| 8 | Brief Engine Redesign | **DONE** |
+| 9 | Allocation Persistence + Continuous Slider | **DONE** |
+| 10 | Pipeline Performance (Caching) | **DONE** |
+| 11 | v5.1 UI Port | **DONE** |
+| 12 | Full Assessment (READ-ONLY) | **DONE** — repo cleaned, spec updated, ASSESSMENT_REPORT.md written |
+
+**Remaining Sessions (minimum 3 to match v5.1, 5 for full spec compliance):**
+
+| Session | Focus | Gaps Addressed | Estimate |
+|---------|-------|----------------|----------|
+| 13 | Allocation Fix + Portfolio Allocation Display | CRITICAL-6 (de minimis floor), MISSING-14 (allocation on Portfolio page) | 1 session |
+| 14 | End-to-End Integration Testing | Run full pipeline against real 18-fund TerrAscend universe. Verify all cache layers, scoring outputs, Brief generation. | 1 session |
+| 15 | HHI + Documentation + Polish | MISSING-7 (HHI display), MISSING-16 (spec file inventory), final UI polish | 0.5–1 session |
+| 16 | Help Section (optional) | MISSING-9 (FAQs + Claude Haiku chat) | 1 session |
+| 17 | Fund-of-Funds Look-Through (optional) | MISSING-15 (wire resolveSubFundTicker) | 0.5–1 session |
 
 ---
 
@@ -1199,6 +1242,34 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 16. **No culture/trends in scoring.** Social media sentiment, generational preferences, etc. add noise to the objective model. Claude may reference current events and cultural context in the Investment Brief narrative when it enhances readability and relevance.
 
 17. **Cost Efficiency enhanced with Tiingo fee components.** When 12b-1 marketing fees are present, apply penalty within cost factor (-5 points per 0.10% of 12b-1, capped at -15). Distinguishes funds with identical headline expense ratios but different fee structures.
+
+## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
+
+**Goal:** Independent assessment of v6 codebase against spec and v5.1 reference. No source code changes.
+
+**Findings:**
+
+1. **CRITICAL-6 discovered: Allocation engine uses capture threshold, not de minimis floor.** `allocation.ts` Step 4 implements `targetCapture = 70 - (risk-1) × 5` (v5.1 pattern), not the §3.5 de minimis "drop any fund < 5%." The file header and §9.1 incorrectly claim de minimis was implemented. This is the only remaining critical math bug.
+
+2. **MISSING-14 identified: Portfolio page does not display allocations.** v5.1 shows allocation_pct per fund in the Portfolio tab. v6 only computes allocations during Brief generation. Users must generate a Brief to see their personalized allocation.
+
+3. **MISSING-15 confirmed: Fund-of-funds look-through still stubbed.** `resolveSubFundTicker()` returns null since Session 2. Low impact for TerrAscend universe.
+
+4. **MISSING-16 identified: fund-summaries.ts not in spec file inventory.** File exists, works, but wasn't documented. Added to §5.5.
+
+5. **Scoring engine math verified correct.** Z-space + CDF, volatility-adjusted momentum, bond quality, positioning normalization, coverage-based confidence scaling — all match spec.
+
+**Repo cleanup:**
+- Deleted `FUNDLENS_REBUILD_PLAN.md` (severely stale, contradicted spec on 10+ points)
+- Deleted `FundLens_Spec_vs_Code_Gap_Analysis.md` (all 20 gaps resolved, misleading to keep)
+- Deleted `SESSION_ASSESSMENT.md` (one-time task instruction, now complete)
+- Created `ARCHIVED.md` in v5.1 repo (marks it as reference-only)
+- Created `ASSESSMENT_REPORT.md` with full findings (25 detailed questions answered)
+
+**Spec updates:** §5.5 (added fund-summaries.ts), §9.1 (corrected allocation status), §9.2 (added CRITICAL-6), §9.3 (added MISSING-14/15/16), §9.5 (rewrote roadmap for remaining sessions), §10 (this entry).
+
+**Remaining to match v5.1:** 3 focused sessions (allocation fix + Portfolio display, integration testing, polish).
+**Full spec compliance:** 5 sessions (adds help section, fund-of-funds).
 
 ## April 7, 2026 — Session 11: v5.1 UI Port
 
