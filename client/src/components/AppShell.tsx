@@ -16,7 +16,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { fetchPipelineStatus, triggerPipeline } from '../api';
+import { fetchPipelineStatus, triggerPipeline, abortPipeline } from '../api';
 import { theme } from '../theme';
 import { PipelineOverlay } from './PipelineOverlay';
 import { HelpChat } from './HelpChat';
@@ -104,6 +104,7 @@ export function AppShell() {
   const [isRunning, setIsRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState<number | null>(null);
   const [stepMessage, setStepMessage] = useState<string | null>(null);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   const displayName =
     user?.user_metadata?.display_name ||
@@ -119,16 +120,17 @@ export function AppShell() {
     return () => window.removeEventListener('resize', handleResize);
   }, [handleResize]);
 
-  // Check pipeline status on mount to set source badge
+  // Check pipeline status on mount — set source badge but NEVER resume
+  // a running pipeline overlay. The overlay only shows for runs started
+  // in THIS browser session (via handleRefreshAnalysis).
   useEffect(() => {
     fetchPipelineStatus().then(res => {
       if (res.data) {
-        if (res.data.isRunning) {
-          setSource('analyzing');
-          setIsRunning(true);
-        } else if (res.data.latestRun?.status === 'completed') {
+        if (res.data.latestRun?.status === 'completed') {
           setSource('live');
         }
+        // Intentionally NOT setting isRunning here — opening the app
+        // should never show a mid-progress overlay from a previous session
       }
     });
   }, []);
@@ -144,6 +146,7 @@ export function AppShell() {
           setIsRunning(false);
           setCurrentStep(null);
           setStepMessage(null);
+          setActiveRunId(null);
         } else {
           const d = res.data as Record<string, unknown>;
           if (d.currentStep != null) setCurrentStep(d.currentStep as number);
@@ -156,13 +159,38 @@ export function AppShell() {
     return () => clearInterval(interval);
   }, [isRunning]);
 
+  // Abort pipeline on browser close / tab close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (activeRunId) {
+        // Use sendBeacon for reliability — fetch may be cancelled during unload
+        navigator.sendBeacon(
+          '/api/pipeline/abort',
+          new Blob(
+            [JSON.stringify({ runId: activeRunId })],
+            { type: 'application/json' }
+          )
+        );
+        // Also try fetch as backup (sendBeacon doesn't send auth headers)
+        abortPipeline(activeRunId).catch(() => {});
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [activeRunId]);
+
   const handleRefreshAnalysis = async () => {
     setIsRunning(true);
     setSource('analyzing');
+    setCurrentStep(null);
+    setStepMessage(null);
     const res = await triggerPipeline();
     if (res.error) {
       setIsRunning(false);
       setSource('seed');
+      setActiveRunId(null);
+    } else if (res.data) {
+      setActiveRunId(res.data.runId);
     }
   };
 

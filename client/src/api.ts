@@ -185,6 +185,12 @@ export const retryPipeline = (failedRunId: string) =>
     body: JSON.stringify({ failedRunId }),
   });
 
+export const abortPipeline = (runId: string) =>
+  apiFetch<{ message: string }>('/api/pipeline/abort', {
+    method: 'POST',
+    body: JSON.stringify({ runId }),
+  });
+
 // Briefs
 export const fetchBriefs = () =>
   apiFetch<{ briefs: Brief[] }>('/api/briefs');

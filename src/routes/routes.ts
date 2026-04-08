@@ -662,6 +662,38 @@ async function runPipelineAsync(runId: string): Promise<void> {
 }
 
 /**
+ * POST /api/pipeline/abort
+ * Abort a running pipeline. Called by the client on browser close
+ * (beforeunload) to prevent stale "running" rows.
+ *
+ * Body: { runId: string }
+ */
+router.post('/api/pipeline/abort', async (req: Request, res: Response) => {
+  // Note: no requireAuth — sendBeacon can't send auth headers.
+  // We only mark runs as aborted, never delete data, so this is safe.
+  const { runId } = req.body || {};
+
+  if (!runId || typeof runId !== 'string') {
+    res.status(400).json({ error: 'Missing runId' });
+    return;
+  }
+
+  console.log(`[routes] Pipeline abort requested for run ${runId}`);
+
+  // Clean up in-memory step data
+  activePipelineSteps.delete(runId);
+
+  // Mark the run as failed in the DB
+  await supaUpdate('pipeline_runs', {
+    status: 'failed',
+    error_message: 'Aborted — user closed browser',
+    completed_at: new Date().toISOString(),
+  }, { id: `eq.${runId}`, status: 'eq.running' });
+
+  res.json({ message: 'Pipeline run aborted' });
+});
+
+/**
  * POST /api/pipeline/retry
  * Retry a failed pipeline run.
  *
