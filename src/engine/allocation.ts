@@ -31,6 +31,8 @@ import {
   RISK_MAX,
 } from './constants.js';
 
+const { CAPTURE_HIGH, CAPTURE_STEP } = ALLOCATION;
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Input fund data for the allocation engine */
@@ -213,26 +215,34 @@ export function computeAllocations(
     allocMap.set(ticker, (rawWeight / totalRaw) * 100);
   }
 
-  // ── STEP 4 — De Minimis Floor (5%, §3.5) ──────────────────────────────
-  // Drop any fund with allocation < 5%, then renormalize survivors
-  const deMinimisThreshold = ALLOCATION.DE_MINIMIS_PCT * 100; // 5
+  // ── STEP 4 — Capture Threshold Trim (v5.1 pattern, continuous) ──────
+  // Rank funds descending by allocation weight. Walk down until cumulative
+  // weight hits the risk-scaled target. Cut everything below, renormalize.
+  // targetCapture = CAPTURE_HIGH - (risk - 1) * CAPTURE_STEP
+  // Continuous on the 1.0–7.0 scale — no rounding, no stair steps.
+  const targetCapture = CAPTURE_HIGH - (rt - 1) * CAPTURE_STEP;
 
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const [ticker, pct] of allocMap) {
-      if (pct < deMinimisThreshold) {
-        allocMap.delete(ticker);
-        changed = true;
-      }
+  const ranked = [...allocMap.entries()].sort((a, b) => b[1] - a[1]);
+  let cumulative = 0;
+  const survivors = new Set<string>();
+
+  for (const [ticker, pct] of ranked) {
+    survivors.add(ticker);
+    cumulative += pct;
+    if (cumulative >= targetCapture) break;
+  }
+
+  // Remove everything that didn't make the cut
+  for (const ticker of allocMap.keys()) {
+    if (!survivors.has(ticker)) {
+      allocMap.delete(ticker);
     }
-    // Renormalize survivors
-    if (changed) {
-      const survivorSum = Array.from(allocMap.values()).reduce((a, b) => a + b, 0) || 1;
-      for (const [ticker, pct] of allocMap) {
-        allocMap.set(ticker, (pct / survivorSum) * 100);
-      }
-    }
+  }
+
+  // Renormalize survivors to 100%
+  const survivorSum = Array.from(allocMap.values()).reduce((a, b) => a + b, 0) || 1;
+  for (const [ticker, pct] of allocMap) {
+    allocMap.set(ticker, (pct / survivorSum) * 100);
   }
 
   // ── STEP 5 — Rounding and Error Absorption (§3.6) ─────────────────────

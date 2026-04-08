@@ -18,7 +18,7 @@
  * References: Spec §6.1–§6.7, v5.1 PortfolioTab.jsx
  */
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   fetchScores,
@@ -440,78 +440,87 @@ export function Portfolio() {
               {rankedScores.map((s, i) => {
                 const ticker = s.funds?.ticker || s.fund_id.slice(0, 8);
                 const name = s.funds?.name || '';
+                const isSelected = selectedFund === ticker;
                 return (
-                  <tr
-                    key={s.id}
-                    onClick={() => setSelectedFund(ticker)}
-                    style={{
-                      borderBottom: i < rankedScores.length - 1 ? `1px solid ${theme.colors.border}` : 'none',
-                      cursor: 'pointer',
-                      background: selectedFund === ticker ? theme.colors.surfaceHover : 'transparent',
-                      transition: 'background 0.15s',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (selectedFund !== ticker) e.currentTarget.style.background = theme.colors.surfaceHover;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (selectedFund !== ticker) e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    {/* Fund (ticker + name) */}
-                    <td style={{ padding: '10px 16px', textAlign: 'left' }}>
-                      <span style={{
-                        fontWeight: 700, color: theme.colors.accentBlue,
-                        fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
-                      }}>
-                        {ticker}
-                      </span>
-                      {name && (
+                  <React.Fragment key={s.id}>
+                    <tr
+                      onClick={() => setSelectedFund(isSelected ? null : ticker)}
+                      style={{
+                        borderBottom: (!isSelected && i < rankedScores.length - 1) ? `1px solid ${theme.colors.border}` : 'none',
+                        cursor: 'pointer',
+                        background: isSelected ? theme.colors.surfaceHover : 'transparent',
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isSelected) e.currentTarget.style.background = theme.colors.surfaceHover;
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isSelected) e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      {/* Fund (ticker + name) */}
+                      <td style={{ padding: '10px 16px', textAlign: 'left' }}>
                         <span style={{
-                          marginLeft: 8, fontSize: 12, color: theme.colors.textDim,
-                          maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          fontWeight: 700, color: theme.colors.accentBlue,
+                          fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
                         }}>
-                          {name}
+                          {ticker}
                         </span>
-                      )}
-                    </td>
-                    {/* Score */}
-                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-                      <span style={{
-                        padding: '4px 10px', borderRadius: 6,
-                        background: scoreBg(s.userComposite),
-                        color: scoreColor(s.userComposite),
-                        fontWeight: 700, fontFamily: theme.fonts.mono,
-                        fontSize: 14,
-                      }}>
-                        {s.userComposite}
-                      </span>
-                    </td>
-                    {/* Tier */}
-                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-                      <span style={{
-                        padding: '3px 8px', borderRadius: 4, fontSize: 11,
-                        fontWeight: 600, letterSpacing: '0.03em',
-                        color: s.userTierColor,
-                        background: `${s.userTierColor}18`,
-                        border: `1px solid ${s.userTierColor}40`,
-                      }}>
-                        {s.userTier}
-                      </span>
-                    </td>
-                    {/* Factor scores */}
-                    <td style={tdFactorStyle}>
-                      <span style={{ color: scoreColor(s.cost_efficiency) }}>{s.cost_efficiency.toFixed(0)}</span>
-                    </td>
-                    <td style={tdFactorStyle}>
-                      <span style={{ color: scoreColor(s.holdings_quality) }}>{s.holdings_quality.toFixed(0)}</span>
-                    </td>
-                    <td style={tdFactorStyle}>
-                      <span style={{ color: scoreColor(s.momentum) }}>{s.momentum.toFixed(0)}</span>
-                    </td>
-                    <td style={tdFactorStyle}>
-                      <span style={{ color: scoreColor(s.positioning) }}>{s.positioning.toFixed(0)}</span>
-                    </td>
-                  </tr>
+                        {name && (
+                          <span style={{
+                            marginLeft: 8, fontSize: 12, color: theme.colors.textDim,
+                            maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>
+                            {name}
+                          </span>
+                        )}
+                      </td>
+                      {/* Score */}
+                      <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                        <span style={{
+                          padding: '4px 10px', borderRadius: 6,
+                          background: scoreBg(s.userComposite),
+                          color: scoreColor(s.userComposite),
+                          fontWeight: 700, fontFamily: theme.fonts.mono,
+                          fontSize: 14,
+                        }}>
+                          {s.userComposite}
+                        </span>
+                      </td>
+                      {/* Tier */}
+                      <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                        <span style={{
+                          padding: '3px 8px', borderRadius: 4, fontSize: 11,
+                          fontWeight: 600, letterSpacing: '0.03em',
+                          color: s.userTierColor,
+                          background: `${s.userTierColor}18`,
+                          border: `1px solid ${s.userTierColor}40`,
+                        }}>
+                          {s.userTier}
+                        </span>
+                      </td>
+                      {/* Factor scores */}
+                      <td style={tdFactorStyle}>
+                        <span style={{ color: scoreColor(s.cost_efficiency) }}>{s.cost_efficiency.toFixed(0)}</span>
+                      </td>
+                      <td style={tdFactorStyle}>
+                        <span style={{ color: scoreColor(s.holdings_quality) }}>{s.holdings_quality.toFixed(0)}</span>
+                      </td>
+                      <td style={tdFactorStyle}>
+                        <span style={{ color: scoreColor(s.momentum) }}>{s.momentum.toFixed(0)}</span>
+                      </td>
+                      <td style={tdFactorStyle}>
+                        <span style={{ color: scoreColor(s.positioning) }}>{s.positioning.toFixed(0)}</span>
+                      </td>
+                    </tr>
+                    {/* Inline holdings expansion */}
+                    {isSelected && (
+                      <FundDetail
+                        ticker={ticker}
+                        onClose={() => setSelectedFund(null)}
+                      />
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -654,13 +663,7 @@ export function Portfolio() {
         </div>
       </div>
 
-      {/* ── Fund Detail Sidebar ──────────────────────────────────────── */}
-      {selectedFund && (
-        <FundDetail
-          ticker={selectedFund}
-          onClose={() => setSelectedFund(null)}
-        />
-      )}
+      {/* Fund detail now renders inline in the table above */}
     </div>
   );
 }

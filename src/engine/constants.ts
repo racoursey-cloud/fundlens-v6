@@ -89,10 +89,17 @@ export const SCORE_COLORS = {
 export const ALLOCATION = {
   /** MAD consistency constant (1/Φ⁻¹(0.75)) — makes MAD comparable to stdev for normal distributions */
   MAD_CONSISTENCY: 0.6745,
-  /** De minimis floor — positions below this are dropped (spec §3.5) */
-  DE_MINIMIS_PCT: 0.05,
   /** Quality gate: funds with this many or more fallbacks are excluded */
   QUALITY_GATE_MAX_FALLBACKS: 4,
+  /**
+   * Capture threshold (v5.1 pattern, continuous).
+   * Rank funds descending by weight, walk down until cumulative weight
+   * hits the target, cut everything below, renormalize survivors.
+   * targetCapture = CAPTURE_HIGH - (risk - 1) * CAPTURE_STEP
+   * Linear on the continuous 1.0–7.0 risk scale — no stair steps.
+   */
+  CAPTURE_HIGH: 70,
+  CAPTURE_STEP: 5,
 } as const;
 
 // ─── FRED Commodity Series (Spec §4.4) ──────────────────────────────────────

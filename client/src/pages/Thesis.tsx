@@ -168,13 +168,17 @@ export function Thesis() {
             )}
           </div>
 
-          {/* Thesis narrative */}
-          <p style={{
-            fontSize: 14, lineHeight: 1.75,
-            color: '#d1d5db', margin: 0, maxWidth: 720,
-          }}>
-            {thesis.narrative}
-          </p>
+          {/* Thesis narrative — split on double newlines for paragraph breaks */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 720 }}>
+            {thesis.narrative.split(/\n\s*\n/).map((para, i) => (
+              <p key={i} style={{
+                fontSize: 14, lineHeight: 1.75,
+                color: '#d1d5db', margin: 0,
+              }}>
+                {para.trim()}
+              </p>
+            ))}
+          </div>
 
           {/* Key themes */}
           {thesis.key_themes && thesis.key_themes.length > 0 && (

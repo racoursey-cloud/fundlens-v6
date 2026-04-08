@@ -120,9 +120,9 @@ export function Settings() {
     const res = await triggerPipeline();
     setPipelineTriggering(false);
     if (res.error) {
-      showToast(`Pipeline error: ${res.error}`);
+      showToast(`Error: ${res.error}`);
     } else {
-      showToast('Pipeline started');
+      showToast('Analysis started');
       // Refresh status
       const psRes = await fetchPipelineStatus();
       if (psRes.data) setPipelineStatus(psRes.data);
@@ -260,6 +260,24 @@ export function Settings() {
         <div style={{
           ...cardStyle, padding: 0, overflow: 'hidden',
         }}>
+          {/* Column headers */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '8px 20px',
+            borderBottom: `1px solid ${theme.colors.border}`,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: theme.colors.textDim, minWidth: 60 }}>
+                Ticker
+              </span>
+              <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: theme.colors.textDim }}>
+                Fund Name
+              </span>
+            </div>
+            <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: theme.colors.textDim, flexShrink: 0, marginLeft: 12 }}>
+              Expense Ratio
+            </span>
+          </div>
           {funds.sort((a, b) => a.ticker.localeCompare(b.ticker)).map((fund, i) => (
             <div key={fund.id} style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -296,9 +314,9 @@ export function Settings() {
 
       <Divider />
 
-      {/* ═══ SECTION 4 — PIPELINE (admin) ═══ */}
+      {/* ═══ SECTION 4 — ANALYSIS (admin) ═══ */}
       <section style={{ marginBottom: 32 }}>
-        <SectionHeader>Pipeline</SectionHeader>
+        <SectionHeader>Analysis</SectionHeader>
         <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 12 }}>
           {pipelineStatus && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -333,7 +351,7 @@ export function Settings() {
               transition: 'opacity 0.15s',
             }}
           >
-            {pipelineTriggering ? 'Starting...' : 'Run Pipeline'}
+            {pipelineTriggering ? 'Starting…' : 'Refresh Analysis'}
           </button>
         </div>
       </section>
