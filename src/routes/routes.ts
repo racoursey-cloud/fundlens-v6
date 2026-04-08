@@ -596,18 +596,22 @@ async function runPipelineAsync(runId: string): Promise<void> {
     const result = await runFullPipeline(funds, onProgress);
 
     // ── Step 15: Generate natural-language fund summaries (editorial voice) ──
+    console.log(`[routes] Pipeline ${runId}: starting fund summaries`);
     activePipelineSteps.set(runId, { currentStep: 15, stepMessage: 'Generating fund summaries', totalSteps: 16 });
     let fundSummaries = {};
     try {
       const { generateFundSummaries } = await import('../engine/fund-summaries.js');
       fundSummaries = await generateFundSummaries(result.scoring.funds, funds);
+      console.log(`[routes] Pipeline ${runId}: fund summaries complete`);
     } catch (err) {
       console.warn(`[routes] Fund summary generation failed (non-fatal): ${err}`);
     }
 
     // ── Step 16: Persist results to Supabase ──
+    console.log(`[routes] Pipeline ${runId}: starting persist`);
     activePipelineSteps.set(runId, { currentStep: 16, stepMessage: 'Saving results', totalSteps: 16 });
     await persistPipelineResults(runId, result, funds, fundSummaries);
+    console.log(`[routes] Pipeline ${runId}: persist complete`);
 
     // Save pipeline log to the run record
     const totalElapsed = ((Date.now() - logStart) / 1000).toFixed(1);
@@ -621,13 +625,23 @@ async function runPipelineAsync(runId: string): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[routes] Pipeline run ${runId} failed: ${msg}`);
-    activePipelineSteps.delete(runId);
+    // Keep step data visible briefly so overlay can show the error state
+    const lastStep = activePipelineSteps.get(runId);
+    if (lastStep) {
+      activePipelineSteps.set(runId, {
+        ...lastStep,
+        stepMessage: `Error: ${msg.slice(0, 120)}`,
+      });
+    }
 
     await supaUpdate('pipeline_runs', {
       status: 'failed',
       error_message: msg,
       completed_at: new Date().toISOString(),
     }, { id: `eq.${runId}` });
+
+    // Clean up after a delay so the client has time to poll the error
+    setTimeout(() => activePipelineSteps.delete(runId), 10000);
   }
 }
 

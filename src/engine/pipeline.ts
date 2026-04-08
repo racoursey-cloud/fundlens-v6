@@ -733,11 +733,15 @@ export async function runFullPipeline(
     }
   }
 
+  console.log(`[pipeline] Scoring ${fundScoreInputs.length} funds (${perFundWeights.size} with coverage scaling)`);
+
   const scoring = scoreAndRankFunds(
     fundScoreInputs,
     DEFAULT_FACTOR_WEIGHTS,
     perFundWeights.size > 0 ? perFundWeights : undefined
   );
+
+  console.log(`[pipeline] Scoring complete: ${scoring.funds.length} funds ranked`);
 
   // ── Step 14: Scores computed — pipeline returns to routes.ts ──
   // Steps 15-16 (fund summaries + DB persist) happen in routes.ts
