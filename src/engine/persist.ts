@@ -21,6 +21,7 @@ import { computeCompositeFromZScores } from './scoring.js';
 import { DEFAULT_FACTOR_WEIGHTS } from './constants.js';
 import type { FundRow, FundScoresRow } from './types.js';
 import type { PipelineResult } from './pipeline.js';
+import type { FundSummaryMap } from './fund-summaries.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,8 @@ export interface PersistResult {
 export async function persistPipelineResults(
   runId: string,
   result: PipelineResult,
-  funds: FundRow[]
+  funds: FundRow[],
+  fundSummaries?: FundSummaryMap
 ): Promise<PersistResult> {
   const errors: string[] = [];
   let scoresWritten = 0;
@@ -84,7 +86,10 @@ export async function persistPipelineResults(
       composite_default: compositeDefault,
       tier: fundScore.tier,
       tier_color: fundScore.tierColor,
-      factor_details: fundScore.factorDetails,
+      factor_details: {
+        ...fundScore.factorDetails,
+        summary: fundSummaries?.[fundScore.ticker] ?? null,
+      },
       scored_at: new Date().toISOString(),
     };
 
@@ -118,25 +123,33 @@ export async function persistPipelineResults(
     thesisSaved = true;
   }
 
-  // ── 3. Update holdings sectors ────────────────────────────────────────
-  // The pipeline classified holdings into sectors (via Claude Haiku).
-  // Update the holdings_cache rows with sector data so the UI can
-  // show sector breakdowns without re-classifying.
+  // ── 3. Upsert holdings to holdings_cache ──────────────────────────────
+  // Write all resolved holdings for each fund so the UI can show
+  // company-level drill-in (inline fund detail, sector donut drill).
+  // Uses upsert on (fund_id, cusip) to avoid duplicates.
 
   for (const [ticker, detail] of result.fundDetails) {
     const fund = funds.find(f => f.ticker === ticker);
     if (!fund) continue;
 
     for (const holding of detail.holdings) {
-      if (!holding.sector) continue;
-
-      // Update the holdings_cache row's sector field
-      const { error } = await supaUpdate('holdings_cache', {
+      const row = {
+        fund_id: fund.id,
+        name: holding.name,
+        cusip: holding.cusip,
+        ticker: holding.ticker,
+        pct_of_nav: holding.pctOfNav,
+        value_usd: holding.valueUsd,
+        asset_category: holding.assetCategory,
+        country: holding.countryOfIssuer,
         sector: holding.sector,
-      }, {
-        fund_id: `eq.${fund.id}`,
-        cusip: `eq.${holding.cusip}`,
-      });
+        is_look_through: holding.isLookThrough,
+        parent_fund_name: holding.parentFundName,
+        accession_number: '',
+        report_date: new Date().toISOString().slice(0, 10),
+      };
+
+      const { error } = await supaInsert('holdings_cache', row, { upsert: true });
 
       if (!error) holdingsWritten++;
     }

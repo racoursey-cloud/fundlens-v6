@@ -478,6 +478,9 @@ router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Respon
   res.json({
     latestRun,
     isRunning,
+    currentStep: isRunning ? (latestRun as unknown as Record<string, unknown>)?.current_step ?? null : null,
+    stepMessage: isRunning ? (latestRun as unknown as Record<string, unknown>)?.step_message ?? null : null,
+    totalSteps: isRunning ? (latestRun as unknown as Record<string, unknown>)?.total_steps ?? null : null,
     recentRuns: runs || [],
   });
 });
@@ -563,11 +566,45 @@ async function runPipelineAsync(runId: string): Promise<void> {
       return;
     }
 
+    // Pipeline log accumulator
+    const pipelineLog: string[] = [];
+    const logStart = Date.now();
+
+    // Progress callback: update DB + accumulate log
+    const onProgress = async (step: number, total: number, message: string) => {
+      const elapsed = ((Date.now() - logStart) / 1000).toFixed(1);
+      pipelineLog.push(`[${elapsed}s] Step ${step}/${total}: ${message}`);
+      // Update pipeline_runs with current step (non-blocking)
+      supaUpdate('pipeline_runs', {
+        current_step: step,
+        step_message: message,
+        total_steps: total,
+      }, { id: `eq.${runId}` }).catch(() => {});
+    };
+
     // Run the full pipeline
-    const result = await runFullPipeline(funds);
+    const result = await runFullPipeline(funds, onProgress);
+
+    // Generate natural-language fund summaries (editorial voice)
+    let fundSummaries = {};
+    try {
+      const { generateFundSummaries } = await import('../engine/fund-summaries.js');
+      fundSummaries = await generateFundSummaries(result.scoring.funds, funds);
+    } catch (err) {
+      console.warn(`[routes] Fund summary generation failed (non-fatal): ${err}`);
+    }
 
     // Persist results to Supabase
-    await persistPipelineResults(runId, result, funds);
+    await persistPipelineResults(runId, result, funds, fundSummaries);
+
+    // Save pipeline log to the run record
+    const totalElapsed = ((Date.now() - logStart) / 1000).toFixed(1);
+    pipelineLog.push(`[${totalElapsed}s] Pipeline completed successfully`);
+    await supaUpdate('pipeline_runs', {
+      pipeline_log: pipelineLog.join('\n'),
+      current_step: null,
+      step_message: null,
+    }, { id: `eq.${runId}` }).catch(() => {});
 
     console.log(`[routes] Pipeline run ${runId} completed successfully`);
   } catch (err) {
@@ -614,6 +651,44 @@ router.post('/api/pipeline/retry', requireAuth, requireAdmin, pipelineRateLimit,
     newRunId: result.newRunId,
     retriedFrom: failedRunId,
   });
+});
+
+/**
+ * GET /api/pipeline/log/:runId
+ * Export the pipeline log for a specific run as plain text.
+ * Useful for troubleshooting — can be copy/pasted to share.
+ */
+router.get('/api/pipeline/log/:runId', requireAuth, async (req: Request, res: Response) => {
+  const { runId } = req.params;
+
+  const { data: run, error } = await supaFetch<Record<string, unknown>>('pipeline_runs', {
+    params: { id: `eq.${runId}`, limit: '1' },
+    single: true,
+  });
+
+  if (error || !run) {
+    res.status(404).json({ error: 'Pipeline run not found' });
+    return;
+  }
+
+  const log = (run.pipeline_log as string) || 'No log available for this run.';
+  const status = run.status as string;
+  const startedAt = run.started_at as string;
+  const completedAt = run.completed_at as string || 'N/A';
+  const errorMsg = run.error_message as string || '';
+
+  const header = [
+    `FundLens Pipeline Log`,
+    `Run ID: ${runId}`,
+    `Status: ${status}`,
+    `Started: ${startedAt}`,
+    `Completed: ${completedAt}`,
+    errorMsg ? `Error: ${errorMsg}` : null,
+    `${'─'.repeat(60)}`,
+  ].filter(Boolean).join('\n');
+
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`${header}\n\n${log}`);
 });
 
 /**

@@ -36,6 +36,10 @@ const PIPELINE_STEPS = [
 
 interface Props {
   isRunning: boolean;
+  /** Real step from server polling (null = use simulated) */
+  currentStep?: number | null;
+  /** Step message from server */
+  stepMessage?: string | null;
 }
 
 // ─── Step indicator ─────────────────────────────────────────────────────────
@@ -80,9 +84,8 @@ function StepDot({ status, index }: { status: 'done' | 'active' | 'pending'; ind
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export function PipelineOverlay({ isRunning }: Props) {
-  // Simulated step progress — advances every ~8 seconds.
-  // When server-side step polling is added, replace this with real data.
+export function PipelineOverlay({ isRunning, currentStep, stepMessage }: Props) {
+  // Use real step from server if available, otherwise simulate
   const [simulatedStep, setSimulatedStep] = useState(0);
 
   useEffect(() => {
@@ -90,11 +93,9 @@ export function PipelineOverlay({ isRunning }: Props) {
       setSimulatedStep(0);
       return;
     }
-    // Start at step 1
     setSimulatedStep(1);
     const interval = setInterval(() => {
       setSimulatedStep(prev => {
-        // Don't go past the second-to-last step — let completion handle the final state
         if (prev >= PIPELINE_STEPS.length - 1) return prev;
         return prev + 1;
       });
@@ -104,8 +105,10 @@ export function PipelineOverlay({ isRunning }: Props) {
 
   if (!isRunning) return null;
 
-  const currentIndex = Math.max(0, simulatedStep - 1);
-  const progressPct = Math.min(95, (simulatedStep / PIPELINE_STEPS.length) * 100);
+  // Prefer real step data from server, fall back to simulated
+  const activeStep = currentStep ?? simulatedStep;
+  const currentIndex = Math.max(0, activeStep - 1);
+  const progressPct = Math.min(95, (activeStep / PIPELINE_STEPS.length) * 100);
 
   return (
     <>
@@ -175,17 +178,27 @@ export function PipelineOverlay({ isRunning }: Props) {
                   borderBottom: i < PIPELINE_STEPS.length - 1 ? '1px solid #1c1e23' : 'none',
                 }}>
                   <StepDot index={i} status={status} />
-                  <span style={{
-                    fontSize: 13, fontFamily: theme.fonts.body,
-                    fontWeight: status === 'active' ? 700 : 400,
-                    color: status === 'done' ? '#059669'
-                         : status === 'active' ? '#f9fafb'
-                         : '#6b7280',
-                    transition: 'color 0.2s',
-                    letterSpacing: '0.005em',
-                  }}>
-                    {label}
-                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{
+                      fontSize: 13, fontFamily: theme.fonts.body,
+                      fontWeight: status === 'active' ? 700 : 400,
+                      color: status === 'done' ? '#059669'
+                           : status === 'active' ? '#f9fafb'
+                           : '#6b7280',
+                      transition: 'color 0.2s',
+                      letterSpacing: '0.005em',
+                    }}>
+                      {label}
+                    </span>
+                    {status === 'active' && stepMessage && (
+                      <span style={{
+                        fontSize: 11, color: '#6b7280',
+                        fontFamily: theme.fonts.body, lineHeight: 1.4,
+                      }}>
+                        {stepMessage}
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })}

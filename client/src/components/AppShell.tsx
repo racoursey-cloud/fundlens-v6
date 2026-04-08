@@ -101,6 +101,8 @@ export function AppShell() {
   // Pipeline / source state
   const [source, setSource] = useState<SourceState>('seed');
   const [isRunning, setIsRunning] = useState(false);
+  const [currentStep, setCurrentStep] = useState<number | null>(null);
+  const [stepMessage, setStepMessage] = useState<string | null>(null);
 
   const displayName =
     user?.user_metadata?.display_name ||
@@ -135,9 +137,17 @@ export function AppShell() {
     if (!isRunning) return;
     const interval = setInterval(async () => {
       const res = await fetchPipelineStatus();
-      if (res.data && !res.data.isRunning) {
-        setSource('live');
-        setIsRunning(false);
+      if (res.data) {
+        if (!res.data.isRunning) {
+          setSource('live');
+          setIsRunning(false);
+          setCurrentStep(null);
+          setStepMessage(null);
+        } else {
+          const d = res.data as Record<string, unknown>;
+          if (d.currentStep != null) setCurrentStep(d.currentStep as number);
+          if (d.stepMessage != null) setStepMessage(d.stepMessage as string);
+        }
       }
     }, 3000);
     return () => clearInterval(interval);
@@ -334,7 +344,7 @@ export function AppShell() {
       )}
 
       {/* ═══ PIPELINE OVERLAY (v5.1 pattern) ══════════════════════════ */}
-      <PipelineOverlay isRunning={isRunning} />
+      <PipelineOverlay isRunning={isRunning} currentStep={currentStep} stepMessage={stepMessage} />
     </div>
   );
 }
