@@ -2,7 +2,7 @@
  * FundLens v6 — Thesis Page
  *
  * Ported from v5.1's ThesisTab.jsx. Two cards stacked vertically:
- *   1. Investment Thesis — macro stance badge, dominant theme, narrative text
+ *   1. Investment Brief — macro stance badge, dominant theme, narrative text
  *   2. Sector Outlook — SectorScorecard grid (11–14 GICS sectors, scored 1–10)
  *
  * Data from GET /api/thesis/latest → thesis_cache table.
@@ -60,7 +60,7 @@ export function Thesis() {
   if (loading) {
     return (
       <div style={{ color: theme.colors.textMuted, padding: '32px' }}>
-        Loading thesis...
+        Loading brief...
       </div>
     );
   }
@@ -80,13 +80,13 @@ export function Thesis() {
           fontFamily: theme.fonts.serif, fontSize: 18, fontWeight: 700,
           color: theme.colors.text, margin: 0,
         }}>
-          Investment Thesis
+          Investment Brief
         </h2>
         <p style={{
           fontSize: 13, color: theme.colors.textDim,
           maxWidth: 360, lineHeight: 1.5,
         }}>
-          Run the pipeline to generate your macro thesis and sector outlook.
+          Run the analysis to generate your investment brief and sector outlook.
         </p>
       </div>
     );
@@ -125,7 +125,7 @@ export function Thesis() {
             fontFamily: theme.fonts.serif, fontWeight: 700, fontSize: 15,
             color: theme.colors.text,
           }}>
-            Investment Thesis
+            Investment Brief
           </span>
           {thesis.generated_at && (
             <span style={{ fontSize: 11, color: theme.colors.textDim }}>
@@ -168,16 +168,41 @@ export function Thesis() {
             )}
           </div>
 
-          {/* Thesis narrative — split on double newlines for paragraph breaks */}
+          {/* Brief narrative — split on double newlines, render section headers */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 720 }}>
-            {thesis.narrative.split(/\n\s*\n/).map((para, i) => (
-              <p key={i} style={{
-                fontSize: 14, lineHeight: 1.75,
-                color: '#d1d5db', margin: 0,
-              }}>
-                {para.trim()}
-              </p>
-            ))}
+            {thesis.narrative.split(/\n\s*\n/).map((para, i) => {
+              const trimmed = para.trim();
+              if (!trimmed) return null;
+              // Detect bold section headers like **What Happened**
+              const headerMatch = trimmed.match(/^\*\*(.+?)\*\*\s*(.*)/s);
+              if (headerMatch) {
+                return (
+                  <div key={i}>
+                    <h3 style={{
+                      fontSize: 13, fontWeight: 700, textTransform: 'uppercase',
+                      letterSpacing: '0.06em', color: theme.colors.textMuted,
+                      margin: i > 0 ? '8px 0 6px' : '0 0 6px',
+                      fontFamily: theme.fonts.body,
+                    }}>
+                      {headerMatch[1]}
+                    </h3>
+                    {headerMatch[2] && (
+                      <p style={{ fontSize: 14, lineHeight: 1.75, color: '#d1d5db', margin: 0 }}>
+                        {headerMatch[2].trim()}
+                      </p>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <p key={i} style={{
+                  fontSize: 14, lineHeight: 1.75,
+                  color: '#d1d5db', margin: 0,
+                }}>
+                  {trimmed}
+                </p>
+              );
+            })}
           </div>
 
           {/* Key themes */}
