@@ -444,12 +444,12 @@ This prevents the engine from allocating to funds where the score is mostly defa
 ### 3.4 Step 3: Exponential Allocation Curve
 
 ```
-k = Kelly-fraction-derived parameter from risk level (see table below)
+k = Kelly-fraction-derived parameter from risk level (see table and interpolation below)
 raw_weight[i] = e^(k × mod_z[i])
 normalized_weight[i] = raw_weight[i] / Σ(raw_weight)
 ```
 
-**7-Point Risk Scale — Kelly Fraction Mapping:**
+**7-Point Risk Scale — Kelly Fraction Anchor Points:**
 
 | Risk Level | Label | Kelly Fraction | k Parameter | Capture Character |
 |------------|-------|---------------|-------------|-------------------|
@@ -461,9 +461,22 @@ normalized_weight[i] = raw_weight[i] / Σ(raw_weight)
 | 6 | Aggressive | ~0.65 | 1.50 | High conviction |
 | 7 | Very Aggressive | ~0.80 | 1.85 | Maximum conviction |
 
-The k values are non-linearly spaced — tighter at the conservative end (where differences are subtle) and wider at the aggressive end (where differences are dramatic). This produces genuinely different allocation profiles at each level, not just linear rescaling.
+**Continuous interpolation (Session 7 decision):** The risk slider accepts any value from 1.0 to 7.0 (continuous, not integer-only). The k parameter is linearly interpolated between the two nearest anchor points:
 
-Fund count and concentration are emergent properties of the math. No hard-coded fund counts, no inverse mapping tables.
+```
+floor_level = Math.floor(risk_tolerance)
+ceil_level  = Math.ceil(risk_tolerance)
+fraction    = risk_tolerance - floor_level
+
+If floor_level == ceil_level:
+  k = k_table[floor_level]
+Else:
+  k = k_table[floor_level] + (k_table[ceil_level] - k_table[floor_level]) × fraction
+```
+
+Example: risk_tolerance = 5.3 → k = 1.20 + (1.50 - 1.20) × 0.3 = 1.29. This produces a meaningfully different allocation than either 5.0 (k=1.20) or 6.0 (k=1.50).
+
+The 7 named anchor points provide orientation ("I'm somewhere between Moderate and Moderately Aggressive"). The math between them is smooth. Fund count and concentration are emergent properties — no hard-coded fund counts, no stair-step mapping from slider value to fund count, no inverse mapping tables. The number of funds in the allocation is a mathematical consequence of the curve steepness and the de minimis floor.
 
 ### 3.5 Step 4: De Minimis Floor (5%)
 
@@ -639,6 +652,7 @@ Step 13: Score Positioning factor (sector alignment × thesis preferences)
 Step 14: Standardize all factors to z-scores, compute composite (Section 2.1)
 Step 15: Persist scores, thesis, holdings data to Supabase
 Step 16: (If Brief triggered) Generate Investment Brief per user via Claude Opus
+Step 17: Persist allocation to allocation_history table (§7.7)
 ```
 
 Each step wrapped in try/catch. Partial results flow forward. Non-fatal failures produce fallback inputs (50 scores, null values).
@@ -660,7 +674,8 @@ Each step wrapped in try/catch. Partial results flow forward. Non-fatal failures
 | quality.ts | Holdings Quality factor scoring (equity + bond + blended + look-through) |
 | momentum.ts | Momentum factor scoring (multi-window, vol-adjusted, cross-sectional) |
 | positioning.ts | Positioning factor scoring (sector alignment × thesis) |
-| scoring.ts | Composite scoring engine (z-standardize, weight, CDF map) |
+| scoring.ts | Composite scoring engine (z-standardize, weight, CDF map, tier badges) |
+| allocation.ts | Allocation engine (MAD z-score, Kelly exponential, de minimis, rounding) |
 | classify.ts | Claude Haiku sector classification |
 | thesis.ts | Claude Sonnet macro thesis generation |
 | fred.ts | FRED macro data + commodity prices |
@@ -754,12 +769,14 @@ Each step wrapped in try/catch. Partial results flow forward. Non-fatal failures
 
 ### 6.4 Risk Tolerance Control
 
-- **Type:** 7-point slider
+- **Type:** Continuous slider (1.0 to 7.0, supports fractional values like 5.3)
 - **Label:** "Investment Style"
-- **Left end (1):** "Very Conservative"
-- **Right end (7):** "Very Aggressive"
-- **Default:** 4 ("Moderate")
-- **Affects:** Allocation only. Scores do not change.
+- **Left end (1.0):** "Very Conservative"
+- **Right end (7.0):** "Very Aggressive"
+- **Default:** 4.0 ("Moderate")
+- **Anchor points:** 7 named positions shown as tick marks/labels on the slider (see §3.4 table). Users can stop anywhere between them.
+- **Affects:** Allocation only. Scores do not change. The k parameter is interpolated between anchor points (§3.4) so every slider position produces a unique allocation.
+- **Storage:** `risk_tolerance` stored as FLOAT in `user_profiles`. Validation: 1.0 ≤ value ≤ 7.0.
 
 ### 6.5 Factor Weight Sliders
 
@@ -790,33 +807,132 @@ HHI (Herfindahl-Hirschman Index) of sector exposure displayed per fund in the de
 
 ### 7.1 What It Is
 
-A personalized monthly research document delivered to each user. Modeled after institutional advisor output. Named "Investment Brief" — not "letter," not "report."
+A personalized monthly Investment Brief delivered to each user. Named "Investment Brief" — not "letter," not "report." This is FundLens's core product — the thing that makes 401(k) participants feel like they have a personal advisor. The scores and charts are supporting evidence; the Brief is the value.
 
-### 7.2 Generation Model
+**Design philosophy:** The best advisory communications feel like a conversation with a knowledgeable advisor, not a data dump. FundLens's Brief should read like advice from a smart friend who's great with money — someone you'd trust at a company cookout when you pull them aside to ask about your 401(k). Confident, clear, occasionally witty, never condescending. Not a financial advisor in a suit, not a Reddit poster.
 
-**Layer 1 — Data Packet:** assembleDataPacket() builds per-user data with relevance tags based on risk tolerance and factor weights. Selects which truths are most relevant to each user's investment posture.
+**Research basis:** Industry best practices surveyed across JPMorgan quarterly outlooks, Glass Lake Wealth Management client letters, Andrew Hill Investment Advisors quarterly letters, Fidelity Quarterly Market Perspectives, and investment writing research (Susan Weiner, InvestSuite, InData). Key findings: readers prefer under 2 pages, prioritize investment strategy and performance attribution over generic commentary, and want to understand "how and why they made or lost money." The best letters combine macro narrative with specific fund-level reasoning and feel personal, not templated.
 
-**Layer 2 — Editorial Policy:** editorial-policy.md governs Claude Opus writing:
-- Every claim must trace to a specific data point
-- Never characterize a fund positively without citing the metric
+### 7.2 Brief Structure — 4 Sections
+
+The Brief follows a "lead with the answer" structure. The recommendation is the opening, not the conclusion. Everything after it is the evidence that backs it up. This signals confidence and respects the reader's time — your buddy who's good at markets leads with what they'd do, then explains why.
+
+**Section 1: "Where Your Money Should Go"** — The Recommendation
+Named funds, allocation percentages, and a sentence or two per fund explaining why in plain investment language. This is the most valuable section — a reader who only has 30 seconds gets the full actionable answer here. Example of good fund reasoning: "FXAIX at 40% — it holds profitable, well-run companies, it's been on a solid run, and at 0.015% it's basically free. Hard to beat that combination." Every recommended fund gets a brief, genuine explanation.
+
+**Section 2: "What Happened"** — Market Narrative + Portfolio Changes
+Combines macro context with what changed in the allocation since last month, and why. This is one cohesive narrative — cause and effect together, not separated into redundant sections. Grounded in real headlines from RSS feeds and real numbers from FRED data. Length is driven by relevance, not an arbitrary cap — could be 2 paragraphs in a quiet month or 5 in a volatile one. Must reference specific events, indicators, and data points. Should feel like catching up on what happened over coffee.
+
+**Section 3: "What We're Watching"** — Risks + Catalysts
+Short, punchy. 3-5 items that could change the picture. "Fed meeting June 12 — any hawkish surprise could hit bond-heavy funds." "Oil above $85 is good for Energy but squeezes Consumer Discretionary." Translates FRED priors and macro thesis into plain language that a non-expert can act on.
+
+**Section 4: "Where We Stand"** — Sector Scorecard
+Which sectors we favor, which we're cautious on, and why. Presented as a visual grid in the UI (14 sectors, each with a stance: Favor / Neutral / Cautious and a one-line reason). This is the deep dive for readers who want to understand the thesis behind the recommendations. Backed by deterministic FRED priors (§2.6.2) and Claude's macro analysis.
+
+### 7.3 Voice and Tone
+
+**Voice:** A knowledgeable friend who does well in the market. Somewhere between approachable professional and conversational direct. Not stuffy institutional, not casual Reddit. The kind of person who says "here's what I'd do" and you trust them because they've clearly done their homework.
+
+**Characteristics:**
+- Confident but not arrogant — states views directly without hedging everything
+- Uses plain English — explains financial concepts naturally, not with textbook definitions
+- Specific, not vague — names funds, cites numbers, references real events
+- Occasionally witty but never flippant about someone's retirement savings
+- Candid about negatives — if a fund has a problem, says so plainly
+- Never condescending — assumes the reader is smart, just not a financial professional
+
+### 7.4 Prohibited Language — "Behind the Curtain" Rule
+
+The Brief must never expose the scoring model's internal mechanics. The reader should never think "a computer wrote this" or "this is a formula talking." If they want to understand the model, the Help section gives accurate answers. The Brief reads like an advisor's genuine assessment, not a scorecard readout.
+
+**Never use in the Brief:**
+- Factor names as technical terms ("Cost Efficiency factor," "Holdings Quality score")
+- Weights or percentages of the model ("weighted at 30%," "our highest-weighted factor")
+- Scoring terminology ("z-score," "composite score," "MAD z-score," "CDF mapping")
+- Model language ("our scoring engine," "our model rates," "based on our analysis framework")
+- Phrases that reveal ranking mechanics ("receives our highest rating," "scores 85 out of 100")
+- Any reference to how factors are combined or weighted
+
+**Instead, use natural investment language:**
+- "holds profitable, well-run companies" (not "high Holdings Quality score")
+- "one of the cheapest funds in the plan" (not "Cost Efficiency score of 95")
+- "has been on a strong run lately" (not "Momentum score of 78")
+- "its sector mix lines up well with where the economy is headed" (not "Positioning score of 82")
+
+### 7.5 Data Feed — What Claude Sees
+
+Claude Opus receives the raw investment data, not pre-digested summaries and not model outputs. This prevents both "leading the witness" (pre-written descriptions that Claude parrots) and model leakage (scores that Claude references). Claude gets the same briefing packet an analyst would get and forms its own narrative.
+
+**Data packet contents:**
+- **Per fund:** Expense ratio + category + peer percentile rank. Top 10 holdings with actual financial ratios (margins, ROE, debt levels, cash flow metrics). 3/6/9/12-month returns and realized volatility. Sector breakdown percentages. Whether it's new to the allocation, removed, or changed weight.
+- **Macro context:** Full RSS headlines from the last 30 days. All FRED indicators with current values and direction (yield curve, CPI, fed funds rate, employment, commodity prices). Deterministic sector priors with the reasoning.
+- **Thesis:** Claude Sonnet's macro thesis narrative, sector preferences (1-10 scale), dominant theme, macro stance, risk factors.
+- **Allocation:** The computed allocation output from the allocation engine — fund names, percentages, tier labels. Previous month's allocation for delta computation.
+- **User profile:** Risk tolerance level (continuous 1.0-7.0), factor weight preferences.
+
+**What Claude does NOT receive:** Raw factor scores (0-100), z-scores, factor weights as model percentages, composite scores, MAD z-scores, tier threshold definitions, or any description of how the scoring model works.
+
+### 7.6 Editorial Rules (Retained from v1)
+
+**Evidence rules:**
+- Every claim must trace to a specific data point in the input packet
+- Never characterize a fund positively without citing the metric that supports it
+- Never characterize a fund negatively without citing the metric that supports it
+- If you reference a holding, state its weight in the fund
+- If you reference a macro indicator, state its value and direction
+
+**Honesty rules:**
 - Never omit a material negative
-- Personalization means selecting which truths to emphasize, not altering the truth
-- Never implies certainty about future performance
-- Tone is research analyst, not sales
+- Never invent a reason to own a fund
+- If no data supports a recommendation, do not manufacture one
+- Conservative and aggressive users see the same facts; emphasis differs, truth doesn't
 
-### 7.3 Allocation in Brief
+**Language rules:**
+- Never imply certainty about future performance
+- Use "may," "could," "historically," "tends to," "is positioned to"
+- Never use exclamation points or sales language
+- No filler phrases ("in today's market," "as we all know")
 
-The Brief includes a recommended allocation computed by the allocation engine (Section 3) using the user's risk tolerance. This is the only place risk tolerance influences the output.
+### 7.7 Allocation Persistence
 
-### 7.4 News and Culture in Brief
+Every Brief generation persists its allocation to an `allocation_history` table in Supabase. This enables:
+- **"What Changed" narrative:** The Brief compares current vs. previous allocation to identify new positions, removed positions, and weight changes.
+- **Consistency tracking:** Users can see their allocation history over time. Consistency builds confidence.
+- **Future feature:** Performance attribution — did last month's recommendation outperform?
 
-Claude should reference current events, trends, and cultural context when it enhances the narrative. This makes the Brief feel current and relevant to readers of all ages. However, cultural signals never influence the scoring math — they are narrative-only.
+**Table: `allocation_history`**
+```
+id:              UUID (PK)
+user_id:         UUID (FK → auth.users)
+pipeline_run_id: UUID (FK → pipeline_runs)
+brief_id:        UUID (FK → briefs, nullable — null for pipeline-only runs)
+risk_tolerance:  FLOAT (user's risk level at time of allocation)
+allocations:     JSONB (array of { ticker, pct, tier, tierColor })
+created_at:      TIMESTAMPTZ
+```
 
-### 7.5 Delivery
+### 7.8 Delivery
 
 - **Automatic:** Sent via Resend email every 30 days after signup
 - **On-demand:** User can generate anytime from the app
 - **History:** All past Briefs archived and viewable
+- **Target length:** 600-1000 words. Substantive enough to feel valuable, short enough to read in one sitting. Research shows >40% of advisory clients prefer under 2 pages.
+
+### 7.9 Negative Examples (Anti-Patterns for Prompt)
+
+These examples are included in the Claude Opus system prompt to anchor what bad Brief writing looks like:
+
+**BAD — Exposes model mechanics:**
+"FXAIX receives our highest rating due to its strong performance in the Holdings Quality factor, which is weighted at 30% of our composite score. Combined with a Cost Efficiency score of 95 and Momentum z-score of 1.47, it achieves a composite of 84."
+
+**BAD — Generic, no specifics:**
+"Markets were volatile this month. We recommend staying diversified across your fund options. Some funds performed better than others."
+
+**BAD — Pre-digested, templated:**
+"FXAIX has strong holdings quality, solid momentum, favorable positioning, and low costs." (Reads like a checklist, not analysis.)
+
+**GOOD — Natural advisor voice:**
+"FXAIX is our top pick this month. The companies it holds — Apple, Microsoft, Nvidia — are printing money. Apple's gross margins are sitting at 46%, Microsoft at 69%. These aren't speculative bets; they're cash machines. The fund's been up 24% over the past year, expenses are basically zero at 0.015%, and with tech and healthcare making up nearly half the portfolio, it's well-positioned for the current growth environment. The one thing to keep an eye on: it's heavily concentrated in mega-cap tech. If that trade reverses, this fund feels it first."
 
 ---
 
@@ -974,6 +1090,22 @@ Status: ✅ Tiingo prices working (fetchTiingoPrices, convertTiingoPricesToFmpFo
 Spec: Not yet in spec — feature idea from build planning session. Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
 Status: Planned for Session 9 of the build roadmap.
 
+**MISSING-10: Investment Brief Redesign — 4-Section Structure + Advisor Voice (§7.2–7.9)**
+Spec: Complete rewrite of §7. 4-section brief ("Where Your Money Should Go" → "What Happened" → "What We're Watching" → "Where We Stand"). New voice guidelines (knowledgeable buddy, not research analyst). "Behind the curtain" rule prohibiting model language. Raw data feed to Claude (not scores). Allocation persistence for "What Changed" delta.
+Status: Spec written (Session 7). Implementation pending: editorial-policy.md rewrite, brief-engine.ts prompt redesign, allocation_history table, Briefs.tsx client redesign.
+
+**MISSING-11: Continuous Risk Slider with Interpolation (§3.4, §6.4)**
+Spec: Risk slider accepts 1.0–7.0 continuous values. k parameter interpolated between anchor points. risk_tolerance stored as FLOAT.
+Status: Spec written (Session 7). Implementation pending: allocation.ts interpolation logic, routes.ts validation update (integer → float), Portfolio.tsx slider update, user_profiles column type change (integer → float).
+
+**MISSING-12: Allocation History Persistence (§7.7)**
+Spec: allocation_history table stores each brief's recommended allocation for "What Changed" delta and future performance tracking.
+Status: Spec written (Session 7). Implementation pending: migration SQL, persist.ts update, brief-engine.ts integration.
+
+**MISSING-13: Pipeline Performance — 9 min → <3 min**
+Spec: v6 pipeline takes 9 minutes vs v5.1's 2 minutes. Root causes identified: 500ms delays (v5.1 uses 200-300ms), no Supabase caching layer (v5.1 batch-queries cache before API calls), no Claude classification batching (v5.1 batches 25 holdings per call).
+Status: Diagnosed (Session 7). Implementation pending.
+
 ### 9.4 CUSIP Resolver — COMPLETED (Session 2)
 
 Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip.ts`, `holdings.ts`, `pipeline.ts`, and `types.ts` against spec §4.3 and §4.6. Seven issues found and fixed:
@@ -996,11 +1128,14 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 4 | Scoring Engine | CRITICAL-1 (z-space + CDF composite) | **DONE** |
 | 5 | Factor Upgrades | CRITICAL-2, CRITICAL-3 (momentum vol-adjust + z-score), MISSING-2 (bond scoring), MISSING-3 (coverage scaling) | **DONE** |
 | 6 | Thesis + Allocation + MM Skip | CRITICAL-4 (1-10 scale), CRITICAL-5 (Kelly allocation), MISSING-4 (FRED commodities), MISSING-5 (sector priors), MISSING-6 (money market skip) | **DONE** |
-| 7 | *(Merged into Session 6)* | — | **DONE** |
-| 7 | Tier Badges E2E | §6.3 tier badges wired: scoring → persist → API → client | **DONE** |
-| 8 | UI Alignment | Risk slider 1-7 in client, HHI (MISSING-7), v5.1 UI port | |
-| 9 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
-| 10 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) | |
+| 7 | Tier Badges + Brief/Slider Spec | §6.3 tier badges E2E. §7 brief redesign (4-section, advisor voice). §3.4 continuous slider. §7.7 allocation persistence. Spec-only for MISSING-10 through MISSING-13. | **DONE** |
+| 8 | Brief Engine Redesign | MISSING-10: Rewrite editorial-policy.md + brief-engine.ts prompt. Raw data feed. 4-section output. Advisor voice. | |
+| 9 | Allocation Persistence + Continuous Slider | MISSING-11 + MISSING-12: allocation_history table, risk slider float, interpolation | |
+| 10 | Pipeline Performance | MISSING-13: Reduce delays, add Supabase caching, batch Claude classification. Target <3 min. | |
+| 11 | v5.1 UI Port | Port v5.1 layout/UX to v6 React client. All 4 factors visible. Sector scorecard. Inline Brief rendering. | |
+| 12 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
+| 13 | HHI + Polish | MISSING-7 (HHI concentration display). Final UI polish. | |
+| 14 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) | |
 
 ---
 
@@ -1366,6 +1501,38 @@ File: `migrations/session7_add_tier_columns.sql`
 **Files changed:** `scoring.ts`, `types.ts`, `persist.ts`, `api.ts`, `Portfolio.tsx`, `FundDetail.tsx`, `FUNDLENS_SPEC.md`
 **Verification:** `tsc --noEmit` passes clean on both server and client.
 **Database migration required:** Run `migrations/session7_add_tier_columns.sql` in Supabase SQL Editor before deploying. Existing rows default to 'Neutral'; next pipeline run populates real tiers.
+
+## April 7, 2026 — Session 7 (continued): Investment Brief Redesign + Continuous Slider + Allocation Persistence
+
+**Context:** Robert ran v5.1 and v6 side by side. v5.1 scores look great, runs in ~2 minutes. v6 takes 9 minutes. Robert strongly prefers v5.1's UI. Session pivoted from UI coding to strategic design work: how should the Investment Brief feel, what voice should it use, and how should the portfolio page be structured.
+
+**Research conducted:** Surveyed JPMorgan quarterly outlooks, Glass Lake Wealth Management Q1 2026 client letter, Andrew Hill Investment Advisors Q4 2025 letter, Fidelity Quarterly Market Perspectives, Susan Weiner's investment writing research, InvestSuite and InData wealth management reporting guides. Key finding: the best advisory communications feel like a conversation with a knowledgeable advisor, not a data dump. Readers prefer under 2 pages, want specific fund reasoning, and prioritize "how and why" over generic market commentary.
+
+**Decisions made with Robert:**
+
+1. **Investment Brief voice: "Your buddy who's good at markets."** Not a research analyst in a suit (old v1 editorial policy), not a Reddit poster. The kind of person at the company cookout who people pull aside to ask about their 401(k). Confident, clear, occasionally witty, never condescending. Leads with the answer.
+
+2. **4-section brief structure with "W" titles:**
+   - "Where Your Money Should Go" — The Recommendation (leads, not concludes)
+   - "What Happened" — Market narrative + what changed in allocation (combined, not separate sections — avoids redundancy)
+   - "What We're Watching" — Risks + catalysts
+   - "Where We Stand" — Sector scorecard deep dive
+   
+   Robert's insight: the recommendation is the punchline when it's last, but it's the *value* when it's first. Your buddy leads with what they'd do.
+
+3. **"Behind the curtain" rule.** The Brief must never expose scoring model mechanics. No factor names as technical terms, no weights, no z-scores, no "highest-weighted factor." If the user asks, the Help section gives accurate answers. The Brief reads like an advisor's genuine assessment. Robert flagged this after seeing briefs that said things like "as this is our highest weighted factor at 30%."
+
+4. **Raw data feed to Claude, not pre-digested summaries.** Robert caught that pre-writing descriptions like "holds companies with strong profit margins" would make Claude a mail merge. Instead: feed actual financial ratios, actual returns, actual expense ratios. Let Claude form its own narrative from the same data an analyst would see. Prevents both templating and model leakage.
+
+5. **Continuous risk slider (1.0–7.0) with k-parameter interpolation.** Robert requested that the slider not be stair-stepped. Risk 5.3 should produce a different allocation than 5.0 or 6.0. Linear interpolation between Kelly anchor points. Fund count emerges naturally from the math — never hard-coded or mapped 1:1 from the slider value.
+
+6. **Allocation history persistence.** New `allocation_history` table stores each month's recommended allocation. Enables "What Changed" delta in the Brief and future performance attribution. Robert: "Consistency builds confidence."
+
+7. **All 4 factors visible in the UI.** v5.1 shows 3 (Positioning, Momentum, Quality). v6 shows all 4 including Cost Efficiency since it's a full 25% factor in v6.
+
+8. **Pipeline performance diagnosed.** v6 at 9 minutes vs v5.1 at 2 minutes. Root causes: 500ms delays (v5.1 uses 200-300ms), no Supabase caching (v5.1 batch-queries before API calls), no Claude classification batching. Fix deferred to Session 10.
+
+**Spec sections updated:** §3.4 (continuous slider), §5.4 (pipeline Step 17), §5.5 (file inventory), §6.4 (slider control), §7.1–7.9 (complete rewrite), §9.3 (MISSING-10 through MISSING-13), §9.5 (roadmap Sessions 7–14)
 
 ---
 
