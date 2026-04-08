@@ -1,13 +1,21 @@
 /**
  * FundLens v6 — Portfolio Page
  *
- * Main view: two SVG donuts (sector exposure + fund allocation),
- * ranked fund table with factor scores, factor weight sliders
- * with proportional redistribution, risk tolerance toggle.
+ * Primary view — rebuilt in Session 11 to match v5.1's visual layout while
+ * preserving v6 improvements (4 factors, continuous risk slider, z-score rescore).
  *
- * Clicking a fund row opens the Fund Detail sidebar.
+ * Layout (top to bottom):
+ *   1. Two SVG donut charts (Sector Exposure + Fund Allocation) with drill-in
+ *   2. Fund table (7 columns: Fund, Score, Tier, Cost, Quality, Momentum, Positioning)
+ *   3. Factor weight sliders (4 sliders, proportional redistribution)
+ *   4. Risk slider (continuous 1.0–7.0, step 0.1)
  *
- * Session 9 deliverable. Destination: client/src/pages/Portfolio.tsx
+ * Drill-in behavior:
+ *   - Left donut (Sector Exposure): click a sector → shows company holdings in that sector
+ *   - Right donut (Fund Allocation): click a fund → opens FundDetail sidebar
+ *
+ * Session 11 deliverable. Destination: client/src/pages/Portfolio.tsx
+ * References: Spec §6.1–§6.7, v5.1 PortfolioTab.jsx
  */
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
@@ -21,10 +29,10 @@ import {
   type UserProfile,
 } from '../api';
 import { theme } from '../theme';
+import { DonutChart, DonutLegend, type DonutSlice, type DonutDrillItem } from '../components/DonutChart';
 import { FundDetail } from '../components/FundDetail';
 
 // ─── Normal CDF (Abramowitz & Stegun 7.1.26) ──────────────────────────────
-// Lightweight client-side implementation for slider rescore (§2.1).
 // Identical to server-side normalCDF in src/engine/scoring.ts.
 
 function normalCDF(z: number): number {
@@ -34,7 +42,6 @@ function normalCDF(z: number): number {
   const a4 = -1.453152027;
   const a5 =  1.061405429;
   const p  =  0.3275911;
-
   const absZ = Math.abs(z);
   const x = absZ / Math.SQRT2;
   const t = 1.0 / (1.0 + p * x);
@@ -44,7 +51,6 @@ function normalCDF(z: number): number {
 }
 
 // ─── Tier Badge Computation (§6.3) ────────────────────────────────────────
-// Client-side MAD z-score → tier, mirrors scoring.ts computeTiers().
 
 const TIER_BADGES = [
   { tier: 'Breakaway', zMin: 2.0, color: '#F59E0B' },
@@ -71,210 +77,46 @@ function computeClientTier(
   allComposites: { ticker: string; composite: number }[]
 ): { tier: string; tierColor: string } {
   if (MM_TICKERS.has(ticker)) return { tier: 'MM', tierColor: '#4B5563' };
-
   const nonMM = allComposites.filter(f => !MM_TICKERS.has(f.ticker));
   if (nonMM.length === 0) return { tier: 'Neutral', tierColor: '#6B7280' };
-
   const scores = nonMM.map(f => f.composite);
   const med = clientMedian(scores);
   const mad = clientMedian(scores.map(s => Math.abs(s - med)));
   const safeMad = mad > 0 ? mad : 1e-9;
   const modZ = MAD_CONSISTENCY * (composite - med) / safeMad;
-
   for (const badge of TIER_BADGES) {
     if (modZ >= badge.zMin) return { tier: badge.tier, tierColor: badge.color };
   }
   return { tier: 'Weak', tierColor: '#EF4444' };
 }
 
-// ─── SVG Donut ─────────────────────────────────────────────────────────────
+// ─── Sector Colors (GICS standard) ──────────────────────────────────────────
 
-interface DonutSlice {
-  label: string;
-  value: number;
-  color: string;
-}
+const SECTOR_COLORS: Record<string, string> = {
+  Technology:               '#3b82f6',
+  Healthcare:               '#06b6d4',
+  Financials:               '#8b5cf6',
+  'Consumer Discretionary': '#f59e0b',
+  'Consumer Staples':       '#22c55e',
+  Energy:                   '#ef4444',
+  Industrials:              '#f97316',
+  Materials:                '#14b8a6',
+  'Real Estate':            '#ec4899',
+  Utilities:                '#6366f1',
+  'Communication Services': '#a855f7',
+  'Precious Metals':        '#eab308',
+  'Fixed Income':           '#64748b',
+  'Cash & Equivalents':     '#94a3b8',
+  Other:                    '#71717a',
+};
 
-const DONUT_COLORS = [
-  '#3b82f6', '#8b5cf6', '#06b6d4', '#22c55e', '#f59e0b',
-  '#ef4444', '#ec4899', '#14b8a6', '#f97316', '#6366f1',
-  '#84cc16', '#a855f7', '#0ea5e9', '#eab308',
+const FUND_PALETTE = [
+  '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#a78bfa',
+  '#fb923c', '#84cc16',
 ];
 
-function SvgDonut({ slices, size = 160, label }: {
-  slices: DonutSlice[];
-  size?: number;
-  label: string;
-}) {
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size * 0.36;
-  const strokeWidth = size * 0.18;
-  const circumference = 2 * Math.PI * r;
-
-  const total = slices.reduce((sum, s) => sum + s.value, 0);
-  if (total === 0) {
-    return (
-      <div style={{ textAlign: 'center' }}>
-        <svg width={size} height={size}>
-          <circle cx={cx} cy={cy} r={r} fill="none"
-            stroke={theme.colors.border} strokeWidth={strokeWidth} />
-        </svg>
-        <div style={{ fontSize: '12px', color: theme.colors.textDim, marginTop: '8px' }}>{label}</div>
-      </div>
-    );
-  }
-
-  let offset = 0;
-  const arcs = slices.filter(s => s.value > 0).map((slice) => {
-    const pct = slice.value / total;
-    const dash = pct * circumference;
-    const gap = circumference - dash;
-    const rotation = (offset / total) * 360 - 90;
-    offset += slice.value;
-    return { ...slice, dash, gap, rotation, pct };
-  });
-
-  return (
-    <div style={{ textAlign: 'center' }}>
-      <svg width={size} height={size}>
-        {arcs.map((arc, i) => (
-          <circle key={i} cx={cx} cy={cy} r={r} fill="none"
-            stroke={arc.color} strokeWidth={strokeWidth}
-            strokeDasharray={`${arc.dash} ${arc.gap}`}
-            transform={`rotate(${arc.rotation} ${cx} ${cy})`}
-            style={{ transition: 'stroke-dasharray 0.3s ease' }}
-          />
-        ))}
-      </svg>
-      <div style={{ fontSize: '12px', color: theme.colors.textDim, marginTop: '8px' }}>{label}</div>
-    </div>
-  );
-}
-
-function DonutLegend({ slices }: { slices: DonutSlice[] }) {
-  const total = slices.reduce((sum, s) => sum + s.value, 0);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
-      {slices.filter(s => s.value > 0).slice(0, 8).map((s, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{
-            width: '10px', height: '10px', borderRadius: '2px',
-            background: s.color, flexShrink: 0,
-          }} />
-          <span style={{ color: theme.colors.textMuted, flex: 1 }}>{s.label}</span>
-          <span style={{ color: theme.colors.text, fontFamily: theme.fonts.mono }}>
-            {total > 0 ? ((s.value / total) * 100).toFixed(0) : 0}%
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Factor Weight Slider ──────────────────────────────────────────────────
-
-interface FactorSliderProps {
-  label: string;
-  shortLabel: string;
-  value: number;
-  onChange: (val: number) => void;
-}
-
-function FactorSlider({ label, shortLabel, value, onChange }: FactorSliderProps) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-      <span style={{
-        width: '80px', fontSize: '12px', color: theme.colors.textMuted,
-        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-      }} title={label}>
-        {shortLabel}
-      </span>
-      <input
-        type="range" min={5} max={60} step={1} value={Math.round(value * 100)}
-        onChange={(e) => onChange(Number(e.target.value) / 100)}
-        style={{ flex: 1, accentColor: theme.colors.accentBlue }}
-      />
-      <span style={{
-        width: '40px', textAlign: 'right', fontSize: '13px',
-        fontFamily: theme.fonts.mono, color: theme.colors.text,
-      }}>
-        {Math.round(value * 100)}%
-      </span>
-    </div>
-  );
-}
-
-// ─── Risk Slider (Continuous, §3.4 + §6.4) ────────────────────────────────
-
-/** 7 anchor point labels from KELLY_RISK_TABLE (§3.4) */
-const RISK_ANCHORS: Array<{ level: number; label: string }> = [
-  { level: 1, label: 'Very Conservative' },
-  { level: 2, label: 'Conservative' },
-  { level: 3, label: 'Mod. Conservative' },
-  { level: 4, label: 'Moderate' },
-  { level: 5, label: 'Mod. Aggressive' },
-  { level: 6, label: 'Aggressive' },
-  { level: 7, label: 'Very Aggressive' },
-];
-
-/** Get the nearest anchor label for a continuous risk value */
-function nearestRiskLabel(value: number): string {
-  const nearest = Math.round(Math.min(7, Math.max(1, value)));
-  return RISK_ANCHORS.find(a => a.level === nearest)?.label ?? 'Moderate';
-}
-
-function RiskSlider({ value, onChange }: {
-  value: number;
-  onChange: (val: number) => void;
-}) {
-  const fillPct = ((value - 1) / 6) * 100;
-  return (
-    <div>
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-        marginBottom: '6px',
-      }}>
-        <span style={{ fontSize: '13px', fontWeight: 500, color: theme.colors.text }}>
-          {nearestRiskLabel(value)}
-        </span>
-        <span style={{
-          fontSize: '13px', fontFamily: theme.fonts.mono,
-          color: theme.colors.accentBlue, fontWeight: 600,
-        }}>
-          {value.toFixed(1)}/7
-        </span>
-      </div>
-      <input
-        type="range"
-        min={1}
-        max={7}
-        step={0.1}
-        value={value}
-        onChange={(e) => onChange(Math.round(Number(e.target.value) * 10) / 10)}
-        style={{
-          width: '100%',
-          height: '4px',
-          appearance: 'none',
-          WebkitAppearance: 'none',
-          background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${fillPct}%, ${theme.colors.border} ${fillPct}%, ${theme.colors.border} 100%)`,
-          borderRadius: '2px',
-          outline: 'none',
-          cursor: 'pointer',
-        }}
-      />
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', marginTop: '4px',
-        fontSize: '10px', color: theme.colors.textDim,
-      }}>
-        <span>Very Conservative</span>
-        <span>Very Aggressive</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Score Badge ───────────────────────────────────────────────────────────
+// ─── Score color helpers ────────────────────────────────────────────────────
 
 function scoreBg(score: number): string {
   if (score >= 75) return '#22c55e22';
@@ -289,7 +131,24 @@ function scoreColor(score: number): string {
   return theme.colors.error;
 }
 
-// ─── Main Component ────────────────────────────────────────────────────────
+// ─── Risk Slider ─────────────────────────────────────────────────────────────
+
+const RISK_ANCHORS: Array<{ level: number; label: string }> = [
+  { level: 1, label: 'Very Conservative' },
+  { level: 2, label: 'Conservative' },
+  { level: 3, label: 'Mod. Conservative' },
+  { level: 4, label: 'Moderate' },
+  { level: 5, label: 'Mod. Aggressive' },
+  { level: 6, label: 'Aggressive' },
+  { level: 7, label: 'Very Aggressive' },
+];
+
+function nearestRiskLabel(value: number): string {
+  const nearest = Math.round(Math.min(7, Math.max(1, value)));
+  return RISK_ANCHORS.find(a => a.level === nearest)?.label ?? 'Moderate';
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────
 
 export function Portfolio() {
   const { user } = useAuth();
@@ -299,9 +158,9 @@ export function Portfolio() {
   const [loading, setLoading] = useState(true);
   const [selectedFund, setSelectedFund] = useState<string | null>(null);
 
-  // Local weight state (for sliders — saved on blur)
+  // Factor weight sliders (stored as fractions 0–1)
   const [weights, setWeights] = useState({
-    cost: 0.25, quality: 0.30, positioning: 0.25, momentum: 0.20,
+    cost: 0.25, quality: 0.30, positioning: 0.20, momentum: 0.25,
   });
   const [risk, setRisk] = useState<number>(4.0);
 
@@ -330,7 +189,6 @@ export function Portfolio() {
       const others = Object.keys(prev).filter(k => k !== key) as Array<keyof typeof weights>;
       const remaining = 1 - newVal;
       const otherSum = others.reduce((s, k) => s + prev[k], 0);
-
       const next = { ...prev, [key]: newVal };
       if (otherSum > 0) {
         for (const k of others) {
@@ -340,7 +198,6 @@ export function Portfolio() {
         const share = remaining / others.length;
         for (const k of others) next[k] = share;
       }
-
       // Normalize to exactly 1.0
       const total = Object.values(next).reduce((s, v) => s + v, 0);
       for (const k of Object.keys(next) as Array<keyof typeof weights>) {
@@ -350,7 +207,7 @@ export function Portfolio() {
     });
   }, []);
 
-  // Persist weight/risk changes
+  // Persist preferences
   const savePreferences = useCallback(() => {
     updateProfile({
       weight_cost: weights.cost,
@@ -366,10 +223,8 @@ export function Portfolio() {
     updateProfile({ risk_tolerance: val });
   }, []);
 
-  // Client-side rescore with custom weights using z-scores + CDF (§2.1)
-  // Z-scores are pre-computed server-side; client does weighted sum + normalCDF
+  // Client-side rescore with z-scores + CDF (§2.1)
   const rankedScores = useMemo(() => {
-    // First pass: compute composites
     const withComposites = scores.map(s => {
       const zComposite =
         (s.z_cost_efficiency ?? 0) * weights.cost +
@@ -380,7 +235,6 @@ export function Portfolio() {
       return { ...s, userComposite: composite };
     });
 
-    // Second pass: compute tier badges from MAD z-scores (§6.3)
     const allComposites = withComposites.map(s => ({
       ticker: s.funds?.ticker || s.fund_id,
       composite: s.userComposite,
@@ -392,248 +246,463 @@ export function Portfolio() {
         const tierInfo = computeClientTier(ticker, s.userComposite, allComposites);
         return { ...s, userTier: tierInfo.tier, userTierColor: tierInfo.tierColor };
       })
-      .sort((a, b) => b.userComposite - a.userComposite);
+      .sort((a, b) => {
+        // Money market always sorts to bottom
+        const aTicker = a.funds?.ticker || a.fund_id;
+        const bTicker = b.funds?.ticker || b.fund_id;
+        const aIsMM = MM_TICKERS.has(aTicker);
+        const bIsMM = MM_TICKERS.has(bTicker);
+        if (aIsMM && !bIsMM) return 1;
+        if (!aIsMM && bIsMM) return -1;
+        return b.userComposite - a.userComposite;
+      });
   }, [scores, weights]);
 
-  // Sector exposure donut (aggregate from factor_details)
-  const sectorSlices = useMemo((): DonutSlice[] => {
-    const sectorMap = new Map<string, number>();
+  // ── Sector Exposure donut slices ──────────────────────────────────────────
+
+  const { sectorSlices, sectorDrillData } = useMemo(() => {
+    const sectorAgg = new Map<string, number>();
+    const sectorHoldings = new Map<string, DonutDrillItem[]>();
+
     for (const s of scores) {
       const details = s.factor_details as Record<string, unknown> | undefined;
       const sectors = (details?.sectorExposure || details?.sectors) as Record<string, number> | undefined;
+      const holdings = (details?.holdings || details?.topHoldings) as Array<{
+        name?: string; ticker?: string; sector?: string; weight?: number; pct_of_nav?: number;
+      }> | undefined;
+
       if (sectors) {
         for (const [sector, weight] of Object.entries(sectors)) {
-          sectorMap.set(sector, (sectorMap.get(sector) || 0) + weight);
+          sectorAgg.set(sector, (sectorAgg.get(sector) || 0) + weight);
+        }
+      }
+
+      // Build drill-in data: holdings grouped by sector
+      if (holdings) {
+        for (const h of holdings) {
+          const sector = h.sector || 'Other';
+          const weight = h.weight ?? h.pct_of_nav ?? 0;
+          if (weight <= 0) continue;
+          const existing = sectorHoldings.get(sector) || [];
+          existing.push({
+            name: h.name || 'Unknown',
+            ticker: h.ticker,
+            weight: weight * 100, // Convert to percentage
+          });
+          sectorHoldings.set(sector, existing);
         }
       }
     }
-    return [...sectorMap.entries()]
+
+    // Sort holdings within each sector by weight descending
+    for (const [sector, items] of sectorHoldings.entries()) {
+      sectorHoldings.set(sector, items.sort((a, b) => b.weight - a.weight).slice(0, 20));
+    }
+
+    const total = [...sectorAgg.values()].reduce((s, v) => s + v, 0);
+    const slices: DonutSlice[] = [...sectorAgg.entries()]
       .sort((a, b) => b[1] - a[1])
-      .map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i % DONUT_COLORS.length] ?? '#71717a' }));
+      .filter(([, v]) => total > 0 && (v / total) * 100 > 0.1)
+      .map(([label, value]) => ({
+        id: label,
+        label,
+        pct: total > 0 ? (value / total) * 100 : 0,
+        color: SECTOR_COLORS[label] ?? '#71717a',
+      }));
+
+    return { sectorSlices: slices, sectorDrillData: sectorHoldings };
   }, [scores]);
 
-  // Fund allocation donut (by composite score weight)
+  // ── Fund Allocation donut slices ──────────────────────────────────────────
+
   const fundSlices = useMemo((): DonutSlice[] => {
     if (rankedScores.length === 0) return [];
-    const top = rankedScores.slice(0, 10);
+    const nonMM = rankedScores.filter(s => !MM_TICKERS.has(s.funds?.ticker || s.fund_id));
+    const top = nonMM.slice(0, 10);
+    const totalScore = top.reduce((s, f) => s + Math.max(0, f.userComposite), 0);
+    if (totalScore === 0) return [];
+
     return top.map((s, i) => ({
+      id: s.funds?.ticker || s.fund_id,
       label: s.funds?.ticker || s.fund_id.slice(0, 6),
-      value: Math.max(0, s.userComposite),
-      color: DONUT_COLORS[i % DONUT_COLORS.length] ?? '#71717a',
+      pct: (Math.max(0, s.userComposite) / totalScore) * 100,
+      color: FUND_PALETTE[i % FUND_PALETTE.length]!,
     }));
   }, [rankedScores]);
+
+  // ─── Loading / Empty states ───────────────────────────────────────────────
 
   if (loading) {
     return <div style={{ color: theme.colors.textMuted, padding: '32px' }}>Loading portfolio...</div>;
   }
 
+  if (scores.length === 0) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        minHeight: 400, gap: 16, color: theme.colors.textMuted, textAlign: 'center', padding: 40,
+      }}>
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={theme.colors.textDim} strokeWidth="1.5">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 6v6l4 2" />
+        </svg>
+        <div style={{ fontSize: 16, fontWeight: 600, color: theme.colors.text }}>No portfolio data yet</div>
+        <div style={{ fontSize: 13, maxWidth: 320, lineHeight: 1.5 }}>
+          Run the scoring pipeline to generate fund scores and allocation recommendations.
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
   return (
-    <div style={{ display: 'flex', gap: '24px' }}>
-      {/* Main content */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <h1 style={{ fontSize: '24px', fontWeight: 600, margin: '0 0 4px', color: theme.colors.text }}>
-          Portfolio
-        </h1>
-        <p style={{ fontSize: '14px', color: theme.colors.textMuted, margin: '0 0 24px' }}>
-          Welcome, {user?.email?.split('@')[0] || 'investor'}
-        </p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 28, padding: '24px 0' }}>
 
-        {scores.length === 0 ? (
-          <div style={{
-            background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-            borderRadius: theme.radii.lg, padding: '32px', textAlign: 'center',
-          }}>
-            <p style={{ color: theme.colors.textMuted, margin: '0 0 8px' }}>No fund scores yet.</p>
-            <p style={{ color: theme.colors.textDim, fontSize: '13px', margin: 0 }}>
-              Run the pipeline from the Pipeline tab to generate scores.
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* Donuts Row */}
-            <div style={{
-              display: 'flex', gap: '32px', marginBottom: '24px', flexWrap: 'wrap',
-              background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-              borderRadius: theme.radii.lg, padding: '24px',
-            }}>
-              <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-                <SvgDonut slices={sectorSlices} label="Sector Exposure" />
-                <DonutLegend slices={sectorSlices} />
-              </div>
-              <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-                <SvgDonut slices={fundSlices} label="Fund Allocation" />
-                <DonutLegend slices={fundSlices} />
-              </div>
-            </div>
-
-            {/* Fund Table */}
-            <div style={{
-              background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-              borderRadius: theme.radii.lg, overflow: 'hidden',
-            }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
-                    <th style={thStyle}>#</th>
-                    <th style={{ ...thStyle, textAlign: 'left' }}>Fund</th>
-                    <th style={thStyle}>Cost</th>
-                    <th style={thStyle}>Quality</th>
-                    <th style={thStyle}>Position</th>
-                    <th style={thStyle}>Momentum</th>
-                    <th style={thStyle}>Score</th>
-                    <th style={thStyle}>Tier</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rankedScores.map((s, i) => {
-                    const ticker = s.funds?.ticker || s.fund_id.slice(0, 8);
-                    return (
-                      <tr
-                        key={s.id}
-                        onClick={() => setSelectedFund(ticker)}
-                        style={{
-                          borderBottom: `1px solid ${theme.colors.border}`,
-                          cursor: 'pointer',
-                          background: selectedFund === ticker ? theme.colors.surfaceHover : 'transparent',
-                          transition: 'background 0.15s',
-                        }}
-                        onMouseEnter={(e) => {
-                          if (selectedFund !== ticker) e.currentTarget.style.background = theme.colors.surfaceHover;
-                        }}
-                        onMouseLeave={(e) => {
-                          if (selectedFund !== ticker) e.currentTarget.style.background = 'transparent';
-                        }}
-                      >
-                        <td style={{ ...tdStyle, color: theme.colors.textDim, width: '40px' }}>{i + 1}</td>
-                        <td style={{ ...tdStyle, textAlign: 'left' }}>
-                          <span style={{ fontWeight: 500, color: theme.colors.text }}>{ticker}</span>
-                          {s.funds?.name && (
-                            <span style={{ marginLeft: '8px', fontSize: '12px', color: theme.colors.textDim }}>
-                              {s.funds.name}
-                            </span>
-                          )}
-                        </td>
-                        <td style={tdStyle}>
-                          <span style={{ color: scoreColor(s.cost_efficiency) }}>{s.cost_efficiency.toFixed(0)}</span>
-                        </td>
-                        <td style={tdStyle}>
-                          <span style={{ color: scoreColor(s.holdings_quality) }}>{s.holdings_quality.toFixed(0)}</span>
-                        </td>
-                        <td style={tdStyle}>
-                          <span style={{ color: scoreColor(s.positioning) }}>{s.positioning.toFixed(0)}</span>
-                        </td>
-                        <td style={tdStyle}>
-                          <span style={{ color: scoreColor(s.momentum) }}>{s.momentum.toFixed(0)}</span>
-                        </td>
-                        <td style={{
-                          ...tdStyle, fontWeight: 600, fontSize: '14px',
-                        }}>
-                          <span style={{
-                            padding: '4px 10px', borderRadius: '6px',
-                            background: scoreBg(s.userComposite),
-                            color: scoreColor(s.userComposite),
-                          }}>
-                            {s.userComposite.toFixed(1)}
-                          </span>
-                        </td>
-                        <td style={tdStyle}>
-                          <span style={{
-                            padding: '3px 8px', borderRadius: '4px', fontSize: '11px',
-                            fontWeight: 600, letterSpacing: '0.03em',
-                            color: s.userTierColor,
-                            background: `${s.userTierColor}18`,
-                            border: `1px solid ${s.userTierColor}40`,
-                          }}>
-                            {s.userTier}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pipeline timestamp */}
-            {pipelineRun && (
-              <div style={{ marginTop: '16px', fontSize: '12px', color: theme.colors.textDim }}>
-                Scores from {(() => {
-                  const ts = pipelineRun.completed_at || pipelineRun.started_at;
-                  if (!ts) return 'pending pipeline run';
-                  const d = new Date(ts);
-                  return isNaN(d.getTime()) ? 'unknown date' : d.toLocaleString();
-                })()}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Right sidebar — controls + fund detail */}
-      <div style={{ width: '300px', flexShrink: 0 }}>
-        {/* Factor Weights */}
+      {/* ── Donuts Row ──────────────────────────────────────────────── */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: 24,
+      }}>
+        {/* Sector Exposure donut (left) — click drills into holdings */}
         <div style={{
-          background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-          borderRadius: theme.radii.lg, padding: '20px', marginBottom: '16px',
+          background: theme.colors.surface, borderRadius: theme.radii.lg,
+          border: `1px solid ${theme.colors.border}`,
+          padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
         }}>
-          <h3 style={{ fontSize: '13px', fontWeight: 600, color: theme.colors.text, margin: '0 0 16px' }}>
-            Factor Weights
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <FactorSlider label="Cost Efficiency" shortLabel="Cost" value={weights.cost}
-              onChange={(v) => handleWeightChange('cost', v)} />
-            <FactorSlider label="Holdings Quality" shortLabel="Quality" value={weights.quality}
-              onChange={(v) => handleWeightChange('quality', v)} />
-            <FactorSlider label="Positioning" shortLabel="Position" value={weights.positioning}
-              onChange={(v) => handleWeightChange('positioning', v)} />
-            <FactorSlider label="Momentum" shortLabel="Momentum" value={weights.momentum}
-              onChange={(v) => handleWeightChange('momentum', v)} />
-          </div>
-          <button
-            onClick={savePreferences}
-            style={{
-              marginTop: '16px', width: '100%', padding: '8px', border: 'none',
-              borderRadius: theme.radii.md, background: theme.colors.accentBlue,
-              color: theme.colors.white, fontSize: '13px', fontWeight: 500, cursor: 'pointer',
-            }}
-          >
-            Save Weights
-          </button>
+          {sectorSlices.length > 0 ? (
+            <>
+              <DonutChart
+                slices={sectorSlices}
+                size={220}
+                title="Aggregate Sector Exposure"
+                drillData={sectorDrillData}
+              />
+              <DonutLegend items={sectorSlices} />
+            </>
+          ) : (
+            <div style={{ color: theme.colors.textDim, fontSize: 13, padding: 40, textAlign: 'center' }}>
+              No holdings data available for sector breakdown.
+            </div>
+          )}
         </div>
 
-        {/* Risk Tolerance */}
+        {/* Fund Allocation donut (right) — click opens FundDetail sidebar */}
         <div style={{
-          background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-          borderRadius: theme.radii.lg, padding: '20px', marginBottom: '16px',
+          background: theme.colors.surface, borderRadius: theme.radii.lg,
+          border: `1px solid ${theme.colors.border}`,
+          padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
         }}>
-          <h3 style={{ fontSize: '13px', fontWeight: 600, color: theme.colors.text, margin: '0 0 12px' }}>
-            Risk Tolerance
-          </h3>
-          <RiskSlider value={risk} onChange={handleRiskChange} />
-          <p style={{ fontSize: '11px', color: theme.colors.textDim, margin: '8px 0 0' }}>
-            Affects allocation sizing, not scoring.
-          </p>
-        </div>
-
-        {/* Fund Detail (if selected) */}
-        {selectedFund && (
-          <FundDetail
-            ticker={selectedFund}
-            onClose={() => setSelectedFund(null)}
+          <DonutChart
+            slices={fundSlices}
+            size={220}
+            title="Recommended Allocation"
+            onSliceClick={(slice) => setSelectedFund(slice.id)}
           />
-        )}
+          <DonutLegend
+            items={fundSlices}
+            onItemClick={(item) => setSelectedFund(item.id)}
+          />
+        </div>
       </div>
+
+      {/* ── Fund Table ──────────────────────────────────────────────── */}
+      <div style={{
+        background: theme.colors.surface, borderRadius: theme.radii.lg,
+        border: `1px solid ${theme.colors.border}`, overflow: 'hidden',
+      }}>
+        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.colors.border}` }}>
+          <span style={{
+            fontSize: 13, fontWeight: 600, color: theme.colors.textMuted,
+            letterSpacing: '0.04em', textTransform: 'uppercase',
+          }}>
+            Fund Scores
+          </span>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
+                {['Fund', 'Score', 'Tier', 'Cost', 'Quality', 'Momentum', 'Position'].map((h, idx) => (
+                  <th key={h} style={{
+                    padding: '10px 16px',
+                    textAlign: idx === 0 ? 'left' : 'center',
+                    fontWeight: 600, color: theme.colors.textDim, fontSize: 11,
+                    letterSpacing: '0.05em', textTransform: 'uppercase',
+                  }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rankedScores.map((s, i) => {
+                const ticker = s.funds?.ticker || s.fund_id.slice(0, 8);
+                const name = s.funds?.name || '';
+                return (
+                  <tr
+                    key={s.id}
+                    onClick={() => setSelectedFund(ticker)}
+                    style={{
+                      borderBottom: i < rankedScores.length - 1 ? `1px solid ${theme.colors.border}` : 'none',
+                      cursor: 'pointer',
+                      background: selectedFund === ticker ? theme.colors.surfaceHover : 'transparent',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (selectedFund !== ticker) e.currentTarget.style.background = theme.colors.surfaceHover;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (selectedFund !== ticker) e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    {/* Fund (ticker + name) */}
+                    <td style={{ padding: '10px 16px', textAlign: 'left' }}>
+                      <span style={{
+                        fontWeight: 700, color: theme.colors.accentBlue,
+                        fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
+                      }}>
+                        {ticker}
+                      </span>
+                      {name && (
+                        <span style={{
+                          marginLeft: 8, fontSize: 12, color: theme.colors.textDim,
+                          maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {name}
+                        </span>
+                      )}
+                    </td>
+                    {/* Score */}
+                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                      <span style={{
+                        padding: '4px 10px', borderRadius: 6,
+                        background: scoreBg(s.userComposite),
+                        color: scoreColor(s.userComposite),
+                        fontWeight: 700, fontFamily: theme.fonts.mono,
+                        fontSize: 14,
+                      }}>
+                        {s.userComposite}
+                      </span>
+                    </td>
+                    {/* Tier */}
+                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                      <span style={{
+                        padding: '3px 8px', borderRadius: 4, fontSize: 11,
+                        fontWeight: 600, letterSpacing: '0.03em',
+                        color: s.userTierColor,
+                        background: `${s.userTierColor}18`,
+                        border: `1px solid ${s.userTierColor}40`,
+                      }}>
+                        {s.userTier}
+                      </span>
+                    </td>
+                    {/* Factor scores */}
+                    <td style={tdFactorStyle}>
+                      <span style={{ color: scoreColor(s.cost_efficiency) }}>{s.cost_efficiency.toFixed(0)}</span>
+                    </td>
+                    <td style={tdFactorStyle}>
+                      <span style={{ color: scoreColor(s.holdings_quality) }}>{s.holdings_quality.toFixed(0)}</span>
+                    </td>
+                    <td style={tdFactorStyle}>
+                      <span style={{ color: scoreColor(s.momentum) }}>{s.momentum.toFixed(0)}</span>
+                    </td>
+                    <td style={tdFactorStyle}>
+                      <span style={{ color: scoreColor(s.positioning) }}>{s.positioning.toFixed(0)}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Pipeline timestamp */}
+      {pipelineRun && (
+        <div style={{ fontSize: 12, color: theme.colors.textDim }}>
+          Scores from {(() => {
+            const ts = pipelineRun.completed_at || pipelineRun.started_at;
+            if (!ts) return 'pending pipeline run';
+            const d = new Date(ts);
+            return isNaN(d.getTime()) ? 'unknown date' : d.toLocaleString();
+          })()}
+        </div>
+      )}
+
+      {/* ── Sliders: Weights + Risk ──────────────────────────────────── */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: 24,
+      }}>
+        {/* Factor weight sliders */}
+        <div style={{
+          background: theme.colors.surface, borderRadius: theme.radii.lg,
+          border: `1px solid ${theme.colors.border}`,
+          padding: 24, display: 'flex', flexDirection: 'column', gap: 20,
+        }}>
+          <div style={{
+            fontSize: 13, fontWeight: 600, color: theme.colors.textMuted,
+            letterSpacing: '0.04em', textTransform: 'uppercase',
+          }}>
+            Factor Weights
+          </div>
+
+          <WeightSlider label="Cost Efficiency" value={weights.cost}
+            onChange={(v) => handleWeightChange('cost', v)} />
+          <WeightSlider label="Holdings Quality" value={weights.quality}
+            onChange={(v) => handleWeightChange('quality', v)} />
+          <WeightSlider label="Momentum" value={weights.momentum}
+            onChange={(v) => handleWeightChange('momentum', v)} />
+          <WeightSlider label="Positioning" value={weights.positioning}
+            onChange={(v) => handleWeightChange('positioning', v)} />
+
+          {/* Weight sum indicator */}
+          <div style={{
+            display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6,
+            paddingTop: 4, borderTop: `1px solid ${theme.colors.border}`,
+          }}>
+            <span style={{ fontSize: 11, color: theme.colors.textDim }}>Total:</span>
+            <span style={{
+              fontSize: 12, fontWeight: 700, fontFamily: theme.fonts.mono,
+              color: Math.abs(Object.values(weights).reduce((s, v) => s + v, 0) - 1) < 0.02
+                ? theme.colors.success : theme.colors.error,
+            }}>
+              {Math.round(Object.values(weights).reduce((s, v) => s + v, 0) * 100)}%
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => {
+                setWeights({ cost: 0.25, quality: 0.30, positioning: 0.20, momentum: 0.25 });
+              }}
+              style={resetBtnStyle}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = theme.colors.accentBlue; e.currentTarget.style.color = theme.colors.accentBlue; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = theme.colors.border; e.currentTarget.style.color = theme.colors.textMuted; }}
+            >
+              Reset to Defaults
+            </button>
+            <button
+              onClick={savePreferences}
+              style={{
+                flex: 1, padding: '8px 16px', borderRadius: 6,
+                border: 'none', background: theme.colors.accentBlue,
+                color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              Save Weights
+            </button>
+          </div>
+        </div>
+
+        {/* Risk tolerance slider */}
+        <div style={{
+          background: theme.colors.surface, borderRadius: theme.radii.lg,
+          border: `1px solid ${theme.colors.border}`,
+          padding: 24, display: 'flex', flexDirection: 'column', gap: 16,
+        }}>
+          <div style={{
+            fontSize: 13, fontWeight: 600, color: theme.colors.textMuted,
+            letterSpacing: '0.04em', textTransform: 'uppercase',
+          }}>
+            Investment Style
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <span style={{ fontSize: 13, color: theme.colors.text, fontWeight: 600 }}>
+              {nearestRiskLabel(risk)}
+            </span>
+            <span style={{
+              fontSize: 24, fontWeight: 700, color: theme.colors.accentBlue,
+              fontFamily: theme.fonts.mono, fontVariantNumeric: 'tabular-nums',
+            }}>
+              {risk.toFixed(1)}
+            </span>
+          </div>
+
+          <input
+            type="range"
+            min={1} max={7} step={0.1}
+            value={risk}
+            onChange={(e) => handleRiskChange(Math.round(Number(e.target.value) * 10) / 10)}
+            style={{
+              width: '100%', height: 4,
+              appearance: 'none', WebkitAppearance: 'none',
+              background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${((risk - 1) / 6) * 100}%, ${theme.colors.border} ${((risk - 1) / 6) * 100}%, ${theme.colors.border} 100%)`,
+              borderRadius: 2, outline: 'none', cursor: 'pointer',
+            }}
+          />
+
+          {/* Anchor labels */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: theme.colors.textDim }}>
+            <span>Very Conservative</span>
+            <span>Very Aggressive</span>
+          </div>
+
+          <div style={{
+            marginTop: 4, padding: 14, borderRadius: 8,
+            background: 'rgba(59,130,246,0.06)', fontSize: 12, lineHeight: 1.6,
+            color: theme.colors.textMuted,
+          }}>
+            <strong style={{ color: theme.colors.text }}>How this works:</strong> Risk tolerance
+            controls how aggressively allocation tilts toward top-scoring funds. Affects
+            allocation sizing only — scores do not change.
+          </div>
+        </div>
+      </div>
+
+      {/* ── Fund Detail Sidebar ──────────────────────────────────────── */}
+      {selectedFund && (
+        <FundDetail
+          ticker={selectedFund}
+          onClose={() => setSelectedFund(null)}
+        />
+      )}
     </div>
   );
 }
 
-const thStyle: React.CSSProperties = {
-  padding: '12px 16px', fontWeight: 500, fontSize: '11px',
-  color: theme.colors.textDim, textAlign: 'right',
-  textTransform: 'uppercase', letterSpacing: '0.5px',
+// ─── Weight Slider Sub-Component ────────────────────────────────────────────
+
+function WeightSlider({ label, value, onChange }: {
+  label: string; value: number; onChange: (val: number) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: theme.colors.text }}>{label}</span>
+        <span style={{
+          fontSize: 12, fontWeight: 700, color: theme.colors.accentBlue,
+          fontFamily: theme.fonts.mono, fontVariantNumeric: 'tabular-nums',
+        }}>
+          {Math.round(value * 100)}%
+        </span>
+      </div>
+      <input
+        type="range"
+        min={5} max={60} step={1}
+        value={Math.round(value * 100)}
+        onChange={e => onChange(Number(e.target.value) / 100)}
+        style={{ width: '100%', accentColor: theme.colors.accentBlue }}
+      />
+    </div>
+  );
+}
+
+// ─── Styles ─────────────────────────────────────────────────────────────────
+
+const tdFactorStyle: React.CSSProperties = {
+  padding: '10px 16px', textAlign: 'center',
+  fontFamily: theme.fonts.mono, fontSize: 13,
+  fontVariantNumeric: 'tabular-nums',
 };
 
-const tdStyle: React.CSSProperties = {
-  padding: '10px 16px', textAlign: 'right',
-  color: theme.colors.text, fontFamily: theme.fonts.mono, fontSize: '13px',
+const resetBtnStyle: React.CSSProperties = {
+  padding: '8px 16px', borderRadius: 6,
+  border: `1px solid ${theme.colors.border}`, background: 'transparent',
+  color: theme.colors.textMuted, fontSize: 12, fontWeight: 600,
+  cursor: 'pointer', transition: 'all 0.15s',
 };

@@ -13,6 +13,7 @@ export const theme = {
     bg: '#0e0f11',
     surface: '#16181c',
     surfaceHover: '#1c1f24',
+    surfaceAlt: '#1c1e23',
     border: '#25282e',
     borderLight: '#32363e',
     accentBlue: '#3b82f6',
@@ -28,6 +29,7 @@ export const theme = {
   fonts: {
     body: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
     mono: "'JetBrains Mono', 'Fira Code', monospace",
+    serif: "'Libre Baskerville', Georgia, serif",
   },
   radii: {
     sm: '6px',

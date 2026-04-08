@@ -1,23 +1,23 @@
 /**
- * FundLens v6 — Fund Detail Sidebar Component
+ * FundLens v6 — Fund Detail Sidebar (420px Slide-In)
  *
- * Shows detailed breakdown for a selected fund:
- *   - Sector exposure donut (from holdings classification)
- *   - Four factor score bars with AI reasoning
- *   - Top holdings table with weight and ticker
- *   - Filing metadata (report date, coverage stats)
+ * Rebuilt in Session 11 to match v5.1's FundDetailSidebar.jsx layout:
+ *   - 420px wide fixed right panel (spec §6.7)
+ *   - Backdrop overlay with click-to-close
+ *   - Slide-in animation (right → 0)
+ *   - Sections: Header (name, ticker, expense ratio, tier) → Composite score →
+ *     Factor bars (4 factors) → Sector donut with expandable holdings → AI reasoning
  *
- * Fetches data via GET /api/scores/:ticker which returns
- * { fund, score, holdings } from the server.
- *
- * Session 9 deliverable. Destination: client/src/components/FundDetail.tsx
+ * Session 11 deliverable. Destination: client/src/components/FundDetail.tsx
+ * References: Spec §6.7, v5.1 FundDetailSidebar.jsx
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { fetchFundScore, type FundScore, type Fund } from '../api';
 import { theme } from '../theme';
+import { MiniDonut } from './DonutChart';
 
-// ─── Types ────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Holding {
   name: string;
@@ -31,105 +31,43 @@ interface Props {
   onClose: () => void;
 }
 
-// ─── SVG Mini Donut ───────────────────────────────────────────────────────
+// ─── Sector Colors ──────────────────────────────────────────────────────────
 
 const SECTOR_COLORS: Record<string, string> = {
-  Technology: '#3b82f6',
-  Healthcare: '#06b6d4',
-  Financials: '#8b5cf6',
-  'Consumer Discretionary': '#f59e0b',
-  'Consumer Staples': '#22c55e',
-  Energy: '#ef4444',
-  Industrials: '#f97316',
-  Materials: '#14b8a6',
-  'Real Estate': '#ec4899',
-  Utilities: '#6366f1',
-  'Communication Services': '#a855f7',
+  Technology: '#3b82f6', Healthcare: '#06b6d4', Financials: '#8b5cf6',
+  'Consumer Discretionary': '#f59e0b', 'Consumer Staples': '#22c55e',
+  Energy: '#ef4444', Industrials: '#f97316', Materials: '#14b8a6',
+  'Real Estate': '#ec4899', Utilities: '#6366f1',
+  'Communication Services': '#a855f7', 'Precious Metals': '#eab308',
+  'Fixed Income': '#64748b', 'Cash & Equivalents': '#94a3b8',
   Other: '#71717a',
 };
 
 function getSectorColor(sector: string): string {
-  return SECTOR_COLORS[sector] ?? SECTOR_COLORS['Other'] ?? '#71717a';
+  return SECTOR_COLORS[sector] ?? '#71717a';
 }
 
-function MiniDonut({ sectors }: { sectors: Array<{ sector: string; weight: number }> }) {
-  const size = 120;
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size * 0.36;
-  const strokeWidth = size * 0.16;
-  const circumference = 2 * Math.PI * r;
-  const total = sectors.reduce((s, sec) => s + sec.weight, 0);
+// ─── Tier Badges ────────────────────────────────────────────────────────────
 
-  if (total === 0) {
-    return (
-      <svg width={size} height={size}>
-        <circle cx={cx} cy={cy} r={r} fill="none"
-          stroke={theme.colors.border} strokeWidth={strokeWidth} />
-      </svg>
-    );
-  }
+const TIER_CONFIG: Record<string, { bg: string; color: string; label: string }> = {
+  Breakaway: { bg: 'rgba(245,158,11,0.15)', color: '#f59e0b', label: 'Breakaway' },
+  Strong:    { bg: 'rgba(34,197,94,0.15)',   color: '#22c55e', label: 'Strong'    },
+  Solid:     { bg: 'rgba(59,130,246,0.15)',  color: '#3b82f6', label: 'Solid'     },
+  Neutral:   { bg: 'rgba(107,114,128,0.15)', color: '#6b7280', label: 'Neutral'   },
+  Weak:      { bg: 'rgba(239,68,68,0.15)',   color: '#ef4444', label: 'Weak'      },
+  MM:        { bg: 'rgba(107,114,128,0.15)', color: '#6b7280', label: 'MM'        },
+};
 
-  let offset = 0;
-  const arcs = sectors.map((sec) => {
-    const pct = sec.weight / total;
-    const dash = pct * circumference;
-    const gap = circumference - dash;
-    const rotation = (offset / total) * 360 - 90;
-    offset += sec.weight;
-    return { ...sec, dash, gap, rotation, pct };
-  });
+// ─── Score color helper ─────────────────────────────────────────────────────
 
-  return (
-    <svg width={size} height={size}>
-      {arcs.map((arc, i) => (
-        <circle key={i} cx={cx} cy={cy} r={r} fill="none"
-          stroke={getSectorColor(arc.sector)} strokeWidth={strokeWidth}
-          strokeDasharray={`${arc.dash} ${arc.gap}`}
-          transform={`rotate(${arc.rotation} ${cx} ${cy})`}
-        />
-      ))}
-    </svg>
-  );
+function factorBarColor(score: number): string {
+  if (score >= 75) return theme.colors.success;
+  if (score >= 50) return theme.colors.accentBlue;
+  if (score >= 25) return theme.colors.warning;
+  return theme.colors.error;
 }
 
-// ─── Score Bar ────────────────────────────────────────────────────────────
-
-function ScoreBar({ label, score }: { label: string; score: number }) {
-  const color =
-    score >= 75 ? theme.colors.success :
-    score >= 50 ? theme.colors.accentBlue :
-    score >= 25 ? theme.colors.warning :
-    theme.colors.error;
-
-  return (
-    <div style={{ marginBottom: '12px' }}>
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', marginBottom: '4px',
-      }}>
-        <span style={{ fontSize: '12px', color: theme.colors.textMuted }}>{label}</span>
-        <span style={{
-          fontSize: '12px', fontFamily: theme.fonts.mono,
-          color, fontWeight: 600,
-        }}>
-          {score.toFixed(0)}
-        </span>
-      </div>
-      <div style={{
-        height: '6px', borderRadius: '3px',
-        background: theme.colors.border, overflow: 'hidden',
-      }}>
-        <div style={{
-          height: '100%', borderRadius: '3px',
-          background: color, width: `${Math.min(100, Math.max(0, score))}%`,
-          transition: 'width 0.4s ease',
-        }} />
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Component ───────────────────────────────────────────────────────
+// ─── Main Component ─────────────────────────────────────────────────────────
 
 export function FundDetail({ ticker, onClose }: Props) {
   const [fund, setFund] = useState<Fund | null>(null);
@@ -137,10 +75,12 @@ export function FundDetail({ ticker, onClose }: Props) {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeSector, setActiveSector] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setActiveSector(null);
 
     fetchFundScore(ticker).then((res) => {
       if (res.error) {
@@ -154,23 +94,30 @@ export function FundDetail({ ticker, onClose }: Props) {
     });
   }, [ticker]);
 
-  // Extract sector breakdown from holdings
-  const sectorBreakdown = (() => {
-    const map = new Map<string, number>();
+  // Sector breakdown from holdings
+  const sectorBreakdown = useMemo(() => {
+    const map = new Map<string, { weight: number; items: Holding[] }>();
     for (const h of holdings) {
       const sector = h.sector || 'Other';
-      map.set(sector, (map.get(sector) || 0) + (h.pct_of_nav || 0));
+      const existing = map.get(sector) || { weight: 0, items: [] };
+      existing.weight += h.pct_of_nav || 0;
+      existing.items.push(h);
+      map.set(sector, existing);
     }
     return [...map.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([sector, weight]) => ({ sector, weight }));
-  })();
+      .sort((a, b) => b[1].weight - a[1].weight)
+      .map(([sector, data]) => ({
+        sector,
+        weight: data.weight,
+        items: data.items.sort((a, b) => (b.pct_of_nav || 0) - (a.pct_of_nav || 0)),
+        color: getSectorColor(sector),
+      }));
+  }, [holdings]);
 
-  // Extract AI reasoning from factor_details
-  const reasoning = (() => {
+  // AI reasoning extraction
+  const reasoning = useMemo(() => {
     if (!score?.factor_details) return null;
     const d = score.factor_details as Record<string, unknown>;
-
     const extract = (key: string): string | null => {
       const val = d[key];
       if (!val) return null;
@@ -181,205 +128,343 @@ export function FundDetail({ ticker, onClose }: Props) {
       }
       return null;
     };
-
     return {
       costEfficiency: extract('costEfficiency'),
       holdingsQuality: extract('holdingsQuality'),
       positioning: extract('positioning'),
       momentum: extract('momentum'),
     };
-  })();
+  }, [score]);
+
+  const tierConfig = score?.tier ? (TIER_CONFIG[score.tier] ?? TIER_CONFIG.Neutral) : null;
+
+  // ─── Loading / Error states ───────────────────────────────────────────
 
   if (loading) {
     return (
-      <div style={{
-        background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.radii.lg, padding: '20px',
-      }}>
-        <span style={{ color: theme.colors.textDim, fontSize: '13px' }}>Loading {ticker}...</span>
-      </div>
+      <>
+        <Backdrop onClick={onClose} />
+        <Panel>
+          <CloseButton onClick={onClose} />
+          <div style={{ padding: '60px 24px', textAlign: 'center', color: theme.colors.textDim }}>
+            Loading {ticker}...
+          </div>
+        </Panel>
+      </>
     );
   }
 
   if (error) {
     return (
-      <div style={{
-        background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.radii.lg, padding: '20px',
-      }}>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px',
-        }}>
-          <span style={{ fontWeight: 600, color: theme.colors.text }}>{ticker}</span>
-          <button onClick={onClose} style={closeBtnStyle}>&times;</button>
-        </div>
-        <p style={{ color: theme.colors.error, fontSize: '13px', margin: 0 }}>{error}</p>
-      </div>
+      <>
+        <Backdrop onClick={onClose} />
+        <Panel>
+          <CloseButton onClick={onClose} />
+          <div style={{ padding: '24px', clear: 'both' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.colors.text, marginBottom: 8 }}>{ticker}</div>
+            <p style={{ color: theme.colors.error, fontSize: 13, margin: 0 }}>{error}</p>
+          </div>
+        </Panel>
+      </>
     );
   }
 
+  // ─── Full render ──────────────────────────────────────────────────────
+
   return (
-    <div style={{
-      background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-      borderRadius: theme.radii.lg, overflow: 'hidden',
-    }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-        padding: '16px 20px', borderBottom: `1px solid ${theme.colors.border}`,
-      }}>
-        <div>
-          <div style={{ fontSize: '16px', fontWeight: 600, color: theme.colors.text }}>
-            {ticker}
-          </div>
-          {fund?.name && (
-            <div style={{ fontSize: '12px', color: theme.colors.textMuted, marginTop: '2px' }}>
-              {fund.name}
-            </div>
-          )}
-          {fund?.expense_ratio != null && (
-            <div style={{ fontSize: '11px', color: theme.colors.textDim, marginTop: '4px' }}>
-              Expense Ratio: {(fund.expense_ratio * 100).toFixed(2)}%
-            </div>
-          )}
-          {score?.tier && (
-            <span style={{
-              display: 'inline-block', marginTop: '6px',
-              padding: '3px 8px', borderRadius: '4px', fontSize: '11px',
-              fontWeight: 600, letterSpacing: '0.03em',
-              color: score.tier_color || '#6B7280',
-              background: `${score.tier_color || '#6B7280'}18`,
-              border: `1px solid ${score.tier_color || '#6B7280'}40`,
+    <>
+      <Backdrop onClick={onClose} />
+      <Panel>
+        {/* Keyframe for slide animation */}
+        <style>{`
+          @keyframes fl_slideRight {
+            from { transform: translateX(100%); }
+            to   { transform: translateX(0); }
+          }
+        `}</style>
+
+        <CloseButton onClick={onClose} />
+
+        <div style={{ padding: '20px 24px 48px', clear: 'both' }}>
+
+          {/* ── Header: name, ticker, expense ratio, tier ─────────────── */}
+          <div style={{ marginBottom: 28 }}>
+            <div style={{
+              fontSize: 16, fontWeight: 700, color: '#f1f5f9',
+              marginBottom: 4, paddingRight: 32, lineHeight: 1.3,
             }}>
-              {score.tier}
-            </span>
-          )}
-        </div>
-        <button onClick={onClose} style={closeBtnStyle}>&times;</button>
-      </div>
+              {fund?.name || ticker}
+            </div>
+            <div style={{
+              fontFamily: theme.fonts.mono, color: theme.colors.accentBlue,
+              fontSize: 13, marginBottom: 4,
+            }}>
+              {ticker}
+            </div>
+            {fund?.expense_ratio != null && (
+              <div style={{ fontSize: 12, color: theme.colors.textDim, marginBottom: 14 }}>
+                Expense Ratio: {(fund.expense_ratio * 100).toFixed(2)}%
+              </div>
+            )}
 
-      <div style={{ padding: '16px 20px' }}>
-        {/* Factor Scores */}
-        {score && (
-          <div style={{ marginBottom: '20px' }}>
-            <h4 style={sectionTitle}>Factor Scores</h4>
-            <ScoreBar label="Cost Efficiency" score={score.cost_efficiency} />
-            <ScoreBar label="Holdings Quality" score={score.holdings_quality} />
-            <ScoreBar label="Positioning" score={score.positioning} />
-            <ScoreBar label="Momentum" score={score.momentum} />
-          </div>
-        )}
-
-        {/* AI Reasoning (if any factor has it) */}
-        {reasoning && Object.values(reasoning).some(Boolean) && (
-          <div style={{ marginBottom: '20px' }}>
-            <h4 style={sectionTitle}>AI Analysis</h4>
-            {reasoning.costEfficiency && (
-              <ReasoningBlock label="Cost" text={reasoning.costEfficiency} />
-            )}
-            {reasoning.holdingsQuality && (
-              <ReasoningBlock label="Quality" text={reasoning.holdingsQuality} />
-            )}
-            {reasoning.positioning && (
-              <ReasoningBlock label="Positioning" text={reasoning.positioning} />
-            )}
-            {reasoning.momentum && (
-              <ReasoningBlock label="Momentum" text={reasoning.momentum} />
-            )}
-          </div>
-        )}
-
-        {/* Sector Donut */}
-        {sectorBreakdown.length > 0 && (
-          <div style={{ marginBottom: '20px' }}>
-            <h4 style={sectionTitle}>Sector Exposure</h4>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-              <MiniDonut sectors={sectorBreakdown} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-                {sectorBreakdown.slice(0, 6).map((s, i) => (
-                  <div key={i} style={{
-                    display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px',
+            {/* Composite score + tier badge */}
+            {score && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, marginBottom: 12 }}>
+                  <div style={{
+                    fontFamily: theme.fonts.mono, fontSize: 38, fontWeight: 700,
+                    color: '#f1f5f9', lineHeight: 1,
                   }}>
-                    <span style={{
-                      width: '8px', height: '8px', borderRadius: '2px',
-                      background: getSectorColor(s.sector), flexShrink: 0,
-                    }} />
-                    <span style={{ color: theme.colors.textMuted, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {s.sector}
-                    </span>
-                    <span style={{ color: theme.colors.text, fontFamily: theme.fonts.mono }}>
-                      {(s.weight * 100).toFixed(0)}%
-                    </span>
+                    {score.composite_default.toFixed(0)}
                   </div>
-                ))}
+                  {tierConfig && (
+                    <div style={{ paddingBottom: 3 }}>
+                      <span style={{
+                        display: 'inline-block',
+                        background: tierConfig.bg, color: tierConfig.color,
+                        border: `1px solid ${tierConfig.color}55`,
+                        borderRadius: 4, padding: '2px 8px',
+                        fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
+                        textTransform: 'uppercase', fontFamily: theme.fonts.mono,
+                      }}>
+                        {tierConfig.label}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Factor score bars (4 factors) */}
+            {score && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                <FactorBar label="Cost Efficiency" score={score.cost_efficiency} />
+                <FactorBar label="Holdings Quality" score={score.holdings_quality} />
+                <FactorBar label="Momentum" score={score.momentum} />
+                <FactorBar label="Positioning" score={score.positioning} />
+              </div>
+            )}
+          </div>
+
+          <PanelDivider />
+
+          {/* ── Sector Donut with expandable holdings ─────────────────── */}
+          {sectorBreakdown.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <SectionTitle>Sector Exposure</SectionTitle>
+
+              <MiniDonut
+                sectors={sectorBreakdown}
+                size={220}
+                activeSector={activeSector}
+                onSectorClick={(name) => setActiveSector(prev => prev === name ? null : name)}
+              />
+
+              {/* Legend with expandable holdings */}
+              <div style={{ marginTop: 8 }}>
+                {sectorBreakdown.map(slice => {
+                  const totalWeight = sectorBreakdown.reduce((s, sec) => s + sec.weight, 0);
+                  return (
+                    <div key={slice.sector}>
+                      {/* Legend row */}
+                      <div
+                        onClick={() => setActiveSector(prev => prev === slice.sector ? null : slice.sector)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '5px 4px', cursor: 'pointer', borderRadius: 4,
+                          opacity: activeSector && activeSector !== slice.sector ? 0.4 : 1,
+                          transition: 'opacity 150ms, background 100ms',
+                          background: activeSector === slice.sector ? theme.colors.surfaceAlt : 'transparent',
+                        }}
+                      >
+                        <div style={{
+                          width: 10, height: 10, borderRadius: 2,
+                          background: slice.color, flexShrink: 0,
+                        }} />
+                        <span style={{ fontSize: 13, color: theme.colors.text, flex: 1 }}>
+                          {slice.sector}
+                        </span>
+                        <span style={{
+                          fontFamily: theme.fonts.mono, fontSize: 12,
+                          color: theme.colors.textMuted,
+                        }}>
+                          {totalWeight > 0 ? ((slice.weight / totalWeight) * 100).toFixed(1) : 0}%
+                        </span>
+                        <span style={{ fontSize: 11, color: theme.colors.textDim, marginLeft: 2 }}>
+                          {activeSector === slice.sector ? '\u25BE' : '\u25B8'}
+                        </span>
+                      </div>
+
+                      {/* Expanded holdings list */}
+                      {activeSector === slice.sector && (
+                        <div style={{
+                          marginLeft: 18, marginBottom: 6,
+                          borderLeft: `2px solid ${slice.color}55`,
+                          paddingLeft: 10,
+                        }}>
+                          {slice.items.map((h, idx) => {
+                            const name = h.name ?? '\u2014';
+                            const holdingTicker = h.ticker ?? null;
+                            const wt = h.pct_of_nav != null ? `${(h.pct_of_nav * 100).toFixed(2)}%` : '\u2014';
+                            return (
+                              <div key={idx} style={{
+                                display: 'flex', justifyContent: 'space-between',
+                                alignItems: 'center', padding: '4px 0', fontSize: 12, gap: 8,
+                                borderBottom: idx < slice.items.length - 1 ? `1px solid ${theme.colors.surfaceAlt}` : 'none',
+                              }}>
+                                <span style={{
+                                  color: '#cbd5e1', flex: 1,
+                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                }}>
+                                  {name}
+                                </span>
+                                {holdingTicker && (
+                                  <span style={{
+                                    fontFamily: theme.fonts.mono, color: theme.colors.textDim,
+                                    fontSize: 11, flexShrink: 0,
+                                  }}>
+                                    {holdingTicker}
+                                  </span>
+                                )}
+                                <span style={{
+                                  fontFamily: theme.fonts.mono, color: theme.colors.textMuted,
+                                  fontSize: 11, flexShrink: 0,
+                                }}>
+                                  {wt}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Top Holdings */}
-        {holdings.length > 0 && (
-          <div>
-            <h4 style={sectionTitle}>Top Holdings</h4>
-            <div style={{ fontSize: '12px' }}>
-              {holdings.slice(0, 15).map((h, i) => (
-                <div key={i} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '6px 0',
-                  borderBottom: i < Math.min(holdings.length, 15) - 1
-                    ? `1px solid ${theme.colors.border}` : 'none',
-                }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{
-                      color: theme.colors.text, fontWeight: 500,
-                      marginRight: '6px', fontFamily: theme.fonts.mono,
-                    }}>
-                      {h.ticker || '—'}
-                    </span>
-                    <span style={{
-                      color: theme.colors.textDim, fontSize: '11px',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
-                      {h.name}
-                    </span>
-                  </div>
-                  <span style={{
-                    color: theme.colors.textMuted, fontFamily: theme.fonts.mono,
-                    marginLeft: '8px', flexShrink: 0,
-                  }}>
-                    {(h.pct_of_nav * 100).toFixed(1)}%
-                  </span>
-                </div>
-              ))}
-              {holdings.length > 15 && (
-                <div style={{
-                  color: theme.colors.textDim, fontSize: '11px',
-                  textAlign: 'center', padding: '8px 0',
-                }}>
-                  +{holdings.length - 15} more holdings
-                </div>
-              )}
+          <PanelDivider />
+
+          {/* ── AI Reasoning ──────────────────────────────────────────── */}
+          {reasoning && Object.values(reasoning).some(Boolean) && (
+            <div style={{ marginBottom: 20 }}>
+              <SectionTitle>AI Analysis</SectionTitle>
+              {reasoning.costEfficiency && <ReasoningBlock label="Cost" text={reasoning.costEfficiency} />}
+              {reasoning.holdingsQuality && <ReasoningBlock label="Quality" text={reasoning.holdingsQuality} />}
+              {reasoning.momentum && <ReasoningBlock label="Momentum" text={reasoning.momentum} />}
+              {reasoning.positioning && <ReasoningBlock label="Positioning" text={reasoning.positioning} />}
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+// ─── Sub-Components ─────────────────────────────────────────────────────────
+
+function Backdrop({ onClick }: { onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 149,
+      }}
+    />
+  );
+}
+
+function Panel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      position: 'fixed', right: 0, top: 0,
+      height: '100vh', width: 420,
+      background: theme.colors.surface,
+      borderLeft: `1px solid ${theme.colors.border}`,
+      zIndex: 150,
+      overflowY: 'auto', overflowX: 'hidden',
+      animation: 'fl_slideRight 200ms ease forwards',
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function CloseButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        position: 'sticky', top: 0, float: 'right',
+        zIndex: 10, background: 'none', border: 'none',
+        color: theme.colors.textDim, fontSize: 22,
+        cursor: 'pointer', padding: '14px 16px 0', lineHeight: 1,
+      }}
+      onMouseEnter={e => (e.currentTarget.style.color = theme.colors.text)}
+      onMouseLeave={e => (e.currentTarget.style.color = theme.colors.textDim)}
+    >
+      {'\u00D7'}
+    </button>
+  );
+}
+
+function PanelDivider() {
+  return <div style={{ height: 1, background: theme.colors.border, margin: '4px 0 24px' }} />;
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+      letterSpacing: '0.1em', color: theme.colors.textDim,
+      marginBottom: 16,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function FactorBar({ label, score }: { label: string; score: number }) {
+  const color = factorBarColor(score);
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, alignItems: 'center' }}>
+        <span style={{ fontSize: 12, color: theme.colors.textMuted }}>{label}</span>
+        <span style={{
+          fontSize: 12, fontFamily: theme.fonts.mono,
+          color, fontWeight: 600,
+        }}>
+          {score.toFixed(0)}
+        </span>
+      </div>
+      <div style={{
+        height: 6, background: theme.colors.border,
+        borderRadius: 3, overflow: 'hidden',
+      }}>
+        <div style={{
+          height: 6, borderRadius: 3, background: color,
+          width: `${Math.min(100, Math.max(0, score))}%`,
+          transition: 'width 400ms ease',
+        }} />
       </div>
     </div>
   );
 }
 
-// ─── Reasoning Block ──────────────────────────────────────────────────────
-
 function ReasoningBlock({ label, text }: { label: string; text: string }) {
   return (
-    <div style={{ marginBottom: '10px' }}>
+    <div style={{ marginBottom: 10 }}>
       <span style={{
-        fontSize: '11px', fontWeight: 600, color: theme.colors.accentBlue,
+        fontSize: 11, fontWeight: 600, color: theme.colors.accentBlue,
         textTransform: 'uppercase', letterSpacing: '0.5px',
       }}>
         {label}
       </span>
       <p style={{
-        margin: '4px 0 0', fontSize: '12px', lineHeight: '1.5',
+        margin: '4px 0 0', fontSize: 12, lineHeight: 1.5,
         color: theme.colors.textMuted,
       }}>
         {text}
@@ -387,16 +472,3 @@ function ReasoningBlock({ label, text }: { label: string; text: string }) {
     </div>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────
-
-const closeBtnStyle: React.CSSProperties = {
-  background: 'none', border: 'none', color: theme.colors.textDim,
-  fontSize: '20px', cursor: 'pointer', padding: '0 4px', lineHeight: '1',
-};
-
-const sectionTitle: React.CSSProperties = {
-  fontSize: '11px', fontWeight: 600, color: theme.colors.textDim,
-  textTransform: 'uppercase', letterSpacing: '0.5px',
-  margin: '0 0 12px',
-};

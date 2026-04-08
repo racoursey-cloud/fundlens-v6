@@ -13,12 +13,13 @@
  *   /auth/callback    — Supabase redirect handler
  *   /setup            — protected, setup wizard
  *   /                 — protected, Portfolio (default)
+ *   /thesis           — protected, Macro Thesis + Sector Scorecard
  *   /briefs           — protected, Investment Brief
- *   /pipeline         — protected, Pipeline status
+ *   /settings         — protected, Settings
+ *   /pipeline         — protected, Pipeline status (admin)
  *
- * Updated in Session 10: replaced BriefsPlaceholder and PipelinePlaceholder
- * with full implementations.
- * Updated in Session 11: wrapped with ErrorBoundary.
+ * Updated Session 11: added Thesis and Settings routes, moved Pipeline
+ * out of primary navigation.
  *
  * Destination: client/src/App.tsx
  */
@@ -32,7 +33,9 @@ import { Login } from './pages/Login';
 import { SetupWizard } from './pages/SetupWizard';
 import { AuthCallback } from './pages/AuthCallback';
 import { Portfolio } from './pages/Portfolio';
+import { Thesis } from './pages/Thesis';
 import { Briefs } from './pages/Briefs';
+import { Settings } from './pages/Settings';
 import { Pipeline } from './pages/Pipeline';
 
 export function App() {
@@ -59,7 +62,9 @@ export function App() {
               </ProtectedRoute>
             }>
               <Route index element={<Portfolio />} />
+              <Route path="/thesis" element={<Thesis />} />
               <Route path="/briefs" element={<Briefs />} />
+              <Route path="/settings" element={<Settings />} />
               <Route path="/pipeline" element={<Pipeline />} />
             </Route>
 

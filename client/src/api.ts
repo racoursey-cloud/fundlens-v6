@@ -198,8 +198,24 @@ export const generateBrief = (sendEmail = false) =>
   });
 
 // Thesis
+export interface ThesisData {
+  id: string;
+  narrative: string;
+  sector_preferences: Array<{
+    sector: string;
+    score: number;
+    reasoning?: string;
+    preference?: string;
+  }>;
+  dominant_theme: string;
+  macro_stance: string;
+  key_themes?: string[];
+  risk_factors?: string[];
+  generated_at: string;
+}
+
 export const fetchThesis = () =>
-  apiFetch<{ thesis: unknown }>('/api/thesis/latest');
+  apiFetch<{ thesis: ThesisData }>('/api/thesis/latest');
 
 // Monitoring
 export const fetchSystemHealth = () =>

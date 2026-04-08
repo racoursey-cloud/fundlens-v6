@@ -5,18 +5,20 @@
  * render inside this shell. Dark theme, Inter font, no light mode.
  *
  * Responsive breakpoints:
- *   - < 768px:  bottom tab bar (3 icons), no sidebar
+ *   - < 768px:  bottom tab bar (4 icons), no sidebar
  *   - 768–1024: collapsed sidebar (64px icon-only)
  *   - > 1024:   expanded sidebar (240px, full labels)
  *
- * Navigation:
+ * Navigation (Session 11 — 4-tab layout):
  *   - Portfolio ◉ (default view)
- *   - Investment Brief ◈
- *   - Pipeline ◎
+ *   - Thesis ◈
+ *   - Investment Brief ◇
+ *   - Settings ◎
  *
- * Session 8 deliverable, updated Session 11 (responsive layout).
- * Destination: client/src/components/AppShell.tsx
- * References: Master Reference §9 (UI).
+ * Pipeline monitoring moved to admin route (not top-level nav).
+ *
+ * Session 11 deliverable. Destination: client/src/components/AppShell.tsx
+ * References: Master Spec §6.7 (responsive), v5.1 AppShell.jsx (3-tab layout).
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -47,7 +49,6 @@ export function AppShell() {
     return () => window.removeEventListener('resize', handleResize);
   }, [handleResize]);
 
-  // On tablet, sidebar is always icon-only; on desktop, user can toggle
   const isCollapsed = layoutMode === 'tablet' ? true : sidebarCollapsed;
   const sidebarWidth = isCollapsed ? '64px' : '240px';
   const isMobile = layoutMode === 'mobile';
@@ -103,11 +104,12 @@ export function AppShell() {
             )}
           </div>
 
-          {/* Nav Links */}
+          {/* Nav Links — 4 tabs */}
           <div style={{ padding: '12px 8px', flex: 1 }}>
             <SidebarNavItem to="/" icon="◉" label="Portfolio" collapsed={isCollapsed} />
-            <SidebarNavItem to="/briefs" icon="◈" label="Investment Brief" collapsed={isCollapsed} />
-            <SidebarNavItem to="/pipeline" icon="◎" label="Pipeline" collapsed={isCollapsed} />
+            <SidebarNavItem to="/thesis" icon="◈" label="Thesis" collapsed={isCollapsed} />
+            <SidebarNavItem to="/briefs" icon="◇" label="Investment Brief" collapsed={isCollapsed} />
+            <SidebarNavItem to="/settings" icon="◎" label="Settings" collapsed={isCollapsed} />
           </div>
 
           {/* Bottom: collapse toggle + user */}
@@ -115,7 +117,6 @@ export function AppShell() {
             padding: '12px 8px',
             borderTop: `1px solid ${theme.colors.border}`,
           }}>
-            {/* Only show collapse toggle on desktop (tablet is always collapsed) */}
             {layoutMode === 'desktop' && (
               <button
                 onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -127,7 +128,7 @@ export function AppShell() {
                 title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               >
                 <span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>
-                  {isCollapsed ? '▸' : '◂'}
+                  {isCollapsed ? '\u25B8' : '\u25C2'}
                 </span>
                 {!isCollapsed && <span>Collapse</span>}
               </button>
@@ -141,7 +142,7 @@ export function AppShell() {
               }}
               title="Sign out"
             >
-              <span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>⏻</span>
+              <span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>{'\u23FB'}</span>
               {!isCollapsed && (
                 <span style={{
                   overflow: 'hidden',
@@ -166,7 +167,7 @@ export function AppShell() {
         <Outlet />
       </main>
 
-      {/* ─── Mobile Bottom Tab Bar ─────────────────────────── */}
+      {/* ─── Mobile Bottom Tab Bar (4 tabs) ───────────────────── */}
       {isMobile && (
         <nav style={{
           position: 'fixed',
@@ -182,8 +183,9 @@ export function AppShell() {
           zIndex: 100,
         }}>
           <MobileTabItem to="/" icon="◉" label="Portfolio" />
-          <MobileTabItem to="/briefs" icon="◈" label="Brief" />
-          <MobileTabItem to="/pipeline" icon="◎" label="Pipeline" />
+          <MobileTabItem to="/thesis" icon="◈" label="Thesis" />
+          <MobileTabItem to="/briefs" icon="◇" label="Brief" />
+          <MobileTabItem to="/settings" icon="◎" label="Settings" />
         </nav>
       )}
     </div>

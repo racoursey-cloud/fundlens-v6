@@ -75,19 +75,19 @@ function renderMarkdown(md: string): string {
     const h3 = line.match(/^### (.+)/);
     if (h3) {
       closeList();
-      htmlParts.push(`<h3 style="font-size:16px;font-weight:600;color:${theme.colors.text};margin:28px 0 12px;line-height:1.4">${inlineFormat(h3[1] ?? '')}</h3>`);
+      htmlParts.push(`<h3 style="font-family:${theme.fonts.serif};font-size:16px;font-weight:600;color:${theme.colors.text};margin:28px 0 12px;line-height:1.4">${inlineFormat(h3[1] ?? '')}</h3>`);
       continue;
     }
     const h2 = line.match(/^## (.+)/);
     if (h2) {
       closeList();
-      htmlParts.push(`<h2 style="font-size:18px;font-weight:600;color:${theme.colors.text};margin:32px 0 12px;line-height:1.4">${inlineFormat(h2[1] ?? '')}</h2>`);
+      htmlParts.push(`<h2 style="font-family:${theme.fonts.serif};font-size:18px;font-weight:700;color:${theme.colors.text};margin:32px 0 12px;line-height:1.4">${inlineFormat(h2[1] ?? '')}</h2>`);
       continue;
     }
     const h1 = line.match(/^# (.+)/);
     if (h1) {
       closeList();
-      htmlParts.push(`<h1 style="font-size:22px;font-weight:700;color:${theme.colors.text};margin:32px 0 16px;line-height:1.3">${inlineFormat(h1[1] ?? '')}</h1>`);
+      htmlParts.push(`<h1 style="font-family:${theme.fonts.serif};font-size:22px;font-weight:700;color:${theme.colors.text};margin:32px 0 16px;line-height:1.3">${inlineFormat(h1[1] ?? '')}</h1>`);
       continue;
     }
 
@@ -282,11 +282,11 @@ export function Briefs() {
             <line x1="14" y1="22" x2="34" y2="22" stroke={theme.colors.border} strokeWidth="2" />
             <line x1="14" y1="28" x2="26" y2="28" stroke={theme.colors.border} strokeWidth="2" />
           </svg>
-          <p style={{ color: theme.colors.textMuted, margin: '0 0 8px', fontSize: '15px', fontWeight: 500 }}>
-            No Briefs yet
+          <p style={{ fontFamily: theme.fonts.serif, color: theme.colors.text, margin: '0 0 8px', fontSize: '17px', fontWeight: 700 }}>
+            Run Analysis to generate your first Investment Brief
           </p>
-          <p style={{ color: theme.colors.textDim, margin: '0 0 24px', fontSize: '13px', maxWidth: '360px', marginLeft: 'auto', marginRight: 'auto' }}>
-            Run the pipeline first to score your funds, then generate your first Investment Brief.
+          <p style={{ color: theme.colors.textDim, margin: '0 0 24px', fontSize: '13px', maxWidth: '360px', marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
+            Your personalized research document, written by Claude Opus. Covers fund recommendations, market narrative, risks, and sector outlook.
           </p>
 
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>

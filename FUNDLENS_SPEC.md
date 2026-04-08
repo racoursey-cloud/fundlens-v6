@@ -1,6 +1,6 @@
 # FundLens — Master Specification
 ## Version 7.0 — Single Source of Truth
-**Last updated:** April 7, 2026 (Session 8)
+**Last updated:** April 7, 2026 (Session 11)
 **Owner:** Robert Coursey (racoursey@gmail.com)
 
 ---
@@ -964,7 +964,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 7, 2026 (after Session 10)
+**Last updated:** April 7, 2026 (after Session 11)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1039,6 +1039,14 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Pipeline caching: sector classifications | §4.6 | cache.ts, pipeline.ts | 15-day TTL in `sector_classifications` table. Cross-fund deduplication. — Session 10 |
 | API delay reduced 500ms→250ms | §5.3 | constants.ts | Matches v5.1's 200-300ms range while staying conservative. — Session 10 |
 | Classification batch size 25 | §5.3 | classify.ts | Matches v5.1. Fewer Claude calls = fewer 1.2s delays. — Session 10 |
+| v5.1 UI layout ported | §6.7 | Portfolio.tsx, AppShell.tsx, FundDetail.tsx | Two SVG donuts + 7-col fund table + sliders. 4-tab nav. 420px sidebar. — Session 11 |
+| Shared DonutChart component | §6.7 | DonutChart.tsx | SVG arc math, hover tooltips, click drill-in, MiniDonut variant. — Session 11 |
+| SectorScorecard component | §2.6.1 | SectorScorecard.tsx | 14 sectors, 1–10 scale, progress bars, reasoning. Compact mode for Briefs. — Session 11 |
+| Thesis page | §2.6.1, §6.7 | Thesis.tsx | Macro thesis card + sector scorecard. Data from /api/thesis/latest. — Session 11 |
+| Settings page | §6.7 | Settings.tsx | Profile, fund list, pipeline controls, about. Replaces admin-only Pipeline tab. — Session 11 |
+| Brief serif headers | §7.2 | Briefs.tsx | Section headings use Libre Baskerville serif font. — Session 11 |
+| Theme: serif font + surfaceAlt | §6.1 | theme.ts | Added Libre Baskerville, surfaceAlt color. — Session 11 |
+| ThesisData typed API client | §2.6.1 | api.ts | Typed ThesisData interface for /api/thesis/latest. — Session 11 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -1145,7 +1153,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 8 | Brief Engine Redesign | MISSING-10: Rewrite editorial-policy.md + brief-engine.ts prompt. Raw data feed. 4-section output. Advisor voice. | **DONE** |
 | 9 | Allocation Persistence + Continuous Slider | MISSING-11 + MISSING-12: allocation_history table, risk slider float, interpolation | **DONE** |
 | 10 | Pipeline Performance | MISSING-13: Reduce delays, add Supabase caching, batch Claude classification. Target <3 min. | **DONE** |
-| 11 | v5.1 UI Port | Port v5.1 layout/UX to v6 React client. All 4 factors visible. Sector scorecard. Inline Brief rendering. | |
+| 11 | v5.1 UI Port | Port v5.1 layout/UX to v6 React client. All 4 factors visible. Sector scorecard. Inline Brief rendering. | **DONE** |
 | 12 | Help Section | MISSING-9 (FAQs + Claude Haiku chat) | |
 | 13 | HHI + Polish | MISSING-7 (HHI concentration display). Final UI polish. | |
 | 14 | Integration Testing | End-to-end pipeline validation against worked example (§2.8) | |
@@ -1191,6 +1199,39 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 16. **No culture/trends in scoring.** Social media sentiment, generational preferences, etc. add noise to the objective model. Claude may reference current events and cultural context in the Investment Brief narrative when it enhances readability and relevance.
 
 17. **Cost Efficiency enhanced with Tiingo fee components.** When 12b-1 marketing fees are present, apply penalty within cost factor (-5 points per 0.10% of 12b-1, capped at -15). Distinguishes funds with identical headline expense ratios but different fee structures.
+
+## April 7, 2026 — Session 11: v5.1 UI Port
+
+**Deliverables:**
+
+1. **Portfolio.tsx rebuilt to match v5.1 layout.** Two SVG donut charts (Sector Exposure + Fund Allocation) with hover tooltips and click drill-in. Sector donut click shows company holdings within that sector across all funds. Fund donut click opens 420px FundDetail sidebar. 7-column fund table (Fund, Score, Tier, Cost, Quality, Momentum, Positioning) — all 4 factors visible. Money market funds sort to bottom. Factor weight sliders with proportional redistribution. Continuous risk slider (1.0–7.0, step 0.1) preserved from Session 9.
+
+2. **DonutChart.tsx extracted as shared component.** Ported v5.1's SVG arc math including the 360° edge case (two semicircular arcs). Supports hover tooltips (center label), click drill-in with expandable holdings list, and MiniDonut variant for the sidebar. Used by Portfolio.tsx and FundDetail.tsx.
+
+3. **SectorScorecard.tsx created.** Ported from v5.1's SectorScorecard.jsx. Grid layout: sector name with colored dot, score in JetBrains Mono, progress bar (1–10 → 0–100%), one-line reasoning. Supports compact mode for inline use in Briefs. Used by Thesis.tsx and available for inline Brief rendering.
+
+4. **Thesis.tsx page created.** Two cards: Investment Thesis (macro stance badge, dominant theme badge, narrative text, key themes) and Sector Outlook (SectorScorecard grid). Data from GET /api/thesis/latest. Libre Baskerville serif font for card headers matching v5.1 pattern.
+
+5. **FundDetail.tsx rebuilt as 420px slide-in sidebar.** Fixed right panel with backdrop overlay, slide-in animation, close-on-backdrop-click. Sections: header (name, ticker, expense ratio, tier badge), composite score (38px JetBrains Mono), 4 factor bars with color coding, sector donut with expandable holdings per sector (v5.1 click-to-expand pattern), AI reasoning blocks. Width increased from 250px to 420px per spec §6.7.
+
+6. **AppShell.tsx updated to 4-tab navigation.** Portfolio | Thesis | Briefs | Settings. Pipeline moved out of top-level nav (accessible from Settings page). Responsive: desktop sidebar, tablet collapsed sidebar, mobile bottom tab bar — all 4 tabs.
+
+7. **Settings.tsx page created.** Ported from v5.1's SettingsTab.jsx. Sections: Profile (display name, email), Scoring Preferences (read-only summary of weights and risk), Fund List (all ~18 TerrAscend funds with ticker, name, expense ratio), Pipeline controls (admin — run pipeline button, status display), About placeholder.
+
+8. **Briefs.tsx refined.** Section headings now use Libre Baskerville serif font. Empty state improved with clearer copy ("Run Analysis to generate your first Investment Brief"). SectorScorecard component available for inline rendering in "Where We Stand" section.
+
+9. **theme.ts updated.** Added serif font (`'Libre Baskerville', Georgia, serif`), surfaceAlt color (`#1c1e23`).
+
+10. **api.ts updated.** Added ThesisData interface with typed sector_preferences, dominant_theme, macro_stance, key_themes, risk_factors.
+
+**v6 improvements preserved (not regressed):**
+- 4 visible factors (Cost, Quality, Momentum, Positioning) at 25/30/25/20
+- Continuous risk slider 1.0–7.0 with 0.1 step and Kelly k-interpolation
+- 4-section Brief structure ("Where the Numbers Point" → "What Happened" → "What We're Watching" → "Where We Stand")
+- "Behind the curtain" rule
+- Tier badges (Breakaway/Strong/Solid/Neutral/Weak)
+- TypeScript + Vite client
+- Error boundary
 
 ## April 7, 2026 — Session 0: Security Hardening
 
