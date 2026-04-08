@@ -8,9 +8,15 @@
  * MANDATORY: Sequential with 1.2s delays between Claude calls.
  * NEVER Promise.all() — has crashed production 5+ times.
  *
- * Classifications are cached in Supabase (holdings_cache.sector column)
- * so we only classify a holding once. On subsequent pipeline runs,
- * already-classified holdings are skipped.
+ * Session 10: Two-layer cache strategy:
+ *   Layer 1: holdings_cache.sector column (set by previous pipeline runs)
+ *   Layer 2: sector_classifications Supabase table (15-day TTL, keyed by holding_name)
+ *
+ * Before any Claude call, we batch-query the sector_classifications table
+ * for all unclassified holding names. Only true cache misses go to Claude.
+ * After classification, new results are written back to the cache.
+ *
+ * Session 10 also increased batch size from 15 → 25 (matching v5.1 production).
  *
  * Session 4 deliverable. References: Master Reference §8 step 5.
  */
@@ -18,6 +24,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { CLAUDE, PIPELINE } from './constants.js';
 import { ResolvedHolding, delay } from './types.js';
+import { getCachedSectors, saveCachedSectors } from './cache.js';
 
 // ─── Standard Sectors ───────────────────────────────────────────────────────
 // Must match the sectors in thesis.ts for alignment scoring to work.
@@ -45,9 +52,13 @@ const VALID_SECTORS = [
  * Classify holdings into sectors using Claude Haiku.
  * Modifies holdings in place (sets the .sector field).
  *
- * Only classifies holdings that don't already have a sector.
- * Uses batched prompts — sends 10–15 holdings per Claude call
- * to reduce the total number of API calls.
+ * Session 10: Two-layer cache strategy:
+ *   1. Skip holdings that already have .sector set (Layer 1: holdings_cache)
+ *   2. Batch-query sector_classifications table for remaining holdings (Layer 2)
+ *   3. Only send true cache misses to Claude Haiku
+ *   4. Write new classifications back to sector_classifications cache
+ *
+ * Batch size: 25 holdings per Claude call (up from 15, matching v5.1 production).
  *
  * @param holdings Array of resolved holdings (modified in place)
  */
@@ -59,20 +70,53 @@ export async function classifyHoldingSectors(
     throw new Error('ANTHROPIC_API_KEY environment variable is not set');
   }
 
-  // Filter to holdings that need classification
+  // Layer 1: Filter to holdings that need classification (no .sector set)
   const needsClassification = holdings.filter(h => !h.sector && h.ticker);
 
   if (needsClassification.length === 0) {
-    console.log('[classify] All holdings already classified');
+    console.log('[classify] All holdings already classified (Layer 1: holdings_cache)');
     return;
   }
 
-  console.log(`[classify] Classifying ${needsClassification.length} holdings via Claude Haiku`);
+  // Layer 2: Check sector_classifications Supabase cache
+  const holdingNames = needsClassification.map(h => h.name).filter(Boolean);
+  let cachedSectors = new Map<string, string>();
+
+  try {
+    cachedSectors = await getCachedSectors(holdingNames);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[classify] Cache lookup failed (non-fatal): ${msg}`);
+  }
+
+  // Apply cached sectors (Layer 2 hits)
+  if (cachedSectors.size > 0) {
+    for (const holding of needsClassification) {
+      const cached = cachedSectors.get(holding.name);
+      if (cached && VALID_SECTORS.includes(cached as typeof VALID_SECTORS[number])) {
+        holding.sector = cached;
+      }
+    }
+    console.log(`[classify] Layer 2 cache: ${cachedSectors.size} holdings resolved from sector_classifications`);
+  }
+
+  // True cache misses — need Claude
+  const stillNeeds = needsClassification.filter(h => !h.sector && h.ticker);
+
+  if (stillNeeds.length === 0) {
+    console.log('[classify] All holdings resolved from cache (no Claude calls needed)');
+    return;
+  }
+
+  console.log(`[classify] ${stillNeeds.length} cache misses — classifying via Claude Haiku`);
 
   const client = new Anthropic({ apiKey });
 
-  // Batch holdings into groups of 15 for efficient API usage
-  const batches = chunkArray(needsClassification, 15);
+  // Session 10: Batch size increased from 15 → 25 (matching v5.1 production)
+  const batches = chunkArray(stillNeeds, 25);
+
+  // Track new classifications to write back to cache after all batches
+  const newClassifications: Array<{ holdingName: string; sector: string }> = [];
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
@@ -87,9 +131,12 @@ export async function classifyHoldingSectors(
         const sector = classifications.get(key);
         if (sector && VALID_SECTORS.includes(sector as typeof VALID_SECTORS[number])) {
           holding.sector = sector;
+          newClassifications.push({ holdingName: holding.name, sector });
         } else {
           // If classification didn't match a valid sector, try fuzzy matching
-          holding.sector = fuzzyMatchSector(sector || '') || 'Technology';
+          const fuzzy = fuzzyMatchSector(sector || '') || 'Technology';
+          holding.sector = fuzzy;
+          newClassifications.push({ holdingName: holding.name, sector: fuzzy });
         }
       }
     } catch (err) {
@@ -101,6 +148,17 @@ export async function classifyHoldingSectors(
     // MANDATORY: 1.2s delay between Claude calls
     if (i < batches.length - 1) {
       await delay(PIPELINE.CLAUDE_CALL_DELAY_MS);
+    }
+  }
+
+  // Write new classifications back to the sector_classifications cache
+  if (newClassifications.length > 0) {
+    try {
+      await saveCachedSectors(newClassifications);
+      console.log(`[classify] Cached ${newClassifications.length} new classifications to sector_classifications`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[classify] Cache write failed (non-fatal): ${msg}`);
     }
   }
 
