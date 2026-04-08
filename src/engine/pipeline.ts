@@ -564,7 +564,7 @@ export async function runFullPipeline(
   const macroSnapshot = await fetchMacroSnapshot();
 
   // ── Step 11: Generate macro thesis via Claude Sonnet ──
-  progress(11, 'Generating macro thesis');
+  progress(11, 'Generating investment brief');
 
   let thesis: MacroThesis;
   try {
