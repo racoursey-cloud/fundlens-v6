@@ -1,3 +1,5 @@
+**STATUS: COMPLETED** — April 8, 2026 (Session 13)
+
 # Assignment 13.2: Rewrite Allocation Step 4 — De Minimis Floor
 
 **Session:** 13

@@ -965,7 +965,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 8, 2026 (after Session 13 partial)
+**Last updated:** April 8, 2026 (after Session 13, Task 13.2)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1053,10 +1053,10 @@ This section tells future sessions exactly what state the codebase is in relativ
 
 These are the highest priority. The code runs but produces wrong results.
 
-**CRITICAL-6: Allocation Engine — Capture Threshold Instead of De Minimis Floor (§3.5) — IN PROGRESS**
-File: `src/engine/allocation.ts`, lines 218-241
+**~~CRITICAL-6: Allocation Engine — Capture Threshold Instead of De Minimis Floor (§3.5)~~ — RESOLVED (Session 13)**
+File: `src/engine/allocation.ts`
 Spec: §3.5 — "Drop any fund with allocation < 5%. Renormalize survivors to sum to 100%."
-Status: **Session 13 partial.** Task 13.1 complete: `CAPTURE_HIGH`/`CAPTURE_STEP` removed from constants.ts, `DE_MINIMIS_PCT: 0.05` added. Task 13.2 remaining: rewrite allocation.ts Step 4 to use de minimis floor instead of capture threshold. `tsc --noEmit` currently fails (allocation.ts still references removed constants). Next session picks up at Assignment 13.2.
+Status: ✅ Complete. Task 13.1 removed `CAPTURE_HIGH`/`CAPTURE_STEP` from constants.ts, added `DE_MINIMIS_PCT: 0.05`. Task 13.2 rewrote allocation.ts Step 4: single-pass de minimis floor deletes any fund below 5%, then renormalizes survivors to 100%. `tsc --noEmit` passes clean.
 
 **~~CRITICAL-1: Scoring Engine — Missing Z-Space + CDF (§2.1)~~ — RESOLVED (Session 4)**
 File: `src/engine/scoring.ts`
@@ -1246,6 +1246,22 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 **State at session end:** `tsc --noEmit` fails (expected). `allocation.ts` line 34 still destructures the removed `CAPTURE_HIGH`/`CAPTURE_STEP`. Next session picks up at **Assignment 13.2** (rewrite allocation.ts Step 4).
 
 **Assignments completed:** 13.1. **Remaining:** 13.2, 13.3, 13.4, 13.5.
+
+## April 8, 2026 — Session 13 (continued): Allocation De Minimis Floor
+
+**Goal:** Complete CRITICAL-6 fix — rewrite allocation.ts Step 4.
+
+**Changes:**
+
+1. **allocation.ts: Removed broken `CAPTURE_HIGH`/`CAPTURE_STEP` destructuring (line 34).** These constants were deleted in Task 13.1 but allocation.ts still referenced them, causing `tsc --noEmit` to fail.
+
+2. **allocation.ts: Replaced Step 4 capture threshold trim with de minimis floor (§3.5).** Old code: ranked funds by weight, walked down until cumulative hit `targetCapture = CAPTURE_HIGH - (rt-1) * CAPTURE_STEP`, cut the rest. New code: single-pass deletion of any fund with allocation < 5% (`ALLOCATION.DE_MINIMIS_PCT * 100`), then renormalize survivors to 100%. Mathematically proven single-pass (removing sub-threshold funds only increases survivor allocations).
+
+3. **allocation.ts: Added Session 13 note to file header.**
+
+**State at session end:** `tsc --noEmit` passes clean. CRITICAL-6 fully resolved. Next assignment: **13.3** (port computeAllocations to client-side module).
+
+**Assignments completed:** 13.1, 13.2. **Remaining:** 13.3, 13.4, 13.5.
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 
