@@ -533,18 +533,18 @@ export function Portfolio() {
                           {s.userTier}
                         </span>
                       </td>
-                      {/* Factor scores */}
+                      {/* Factor scores — CDF-normalized from z-scores (§2.1) so all display on 0–100 */}
                       <td style={tdFactorStyle}>
-                        <span style={{ color: scoreColor(s.cost_efficiency) }}>{s.cost_efficiency.toFixed(0)}</span>
+                        {(() => { const v = Math.round(100 * normalCDF(s.z_cost_efficiency ?? 0)); return <span style={{ color: scoreColor(v) }}>{v}</span>; })()}
                       </td>
                       <td style={tdFactorStyle}>
-                        <span style={{ color: scoreColor(s.holdings_quality) }}>{s.holdings_quality.toFixed(0)}</span>
+                        {(() => { const v = Math.round(100 * normalCDF(s.z_holdings_quality ?? 0)); return <span style={{ color: scoreColor(v) }}>{v}</span>; })()}
                       </td>
                       <td style={tdFactorStyle}>
-                        <span style={{ color: scoreColor(s.momentum) }}>{s.momentum.toFixed(0)}</span>
+                        {(() => { const v = Math.round(100 * normalCDF(s.z_momentum ?? 0)); return <span style={{ color: scoreColor(v) }}>{v}</span>; })()}
                       </td>
                       <td style={tdFactorStyle}>
-                        <span style={{ color: scoreColor(s.positioning) }}>{s.positioning.toFixed(0)}</span>
+                        {(() => { const v = Math.round(100 * normalCDF(s.z_positioning ?? 0)); return <span style={{ color: scoreColor(v) }}>{v}</span>; })()}
                       </td>
                     </tr>
                     {/* Inline holdings expansion */}
