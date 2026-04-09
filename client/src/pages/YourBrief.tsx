@@ -459,7 +459,7 @@ export function YourBrief() {
   if (briefs.length === 0 && !generating) {
     return (
       <div>
-        <h1 style={{ fontSize: '24px', fontWeight: 600, margin: '0 0 8px', color: theme.colors.text }}>
+        <h1 style={{ fontFamily: theme.fonts.body, fontSize: '24px', fontWeight: 600, margin: '0 0 8px', color: theme.colors.text }}>
           Your Brief
         </h1>
         <p style={{ fontSize: '14px', color: theme.colors.textMuted, margin: '0 0 24px' }}>
@@ -504,7 +504,7 @@ export function YourBrief() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: 600, margin: '0 0 8px', color: theme.colors.text }}>
+          <h1 style={{ fontFamily: theme.fonts.body, fontSize: '24px', fontWeight: 600, margin: '0 0 8px', color: theme.colors.text }}>
             Your Brief
           </h1>
           <p style={{ fontSize: '14px', color: theme.colors.textMuted, margin: 0 }}>

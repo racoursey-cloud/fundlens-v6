@@ -216,19 +216,21 @@ export function PipelineOverlay({ isRunning, currentStep, stepMessage, onStop }:
               style={{
                 marginTop: 24, width: '100%', height: 40,
                 background: 'transparent',
-                border: `1px solid rgba(239,68,68,0.45)`,
+                border: `1px solid ${theme.colors.borderLight}`,
                 borderRadius: 8, cursor: 'pointer',
-                color: '#ef4444', fontSize: 13, fontWeight: 600,
+                color: theme.colors.textMuted, fontSize: 13, fontWeight: 600,
                 fontFamily: theme.fonts.body, letterSpacing: '0.01em',
-                transition: 'background 0.15s, border-color 0.15s',
+                transition: 'background 0.15s, border-color 0.15s, color 0.15s',
               }}
               onMouseEnter={e => {
-                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.12)';
-                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(239,68,68,0.65)';
+                (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceHover;
+                (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.accentBlue;
+                (e.currentTarget as HTMLButtonElement).style.color = theme.colors.text;
               }}
               onMouseLeave={e => {
                 (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(239,68,68,0.45)';
+                (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.borderLight;
+                (e.currentTarget as HTMLButtonElement).style.color = theme.colors.textMuted;
               }}
             >
               Stop Analysis
