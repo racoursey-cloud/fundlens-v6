@@ -967,7 +967,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 8, 2026 (after Session 13, complete)
+**Last updated:** April 9, 2026 (after Session 16 — all 12 bugs resolved)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1002,6 +1002,7 @@ This section tells future sessions exactly what state the codebase is in relativ
 | CUSIP resolver: Supabase cache wired in | §4.3 | cusip.ts | cusipCacheLookup/cusipCacheSave with negative caching — Session 2 |
 | CUSIP resolver: OpenFIGI → FMP search fallback chain | §4.6 | cusip.ts | OpenFIGI primary, FMP searchByName fallback, cache save — Session 2 |
 | CUSIP resolver: US equity preference | §4.3 | cusip.ts | Prefers US-listed equities from OpenFIGI results — verified Session 2 |
+| CUSIP resolver: ISIN fallback for international holdings | §4.3, §4.6 | cusip.ts, holdings.ts, types.ts | ID_ISIN retry for CUSIPs that fail ID_CUSIP. EDGAR ISIN + name maps passed to resolver. FMP search uses EDGAR names. — Session 16 (BUG-3) |
 | CUSIP resolver: 429 rate limit retry | §4.3 | cusip.ts | 10s backoff + single retry — verified Session 2 |
 | Fund-of-funds look-through depth = 1 | §2.4.4 | holdings.ts | MAX_LOOKTHROUGH_DEPTH=1 — fixed Session 2 (was 2) |
 | pctOfNav whole-percent units documented | §4.3 | types.ts | Doc comments corrected from "0.0–1.0" to whole-percent — Session 2 |
@@ -1164,7 +1165,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 
 ### 9.5 Build Roadmap
 
-**Completed Sessions (1–13):**
+**Completed Sessions (0–16):**
 
 | Session | Focus | Status |
 |---------|-------|--------|
@@ -1183,15 +1184,18 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 12 | Full Assessment (READ-ONLY) | **DONE** — repo cleaned, spec updated, ASSESSMENT_REPORT.md written |
 | 13 | Allocation Fix + Portfolio Allocation Display | **DONE** — CRITICAL-6 resolved, MISSING-14 resolved. NOTE: deployment failure after push (client tsc errors); hotfixed in `ede0184`. Open model misunderstanding flagged by Robert — see SESSION_13_NOTES.md. |
 | 14 | End-to-End Integration Testing | **DONE** — Full pipeline verified against 22-fund universe. BUG-9 (CRITICAL: zero financial data reaching Claude) fixed. BUG-1 (quality scores >100) fixed. 9 open bugs documented in BUGS.md. 15/22 funds scoring (BUG-4). Brief rendering broken (BUG-5). Cold pipeline: 2m47s (PASS). Warm pipeline: 1m42s (PASS). |
+| 15 | HHI + Bugfixes + Documentation | **DONE** — HHI display added, 7 bugs resolved (BUG-2/4/5/6/7/10/12), 2 deferred. |
+| 16 | BUG-3 + BUG-11 Fixes | **DONE** — ISIN fallback for international CUSIPs (BUG-3), editorial voice overhaul (BUG-11). All 12 bugs resolved. Zero open. |
 
-**Remaining Sessions (minimum 1 to match v5.1, 3 for full spec compliance):**
+**Remaining Sessions (optional, for full spec compliance):**
 
 | Session | Focus | Gaps Addressed | Estimate |
 |---------|-------|----------------|----------|
 | 14 | ~~End-to-End Integration Testing~~ | **COMPLETED** — see above | — |
 | 15 | ~~HHI + Bugfixes + Documentation~~ | **COMPLETED** — HHI display added, 4 bugs fixed (BUG-4/5/6/7), documentation updated | — |
-| 16 | Help Section (optional) | MISSING-9 (FAQs + Claude Haiku chat) | 1 session |
-| 17 | Fund-of-Funds Look-Through (optional) | MISSING-15 (wire resolveSubFundTicker) | 0.5–1 session |
+| 16 | ~~BUG-3 + BUG-11 Fixes~~ | **COMPLETED** — ISIN fallback for international CUSIP resolution (BUG-3), editorial voice overhaul with jargon blacklist (BUG-11). All 12 bugs now resolved. | — |
+| 17 | Help Section (optional) | MISSING-9 (FAQs + Claude Haiku chat) | 1 session |
+| 18 | Fund-of-Funds Look-Through (optional) | MISSING-15 (wire resolveSubFundTicker) | 0.5–1 session |
 
 ---
 
@@ -1338,6 +1342,20 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 **Files changed:** `src/engine/pipeline.ts`, `client/src/pages/Briefs.tsx`, `client/src/components/AppShell.tsx`, `client/src/components/FundDetail.tsx`, `client/src/utils/hhi.ts` (new), `BUGS.md`, `FUNDLENS_SPEC.md`
 
 **Assignments completed:** 15.1, 15.2, 15.3, 15.4.
+
+## April 9, 2026 — Session 16: BUG-3 + BUG-11 Fixes (Final Bug Resolution)
+
+**Goal:** Fix the last 2 open bugs from Session 14/15. Zero open bugs remaining after this session.
+
+**Changes:**
+
+1. **BUG-3 fixed: 0% holdings coverage on international/bond funds.** Root cause: OpenFIGI `ID_CUSIP` lookups fail for most non-US securities. EDGAR provides ISINs for these holdings, and OpenFIGI's `ID_ISIN` has much better international coverage. Added Step 2b to `resolveCusips()`: after CUSIP-based resolution, retry unresolved CUSIPs that have ISINs using `ID_ISIN`. Also improved FMP search fallback to use EDGAR holding names when OpenFIGI returns no name. `holdings.ts` builds ISIN and name maps from EDGAR data and passes them to the resolver. `FigiMappingJob` type expanded to `'ID_CUSIP' | 'ID_ISIN'`.
+
+2. **BUG-11 fixed: Brief voice too Wall Street.** Added two new sections to `editorial-policy.md` (v2.0 → v2.1): "Voice Anchor — The Archetype" (the confident-professional-at-a-cookout persona with specific cadence rules) and "Jargon Blacklist" (23 banned Wall Street phrases with plain-English alternatives). The voice anchor describes the archetype: sharp, confident, leads with the answer, uses concrete words, never shows off. The cookout test: "If your neighbor at a cookout would furrow their brow, rewrite it."
+
+3. **Bug tracker cleared.** All 12 bugs from Sessions 14–15 now resolved. Zero open bugs.
+
+**Files changed:** `src/engine/cusip.ts`, `src/engine/holdings.ts`, `src/engine/types.ts`, `src/prompts/editorial-policy.md`, `BUGS.md`, `FUNDLENS_SPEC.md`
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 

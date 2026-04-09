@@ -111,11 +111,30 @@ export async function runHoldingsPipeline(
     const cusips = included.map(h => h.cusip).filter(Boolean);
     console.log(`[holdings] Resolving ${cusips.length} CUSIPs via OpenFIGI...`);
 
+    // BUG-3 fix: Build ISIN and name maps for international holding resolution.
+    // EDGAR provides ISINs for most holdings — OpenFIGI's ID_ISIN lookup has
+    // much better coverage for non-US securities than ID_CUSIP.
+    const isinMap = new Map<string, string>();
+    const nameMap = new Map<string, string>();
+    for (const h of included) {
+      if (h.cusip && h.isin) {
+        isinMap.set(h.cusip, h.isin);
+      }
+      if (h.cusip && h.name) {
+        nameMap.set(h.cusip, h.name);
+      }
+    }
+    if (isinMap.size > 0) {
+      console.log(`[holdings] ${isinMap.size} holdings have ISINs for fallback resolution`);
+    }
+
     const cusipResult = await resolveCusips(
       cusips,
       openFigiKey,
       cacheLookup,
-      cacheSave
+      cacheSave,
+      isinMap,
+      nameMap
     );
 
     if (!cusipResult.success || !cusipResult.data) {

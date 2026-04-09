@@ -116,12 +116,16 @@ export async function cusipCacheSave(
  * @param apiKey - OpenFIGI API key (from OPENFIGI_API_KEY env var)
  * @param cacheLookup - Function to check Supabase cache (default: cusipCacheLookup)
  * @param cacheSave - Function to persist new resolutions to Supabase (default: cusipCacheSave)
+ * @param isinMap - Optional map of CUSIP → ISIN for international holdings (BUG-3 fix)
+ * @param nameMap - Optional map of CUSIP → holding name from EDGAR for FMP fallback (BUG-3 fix)
  */
 export async function resolveCusips(
   cusips: string[],
   apiKey: string,
   cacheLookup: (cusips: string[]) => Promise<Map<string, CusipResolution>> = cusipCacheLookup,
-  cacheSave: (resolutions: CusipResolution[]) => Promise<void> = cusipCacheSave
+  cacheSave: (resolutions: CusipResolution[]) => Promise<void> = cusipCacheSave,
+  isinMap?: Map<string, string>,
+  nameMap?: Map<string, string>
 ): Promise<PipelineStepResult<Map<string, CusipResolution>>> {
   const start = Date.now();
 
@@ -170,16 +174,80 @@ export async function resolveCusips(
       }
     }
 
+    // ── Step 2b: ISIN retry for unresolved international holdings (BUG-3) ──
+    // International CUSIPs often fail OpenFIGI. If we have ISINs from EDGAR,
+    // retry unresolved CUSIPs using idType: 'ID_ISIN' which has much better
+    // coverage for non-US securities.
+    if (isinMap && isinMap.size > 0) {
+      const unresolvedWithIsin = newResolutions.filter(
+        r => (!r.resolved || !r.ticker) && isinMap.has(r.cusip)
+      );
+
+      if (unresolvedWithIsin.length > 0) {
+        console.log(
+          `[cusip] ${unresolvedWithIsin.length} unresolved CUSIPs have ISINs — retrying via ID_ISIN`
+        );
+
+        const isinBatches = chunkArray(unresolvedWithIsin, OPENFIGI.BATCH_SIZE);
+        for (let i = 0; i < isinBatches.length; i++) {
+          const batch = isinBatches[i];
+          console.log(
+            `[cusip] ISIN batch ${i + 1}/${isinBatches.length} (${batch.length} ISINs)`
+          );
+
+          // Build ISIN lookup array, keeping CUSIP association for merging back
+          const isinCusipPairs = batch.map(r => ({
+            cusip: r.cusip,
+            isin: isinMap.get(r.cusip)!,
+          }));
+
+          const isinResults = await callOpenFigiByIsin(
+            isinCusipPairs.map(p => p.isin),
+            apiKey
+          );
+
+          // Merge successful ISIN resolutions back into newResolutions by CUSIP
+          let isinResolved = 0;
+          for (let j = 0; j < isinCusipPairs.length; j++) {
+            const isinResult = isinResults[j];
+            if (isinResult && isinResult.resolved && isinResult.ticker) {
+              const idx = newResolutions.findIndex(r => r.cusip === isinCusipPairs[j].cusip);
+              if (idx >= 0) {
+                newResolutions[idx] = {
+                  ...newResolutions[idx],
+                  ticker: isinResult.ticker,
+                  name: isinResult.name || newResolutions[idx].name,
+                  securityType: isinResult.securityType || newResolutions[idx].securityType,
+                  resolved: true,
+                  warning: 'Resolved via ISIN fallback',
+                };
+                isinResolved++;
+              }
+            }
+          }
+
+          if (isinResolved > 0) {
+            console.log(`[cusip] ISIN retry resolved ${isinResolved} additional CUSIPs`);
+          }
+
+          if (i < isinBatches.length - 1) {
+            await delay(PIPELINE.API_CALL_DELAY_MS);
+          }
+        }
+      }
+    }
+
     // ── Step 3: FMP search fallback for unresolved CUSIPs ──
     // For CUSIPs that OpenFIGI couldn't resolve, try FMP's name search
     // as a fallback (spec §4.6). This helps with newer securities or
     // CUSIPs not yet indexed by OpenFIGI.
+    // BUG-3 fix: also use EDGAR holding names when OpenFIGI returned no name.
     const unresolvedFromFigi = newResolutions.filter(r => !r.resolved || !r.ticker);
     if (unresolvedFromFigi.length > 0) {
       console.log(
         `[cusip] ${unresolvedFromFigi.length} CUSIPs unresolved by OpenFIGI, trying FMP search fallback`
       );
-      await tryFmpSearchFallback(unresolvedFromFigi, newResolutions);
+      await tryFmpSearchFallback(unresolvedFromFigi, newResolutions, nameMap);
     }
 
     // ── Step 4: Persist ALL new resolutions to cache (including negatives) ──
@@ -228,17 +296,20 @@ export async function resolveCusips(
  *
  * We only attempt this for resolutions that have a name from OpenFIGI
  * (even failed lookups sometimes return a partial name). For resolutions
- * with no name at all, we skip — FMP can't search without a query.
+ * with no name at all, we fall back to EDGAR holding names via nameMap
+ * (BUG-3 fix — international holdings often have no OpenFIGI name but
+ * EDGAR always provides the holding name).
  */
 async function tryFmpSearchFallback(
   unresolved: CusipResolution[],
-  allResolutions: CusipResolution[]
+  allResolutions: CusipResolution[],
+  nameMap?: Map<string, string>
 ): Promise<void> {
   let fmpResolved = 0;
 
   for (const resolution of unresolved) {
-    // Need a name to search — skip if we have nothing to query with
-    const searchQuery = resolution.name;
+    // Need a name to search — try OpenFIGI name first, then EDGAR name from nameMap
+    const searchQuery = resolution.name || (nameMap ? nameMap.get(resolution.cusip) : null);
     if (!searchQuery) continue;
 
     try {
@@ -331,6 +402,70 @@ async function callOpenFigi(
 
   const responseData = await response.json();
   return parseOpenFigiResponse(cusips, responseData);
+}
+
+/**
+ * Call the OpenFIGI v3 mapping API using ISINs instead of CUSIPs (BUG-3).
+ * International securities often have ISINs that resolve when CUSIPs fail.
+ * Same API, different idType.
+ */
+async function callOpenFigiByIsin(
+  isins: string[],
+  apiKey: string
+): Promise<CusipResolution[]> {
+  const jobs: FigiMappingJob[] = isins.map(isin => ({
+    idType: 'ID_ISIN',
+    idValue: isin,
+  }));
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey) {
+    headers['X-OPENFIGI-APIKEY'] = apiKey;
+  }
+
+  const response = await fetch(OPENFIGI.BASE_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(jobs),
+  });
+
+  if (!response.ok) {
+    if (response.status === 429) {
+      console.warn('[cusip] OpenFIGI rate limit hit on ISIN batch, waiting 10s...');
+      await delay(10_000);
+      const retryResponse = await fetch(OPENFIGI.BASE_URL, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(jobs),
+      });
+      if (!retryResponse.ok) {
+        console.warn(`[cusip] OpenFIGI ISIN retry failed with HTTP ${retryResponse.status}`);
+        return isins.map(isin => ({
+          cusip: isin, // placeholder — caller maps back via CUSIP
+          ticker: null,
+          name: null,
+          securityType: null,
+          resolved: false,
+          warning: `OpenFIGI ISIN retry failed: HTTP ${retryResponse.status}`,
+        }));
+      }
+      return parseOpenFigiResponse(isins, await retryResponse.json());
+    }
+    console.warn(`[cusip] OpenFIGI ISIN batch failed with HTTP ${response.status}`);
+    return isins.map(isin => ({
+      cusip: isin,
+      ticker: null,
+      name: null,
+      securityType: null,
+      resolved: false,
+      warning: `OpenFIGI ISIN failed: HTTP ${response.status}`,
+    }));
+  }
+
+  const responseData = await response.json();
+  return parseOpenFigiResponse(isins, responseData);
 }
 
 /**

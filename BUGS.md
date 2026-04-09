@@ -14,27 +14,23 @@
 
 ## Open Bugs
 
-### BUG-3: 0% holdings coverage on multiple funds
-**Severity:** MEDIUM
-**Status: DEFERRED — requires international CUSIP resolution improvements and bond quality scoring investigation**
-**Found in:** Task 14.3 (Scoring Validation)
-**Spec reference:** §2.4.1
-**Description:** VFWAX (international index, 50 holdings) and WFPRX (bond fund, 10 holdings) have 0% quality coverage — zero holdings scored. VFWAX: CUSIP resolver cannot resolve non-US holdings to FMP tickers. WFPRX: pure bond fund with no equity fundamentals.
-**Expected behavior:** International holdings should be resolved where possible. Bond funds should use bond quality scoring (§2.4.2).
-**Actual behavior:** Both funds default to quality = 50 (neutral). The quality factor is effectively inert for any fund with international or bond-heavy holdings.
-**Why deferred:** Fixing this requires OpenFIGI/FMP international CUSIP resolution research (VFWAX) and NPORT-P bond field parsing improvements (WFPRX). The z-score + CDF pipeline handles this gracefully by normalizing quality = 50 to a neutral position — no user-visible incorrect behavior.
-**Files likely affected:** `src/engine/cusip.ts`, `src/engine/quality.ts`, `src/engine/holdings.ts`
+None. All 12 bugs resolved.
 
-### BUG-11: Voice still too Wall Street
-**Severity:** MEDIUM
-**Status: DEFERRED — requires editorial prompt tuning + evaluation after BUG-9 deploy**
+---
+
+## Resolved in Session 16
+
+### BUG-3: 0% holdings coverage on multiple funds (RESOLVED — Session 16)
+**Severity was:** MEDIUM
+**Found in:** Task 14.3 (Scoring Validation)
+**Fix:** International CUSIPs failed OpenFIGI resolution because only `ID_CUSIP` was used. EDGAR provides ISINs for most holdings, and OpenFIGI's `ID_ISIN` lookup has much better coverage for non-US securities. Added Step 2b to `resolveCusips()`: after CUSIP-based resolution, retry unresolved holdings using `ID_ISIN` from EDGAR data. Also improved FMP search fallback to use EDGAR holding names when OpenFIGI returns no name (international holdings often have no OpenFIGI name but EDGAR always provides one). `holdings.ts` now builds ISIN and name maps from EDGAR data and passes them to the resolver. `FigiMappingJob` type expanded to support `'ID_CUSIP' | 'ID_ISIN'`.
+**Files changed:** `src/engine/cusip.ts`, `src/engine/holdings.ts`, `src/engine/types.ts`
+
+### BUG-11: Voice still too Wall Street (RESOLVED — Session 16)
+**Severity was:** MEDIUM
 **Found in:** Task 14.5 (Brief Generation Test)
-**Spec reference:** §7.3
-**Description:** The Brief voice uses Wall Street jargon that the "buddy at the cookout" wouldn't: "dry powder," "negative real returns," "margin headwind," "rate-sensitive."
-**Expected behavior:** Plain English accessible to someone who's smart but not a financial professional.
-**Actual behavior:** Reads more like a polished financial advisor than a buddy at work.
-**Why deferred:** BUG-9 (ratio name mismatch fix, commit ac1409c) was deployed in Session 14 and BUG-10 (editorial fallback fix) was just deployed. The next Brief generated should benefit from real financial data reaching Claude for the first time + correct voice in the fallback. Evaluate the next Brief's voice before adding jargon avoidance lists to editorial-policy.md. The fix may be unnecessary after the data improvements.
-**Files likely affected:** `src/prompts/editorial-policy.md`
+**Fix:** Added two new sections to `editorial-policy.md` (v2.0 → v2.1): (1) "Voice Anchor — The Archetype" describing the confident-professional-at-a-cookout persona with specific cadence rules (declarative sentences, concrete over abstract, one idea per sentence, plain words over jargon); (2) "Jargon Blacklist" with 23 banned Wall Street phrases and their plain-English alternatives (e.g., "dry powder" → "cash on the sidelines," "margin headwind" → "profits getting squeezed"). Includes the cookout test: "If your neighbor at a cookout would furrow their brow, rewrite it."
+**Files changed:** `src/prompts/editorial-policy.md`
 
 ---
 
@@ -112,8 +108,8 @@
 |----------|------|----------|-------|
 | CRITICAL | 0 | 1 | 1 |
 | HIGH | 0 | 3 | 3 |
-| MEDIUM | 2 (deferred) | 4 | 6 |
+| MEDIUM | 0 | 6 | 6 |
 | LOW | 0 | 2 | 2 |
-| **Total** | **2** | **10** | **12** |
+| **Total** | **0** | **12** | **12** |
 
-**Remaining open bugs:** BUG-3 (0% coverage on intl/bond funds — deferred, requires CUSIP resolver work) and BUG-11 (voice too Wall Street — deferred, evaluate after BUG-9 + BUG-10 fixes deploy). Both MEDIUM with graceful degradation. No blocking issues.
+**All bugs resolved.** Zero open bugs remaining.

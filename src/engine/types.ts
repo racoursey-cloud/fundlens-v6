@@ -90,9 +90,9 @@ export interface MutualFundTickerEntry {
 
 // ─── CUSIP Resolution Types ─────────────────────────────────────────────────
 
-/** OpenFIGI mapping job — one per CUSIP in a batch POST */
+/** OpenFIGI mapping job — one per CUSIP or ISIN in a batch POST */
 export interface FigiMappingJob {
-  idType: 'ID_CUSIP';
+  idType: 'ID_CUSIP' | 'ID_ISIN';
   idValue: string;
 }
 
