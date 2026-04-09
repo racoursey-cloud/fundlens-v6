@@ -31,6 +31,7 @@ import {
 import { theme } from '../theme';
 import { DonutChart, DonutLegend, type DonutSlice, type DonutDrillItem } from '../components/DonutChart';
 import { FundDetail } from '../components/FundDetail';
+import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
 // ─── Normal CDF (Abramowitz & Stegun 7.1.26) ──────────────────────────────
 // Identical to server-side normalCDF in src/engine/scoring.ts.
@@ -258,6 +259,26 @@ export function Portfolio() {
       });
   }, [scores, weights]);
 
+  // ── Client-side allocation (§3.1–3.6) ────────────────────────────────────
+  const allocations = useMemo(() => {
+    const inputs: ClientAllocationInput[] = rankedScores.map(s => ({
+      ticker: s.funds?.ticker || s.fund_id,
+      compositeScore: s.userComposite,
+      isMoneyMarket: MM_TICKERS.has(s.funds?.ticker || s.fund_id),
+      fallbackCount: (s.factor_details as Record<string, unknown>)?.fallbackCount as number ?? 0,
+    }));
+
+    return computeClientAllocations(inputs, risk);
+  }, [rankedScores, risk]);
+
+  const allocMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of allocations) {
+      if (a.allocationPct > 0) map.set(a.ticker, a.allocationPct);
+    }
+    return map;
+  }, [allocations]);
+
   // ── Sector Exposure donut slices ──────────────────────────────────────────
 
   const { sectorSlices, sectorDrillData } = useMemo(() => {
@@ -316,19 +337,15 @@ export function Portfolio() {
   // ── Fund Allocation donut slices ──────────────────────────────────────────
 
   const fundSlices = useMemo((): DonutSlice[] => {
-    if (rankedScores.length === 0) return [];
-    const nonMM = rankedScores.filter(s => !MM_TICKERS.has(s.funds?.ticker || s.fund_id));
-    const top = nonMM.slice(0, 10);
-    const totalScore = top.reduce((s, f) => s + Math.max(0, f.userComposite), 0);
-    if (totalScore === 0) return [];
-
-    return top.map((s, i) => ({
-      id: s.funds?.ticker || s.fund_id,
-      label: s.funds?.ticker || s.fund_id.slice(0, 6),
-      pct: (Math.max(0, s.userComposite) / totalScore) * 100,
-      color: FUND_PALETTE[i % FUND_PALETTE.length]!,
-    }));
-  }, [rankedScores]);
+    return allocations
+      .filter(a => a.allocationPct > 0)
+      .map((a, i) => ({
+        id: a.ticker,
+        label: a.ticker,
+        pct: a.allocationPct,
+        color: FUND_PALETTE[i % FUND_PALETTE.length]!,
+      }));
+  }, [allocations]);
 
   // ─── Loading / Empty states ───────────────────────────────────────────────
 
@@ -424,7 +441,7 @@ export function Portfolio() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
-                {['Fund', 'Score', 'Tier', 'Cost', 'Quality', 'Momentum', 'Position'].map((h, idx) => (
+                {['Fund', 'Alloc', 'Score', 'Tier', 'Cost', 'Quality', 'Momentum', 'Position'].map((h, idx) => (
                   <th key={h} style={{
                     padding: '10px 16px',
                     textAlign: idx === 0 ? 'left' : 'center',
@@ -474,6 +491,23 @@ export function Portfolio() {
                             {name}
                           </span>
                         )}
+                      </td>
+                      {/* Allocation % */}
+                      <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                        {(() => {
+                          const alloc = allocMap.get(ticker);
+                          if (!alloc) return <span style={{ color: theme.colors.textDim }}>—</span>;
+                          return (
+                            <span style={{
+                              fontWeight: 700,
+                              fontFamily: theme.fonts.mono,
+                              color: theme.colors.text,
+                              fontSize: 14,
+                            }}>
+                              {alloc}%
+                            </span>
+                          );
+                        })()}
                       </td>
                       {/* Score */}
                       <td style={{ padding: '10px 16px', textAlign: 'center' }}>
