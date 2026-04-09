@@ -36,7 +36,7 @@ import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics } from './fmp.js';
 import { supaUpdate } from './supabase.js';
-import { fetchExpenseRatio, fetchFinnhubExpenseRatio } from './finnhub.js';
+import { fetchExpenseRatio, fetchFinnhubExpenseRatio, KNOWN_EXPENSE_RATIOS } from './finnhub.js';
 import { fetchTiingoPrices, convertTiingoPricesToFmpFormat, TiingoDailyPrice } from './tiingo.js';
 import { NormalizedFeeData } from './tiingo.js';
 import { scoreCostEfficiency, CostEfficiencyResult } from './cost-efficiency.js';
@@ -309,6 +309,51 @@ export async function runFullPipeline(
     console.log('[pipeline] All holdings classified from cache — no Claude calls needed');
   }
 
+  // ── Step 5d: Final-pass classification sweep ──────────────────────────────
+  // After cache + Haiku classification, some holdings may still have no sector.
+  // These are almost always bonds/fixed-income that slipped through all gates:
+  //   - No EDGAR debt metadata (isDebt, issuerCategory, assetCategory)
+  //   - No name-based keyword match
+  //   - No ticker (so Haiku couldn't classify)
+  //   - No matching name in sector cache
+  //
+  // Deterministic rules for the remaining unclassified:
+  //   1. No ticker + has CUSIP + not an investment company → "Fixed Income"
+  //      (equities almost always resolve to tickers; unresolved CUSIPs are bonds)
+  //   2. Has isDebt or issuerCategory that somehow missed pre-classification → "Fixed Income"
+  //   3. Everything else → "Other" (last resort, prevents Unclassified gravity)
+  let finalPassClassified = 0;
+  let finalPassOther = 0;
+  for (const [, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (h.sector) continue; // Already classified
+
+      // Rule 1: No ticker after CUSIP resolution → almost certainly a bond
+      if (!h.ticker && h.cusip && !h.isInvestmentCompany) {
+        h.sector = 'Fixed Income';
+        finalPassClassified++;
+        continue;
+      }
+
+      // Rule 2: Has any debt indicator that was missed (safety net)
+      if (h.isDebt || (h.issuerCategory && ['UST', 'USGA', 'CORP', 'MUN', 'SOV', 'ABS', 'AGEN', 'AGNCY'].includes(h.issuerCategory.toUpperCase()))) {
+        h.sector = 'Fixed Income';
+        finalPassClassified++;
+        continue;
+      }
+
+      // Rule 3: Last resort — assign "Other" to prevent Unclassified gravity toward 50
+      h.sector = 'Other';
+      finalPassOther++;
+    }
+  }
+  if (finalPassClassified > 0 || finalPassOther > 0) {
+    console.log(
+      `[pipeline] Final-pass classification: ${finalPassClassified} → Fixed Income, ${finalPassOther} → Other ` +
+      `(0 remaining Unclassified)`
+    );
+  }
+
   // ── Step 6: Score Holdings Quality factor ──
   progress(6, 'Scoring Holdings Quality');
 
@@ -402,9 +447,11 @@ export async function runFullPipeline(
     console.warn('[pipeline] Finnhub fee cache lookup failed, fetching from API');
   }
 
-  // 7a-ii: Fetch expense ratios for funds missing them (not in cache)
+  // 7a-ii: Fetch expense ratios for funds still missing them.
+  // Check: expense_ratio is null AND either not in fee cache OR fee cache didn't provide one.
+  // This closes the gap where fee cache has fee data but no expense ratio.
   const fundsNeedingExpenseRatio = scorableFunds.filter(
-    f => f.expense_ratio == null && !finnhubFeeMap.has(f.ticker)
+    f => f.expense_ratio == null
   );
   if (fundsNeedingExpenseRatio.length > 0) {
     progress(7, `Fetching expense ratios for ${fundsNeedingExpenseRatio.length} funds (${feeCacheHits} cached)`);
@@ -442,6 +489,23 @@ export async function runFullPipeline(
         console.warn(`[pipeline] No expense ratio for ${fund.ticker} — Cost will score neutral (50)`);
       }
     }
+  }
+
+  // 7a-ii-safety: Final safety net — use static map for any fund STILL missing expense ratio.
+  // This catches cases where the fee cache had an entry but with null expense_ratio,
+  // and the API chain also failed.
+  for (const fund of scorableFunds) {
+    if (fund.expense_ratio == null) {
+      const staticER = KNOWN_EXPENSE_RATIOS.get(fund.ticker);
+      if (staticER) {
+        fund.expense_ratio = staticER;
+        console.log(`[pipeline] Static fallback expense ratio for ${fund.ticker}: ${staticER}`);
+      }
+    }
+  }
+  const stillMissing = scorableFunds.filter(f => f.expense_ratio == null);
+  if (stillMissing.length > 0) {
+    console.warn(`[pipeline] WARNING: ${stillMissing.length} funds have no expense ratio from ANY source: ${stillMissing.map(f => f.ticker).join(', ')}`);
   }
 
   // 7a-iii: Fetch fee data (12b-1, frontLoad) for funds with expense_ratio but missing fee breakdown

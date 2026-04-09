@@ -100,9 +100,19 @@ async function tiingoFetch<T>(
     }
 
     if (response.status === 429) {
-      console.warn(`[tiingo] Rate limited (429) on ${path} — backing off`);
+      console.warn(`[tiingo] Rate limited (429) on ${path} — retrying after 10s`);
       await delay(10_000);
-      return null;
+      // Retry once instead of giving up immediately
+      const retryResponse = await fetch(url.toString(), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!retryResponse.ok) {
+        console.warn(`[tiingo] Retry also failed (${retryResponse.status}) on ${path}`);
+        return null;
+      }
+      const retryData = await retryResponse.json();
+      if (Array.isArray(retryData) && retryData.length === 0) return null;
+      return retryData as T;
     }
 
     if (!response.ok) {
