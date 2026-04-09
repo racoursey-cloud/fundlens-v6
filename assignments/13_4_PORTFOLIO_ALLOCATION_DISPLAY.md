@@ -1,3 +1,5 @@
+**STATUS: COMPLETED** — April 8, 2026 (Session 13)
+
 # Assignment 13.4: Add Allocation Display to Portfolio Page
 
 **Session:** 13

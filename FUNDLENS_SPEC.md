@@ -965,7 +965,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 8, 2026 (after Session 13, Task 13.3)
+**Last updated:** April 8, 2026 (after Session 13, Task 13.4)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1133,11 +1133,9 @@ Status: ✅ Complete. Migration creates `allocation_history` table with RLS poli
 Spec: v6 pipeline takes 9 minutes vs v5.1's 2 minutes. Root causes identified: 500ms delays (v5.1 uses 200-300ms), no Supabase caching layer (v5.1 batch-queries cache before API calls), no Claude classification batching (v5.1 batches 25 holdings per call).
 Status: ✅ Complete. Created `cache.ts` with 4 cache layers (FMP 7-day, Tiingo 1-day, Finnhub 90-day, sector classifications 15-day). Pipeline rewritten to batch-check caches before API loops, skip cached data, save misses. API delay reduced 500ms→250ms. Classification batch size 15→25. Classification deduplicated across funds (same holding in 5 funds = 1 classification). Migration: `session10_cache_tables.sql`.
 
-**MISSING-14: Allocation Display on Portfolio Page**
+**~~MISSING-14: Allocation Display on Portfolio Page~~ — RESOLVED (Session 13)**
 Spec: §6.4 — risk tolerance affects allocation sizing. v5.1 shows allocation_pct per fund in the Portfolio tab with a Fund Allocation donut chart powered by real Kelly-computed allocations.
-v6 status: Portfolio.tsx shows fund scores and a "Fund Allocation" donut, but the donut displays top 10 funds by composite score (NOT Kelly allocations). The allocation engine (`allocation.ts`) is only called during Brief generation. Users must generate a Brief to see their personalized allocation.
-Impact: HIGH — allocation is the most actionable output of FundLens. Users can't see "put 40% in FXAIX" without generating a Brief.
-Fix: Call `computeAllocations()` from Portfolio.tsx (or via a new API endpoint), display allocation_pct in the fund table, power the donut with real allocations.
+Status: ✅ Complete. Portfolio.tsx imports `computeClientAllocations()` from `client/src/engine/allocation.ts`. Allocations computed client-side via useMemo depending on `[rankedScores, risk]`. Fund Allocation donut powered by real Kelly allocations. Alloc column added to fund table (8 columns). Both risk slider and weight sliders trigger instant recomputation — no API calls.
 
 **MISSING-15: Fund-of-Funds Look-Through Wiring (§2.4.4)**
 Spec: When a holding is itself another fund, fetch sub-fund's NPORT-P, score underlying holdings.
@@ -1274,6 +1272,26 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 **State at session end:** `tsc --noEmit` passes clean. Next assignment: **13.4** (wire allocation display into Portfolio.tsx).
 
 **Assignments completed:** 13.1, 13.2, 13.3. **Remaining:** 13.4, 13.5.
+
+## April 8, 2026 — Session 13 (continued): Portfolio Allocation Display
+
+**Goal:** Wire real Kelly allocations into the Portfolio page (MISSING-14).
+
+**Changes:**
+
+1. **Portfolio.tsx: Import client allocation engine.** Added `import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation'`.
+
+2. **Portfolio.tsx: Added `allocations` useMemo.** Builds `ClientAllocationInput[]` from `rankedScores` (client-rescored composites), calls `computeClientAllocations(inputs, risk)`. Depends on `[rankedScores, risk]` — recomputes on weight slider OR risk slider changes. Zero API calls.
+
+3. **Portfolio.tsx: Added `allocMap` useMemo.** Lookup map `ticker → allocationPct` for non-zero allocations.
+
+4. **Portfolio.tsx: Replaced `fundSlices` useMemo.** Old: score-weighted top 10 (NOT Kelly allocations). New: `allocations.filter(a => a.allocationPct > 0)` — real Kelly-computed allocation percentages power the Fund Allocation donut.
+
+5. **Portfolio.tsx: Added Alloc column to fund table.** 8 columns now: Fund, Alloc, Score, Tier, Cost, Quality, Momentum, Position. Alloc shows whole percentage in mono font or "—" for non-allocated funds.
+
+**State at session end:** `tsc --noEmit` passes clean. MISSING-14 resolved. Next assignment: **13.5** (verify allocation with manual calculation).
+
+**Assignments completed:** 13.1, 13.2, 13.3, 13.4. **Remaining:** 13.5.
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 
