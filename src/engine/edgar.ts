@@ -21,6 +21,7 @@ import {
   EdgarFilingMeta,
   EdgarFilingResult,
   MutualFundTickerEntry,
+  NmfpFundData,
   PipelineStepResult,
   delay,
 } from './types.js';
@@ -142,6 +143,10 @@ const TICKER_OVERRIDES: ReadonlyMap<string, MutualFundTickerEntry> = new Map([
   // Invesco International Bond R6 — CIK 826644 (AIM/Invesco Investment Funds)
   // R6 share class not in SEC file; 11 series under this CIK.
   ['OIBIX', { cik: 826644, seriesId: 'S000064709', classId: '', symbol: 'OIBIX' }],
+
+  // Fidelity Government Cash Reserves — CIK 278001 (Fidelity Phillips Street Trust)
+  // In SEC ticker file for NPORT-P but also needed for N-MFP3 lookups.
+  ['FDRXX', { cik: 278001, seriesId: 'S000007149', classId: 'C000019553', symbol: 'FDRXX' }],
 ]);
 
 /**
@@ -822,6 +827,242 @@ function getDeepTextValue(
     }
   }
   return null;
+}
+
+// ─── N-MFP3 Money Market Fund Data (Session 23) ────────────────────────────
+// SEC EDGAR N-MFP3 filings are the authoritative free source for MM fund data:
+//   - 7-day net/gross SEC yield (daily time series within monthly filing)
+//   - Fund type: government vs prime (moneyMarketFundCategory)
+//   - WAM (weighted average maturity), WAL (weighted average life)
+// Filed monthly, so data can be up to ~30 days stale. Still better than
+// the static MM_FUND_DATA map which requires manual 90-day refresh.
+
+/**
+ * Main entry point: fetch money market fund data from the latest N-MFP3 filing.
+ * Returns null if the ticker can't be resolved or no N-MFP3 filing exists.
+ */
+export async function fetchMoneyMarketData(
+  ticker: string
+): Promise<PipelineStepResult<NmfpFundData>> {
+  const start = Date.now();
+  try {
+    const tickerEntry = await lookupTickerCik(ticker);
+    if (!tickerEntry) {
+      console.warn(`[edgar-nmfp] ${ticker}: not in SEC ticker list or overrides`);
+      return { success: false, data: null, error: `Ticker "${ticker}" not found`, durationMs: Date.now() - start };
+    }
+
+    console.log(`[edgar-nmfp] ${ticker}: CIK ${tickerEntry.cik}, series ${tickerEntry.seriesId}`);
+    await delay(PIPELINE.API_CALL_DELAY_MS);
+
+    const filing = await findLatestNmfpFiling(tickerEntry.cik.toString(), tickerEntry.seriesId);
+    if (!filing) {
+      console.warn(`[edgar-nmfp] ${ticker}: no N-MFP3 filing found`);
+      return { success: false, data: null, error: `No N-MFP3 filing for ${ticker}`, durationMs: Date.now() - start };
+    }
+
+    console.log(`[edgar-nmfp] ${ticker}: N-MFP3 filed ${filing.filingDate}, report ${filing.reportDate}`);
+    await delay(PIPELINE.API_CALL_DELAY_MS);
+
+    const xml = await fetchFilingXml(tickerEntry.cik.toString(), filing.accessionNumber, filing.primaryDoc);
+    if (!xml) {
+      return { success: false, data: null, error: `Failed to fetch N-MFP3 XML`, durationMs: Date.now() - start };
+    }
+
+    const data = await parseNmfpXml(xml, ticker, filing);
+    console.log(
+      `[edgar-nmfp] ${ticker}: type=${data.fundType}, yield=${(data.secYield7Day * 100).toFixed(2)}%, ` +
+      `WAM=${data.wam}d, WAL=${data.wal}d, report=${data.reportDate}`
+    );
+
+    return { success: true, data, error: null, durationMs: Date.now() - start };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[edgar-nmfp] ${ticker}: ERROR — ${msg}`);
+    return { success: false, data: null, error: msg, durationMs: Date.now() - start };
+  }
+}
+
+/**
+ * Find the most recent N-MFP3 filing for a CIK/series.
+ * Mirrors findLatestNportFiling logic but searches for N-MFP3 form type.
+ * N-MFP3 filings are monthly (vs quarterly for NPORT-P).
+ */
+async function findLatestNmfpFiling(
+  cik: string,
+  targetSeriesId?: string
+): Promise<FilingIndexEntry | null> {
+  const paddedCik = cik.padStart(10, '0');
+  const url = `https://data.sec.gov/submissions/CIK${paddedCik}.json`;
+
+  const response = await fetch(url, {
+    headers: { 'User-Agent': EDGAR.USER_AGENT },
+  });
+
+  if (!response.ok) {
+    throw new Error(`EDGAR submissions API returned HTTP ${response.status} for CIK ${cik}`);
+  }
+
+  const data = await response.json();
+  const recent = data.filings?.recent;
+  if (!recent?.form) return null;
+
+  const candidates: FilingIndexEntry[] = [];
+  for (let i = 0; i < recent.form.length; i++) {
+    const form: string = recent.form[i];
+    if (form === 'N-MFP3' || form === 'N-MFP3/A') {
+      candidates.push({
+        accessionNumber: recent.accessionNumber[i],
+        filingDate: recent.filingDate[i],
+        reportDate: recent.reportDate[i] || recent.filingDate[i],
+        primaryDoc: recent.primaryDocument[i],
+        form,
+      });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // For single-series CIKs or no target series, return newest
+  if (!targetSeriesId || candidates.length === 1) {
+    return candidates[0];
+  }
+
+  // Series-aware matching: check XML headers
+  const newestDate = candidates[0].filingDate;
+  const sameDateCandidates = candidates.filter(c => c.filingDate === newestDate);
+
+  if (sameDateCandidates.length === 1) return sameDateCandidates[0];
+
+  console.log(
+    `[edgar-nmfp] CIK ${cik} has ${sameDateCandidates.length} N-MFP3 filings on ${newestDate} — ` +
+    `matching series ${targetSeriesId}`
+  );
+
+  for (const candidate of sameDateCandidates) {
+    await delay(PIPELINE.API_CALL_DELAY_MS);
+    const match = await checkFilingSeriesId(cik, candidate.accessionNumber, candidate.primaryDoc, targetSeriesId);
+    if (match) return candidate;
+  }
+
+  // Fallback: first candidate
+  console.warn(`[edgar-nmfp] No series match for ${targetSeriesId}, using first N-MFP3`);
+  return candidates[0];
+}
+
+/**
+ * Parse N-MFP3 XML and extract money market fund data.
+ *
+ * N-MFP3 structure:
+ *   <edgarSubmission>
+ *     <formData>
+ *       <generalInfo>
+ *         <nameOfSeries>, <seriesId>, <reportDate>
+ *       </generalInfo>
+ *       <seriesLevelInfo>
+ *         <moneyMarketFundCategory>   → "Government" | "Retail" | "Institutional"
+ *         <averagePortfolioMaturity>   → WAM in days
+ *         <averageLifeMaturity>        → WAL in days
+ *       </seriesLevelInfo>
+ *       <classLevelInfo>  (repeated per share class)
+ *         <sevenDayNetYield>
+ *           <sevenDayNetYieldValue>    → decimal (e.g. 0.0338)
+ *           <sevenDayNetYieldDate>     → date
+ *         </sevenDayNetYield>
+ *       </classLevelInfo>
+ *     </formData>
+ *   </edgarSubmission>
+ */
+async function parseNmfpXml(
+  xml: string,
+  ticker: string,
+  filingIndex: FilingIndexEntry
+): Promise<NmfpFundData> {
+  const safeXml = xml.replace(/<!DOCTYPE[^>]*>/gi, '');
+
+  const parsed = await parseStringPromise(safeXml, {
+    explicitArray: true,
+    ignoreAttrs: false,
+    tagNameProcessors: [stripNamespace],
+    strict: true,
+  });
+
+  const formData = resolveFormData(parsed);
+  if (!formData) throw new Error('Could not find formData in N-MFP3 XML');
+
+  // ── Fund type from seriesLevelInfo ──
+  const seriesInfo = getChild(formData, 'seriesLevelInfo');
+  if (!seriesInfo) throw new Error('Missing seriesLevelInfo in N-MFP3');
+
+  const categoryRaw = getTextValue(seriesInfo, 'moneyMarketFundCategory') || '';
+  const fundType: 'government' | 'prime' =
+    categoryRaw.toLowerCase().includes('government') ? 'government' : 'prime';
+
+  // WAM and WAL
+  const wamStr = getTextValue(seriesInfo, 'averagePortfolioMaturity');
+  const walStr = getTextValue(seriesInfo, 'averageLifeMaturity');
+  const wam = wamStr ? parseInt(wamStr, 10) : 0;
+  const wal = walStr ? parseInt(walStr, 10) : 0;
+
+  // ── 7-day net yield from classLevelInfo ──
+  // N-MFP3 has multiple classLevelInfo entries (one per share class) and
+  // each has a time series of daily yields. We want the most recent yield
+  // from the first available class (all share classes in same series have
+  // very similar yields — the difference is expense ratio only).
+  const classInfos = formData['classLevelInfo'];
+  let bestYield = 0;
+
+  if (Array.isArray(classInfos)) {
+    for (const rawClass of classInfos) {
+      const classInfo = (typeof rawClass === 'object' && rawClass !== null)
+        ? rawClass as Record<string, unknown>
+        : null;
+      if (!classInfo) continue;
+
+      // Find sevenDayNetYield entries — there may be many (daily time series)
+      const yieldEntries = classInfo['sevenDayNetYield'];
+      if (!Array.isArray(yieldEntries)) continue;
+
+      // Find the most recent yield entry
+      let latestDate = '';
+      let latestYield = 0;
+
+      for (const entry of yieldEntries) {
+        const yieldEntry = (typeof entry === 'object' && entry !== null)
+          ? entry as Record<string, unknown>
+          : null;
+        if (!yieldEntry) continue;
+
+        const yieldVal = getTextValue(yieldEntry, 'sevenDayNetYieldValue');
+        const yieldDate = getTextValue(yieldEntry, 'sevenDayNetYieldDate');
+
+        if (yieldVal && yieldDate && yieldDate > latestDate) {
+          latestDate = yieldDate;
+          latestYield = parseFloat(yieldVal);
+        }
+      }
+
+      if (latestYield > 0) {
+        bestYield = latestYield;
+        break; // First class with yield data is sufficient
+      }
+    }
+  }
+
+  // Report date from generalInfo
+  const generalInfo = getChild(formData, 'generalInfo');
+  const reportDate = (generalInfo ? getTextValue(generalInfo, 'reportDate') : null)
+    || filingIndex.reportDate;
+
+  return {
+    ticker,
+    fundType,
+    secYield7Day: bestYield,
+    wam,
+    wal,
+    reportDate,
+    filingDate: filingIndex.filingDate,
+  };
 }
 
 // ─── Cache Management ───────────────────────────────────────────────────────

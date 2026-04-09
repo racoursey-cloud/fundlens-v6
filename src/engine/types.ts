@@ -412,6 +412,25 @@ export interface ThesisCacheRow {
 // cron.ts) because they are only used by routes.ts via dynamic imports.
 // This avoids circular dependencies and keeps types co-located with logic.
 
+// ─── Money Market (N-MFP3) Types ───────────────────────────────────────────
+
+/** Data extracted from SEC EDGAR N-MFP3 filings for money market fund scoring */
+export interface NmfpFundData {
+  ticker: string;
+  /** 'government' or 'prime' — from moneyMarketFundCategory */
+  fundType: 'government' | 'prime';
+  /** 7-day net SEC yield as decimal (e.g. 0.0338 = 3.38%) */
+  secYield7Day: number;
+  /** Weighted average maturity in days */
+  wam: number;
+  /** Weighted average life in days */
+  wal: number;
+  /** Report date of the filing (ISO string) */
+  reportDate: string;
+  /** Filing date (ISO string) */
+  filingDate: string;
+}
+
 // ─── Utility Types ──────────────────────────────────────────────────────────
 
 /** Standard result wrapper for pipeline operations */

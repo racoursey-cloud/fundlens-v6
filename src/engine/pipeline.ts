@@ -31,7 +31,7 @@
  */
 
 import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS, MM_SCORING, MM_FUND_DATA } from './constants.js';
-import { delay, ResolvedHolding, FundRow } from './types.js';
+import { delay, ResolvedHolding, FundRow, NmfpFundData } from './types.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics } from './fmp.js';
@@ -48,6 +48,7 @@ import { fetchMacroSnapshot } from './fred.js';
 import { generateMacroThesis, MacroThesis } from './thesis.js';
 import { scorePositioning, PositioningResult } from './positioning.js';
 import { classifyHoldingSectors } from './classify.js';
+import { fetchMoneyMarketData } from './edgar.js';
 import {
   getFmpCache, saveFmpCache,
   getTiingoPriceCache, saveTiingoPriceCache,
@@ -639,30 +640,55 @@ export async function runFullPipeline(
     factorDetails: FundCompositeScore['factorDetails'];
   }> = [];
 
-  // ── Score money market funds on adapted factors (§2.7, Session 22) ──────
+  // ── Score money market funds on adapted factors (§2.7, Session 22+23) ────
   // MM funds skip EDGAR/CUSIP/FMP/classification but get real factor scores:
   //   Cost Efficiency: scored normally (expense ratio differences are real)
   //   Quality → Credit Quality: government vs prime classification
   //   Momentum → 7-Day SEC Yield: yield comparison as return proxy
   //   Positioning: neutral 50 (macro positioning N/A for cash)
+  //
+  // Session 23: fetch live data from SEC EDGAR N-MFP3 filings (monthly).
+  // Falls back to static MM_FUND_DATA if EDGAR fetch fails.
+
+  // ── Fetch live N-MFP3 data for all MM funds (sequential, with delays) ──
+  const nmfpDataMap = new Map<string, NmfpFundData>();
+  for (const fund of moneyMarketFunds) {
+    try {
+      const result = await fetchMoneyMarketData(fund.ticker);
+      if (result.success && result.data) {
+        nmfpDataMap.set(fund.ticker, result.data);
+      } else {
+        console.warn(`[pipeline] ${fund.ticker}: N-MFP3 fetch failed — using static fallback. ${result.error || ''}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[pipeline] ${fund.ticker}: N-MFP3 fetch error — using static fallback. ${msg}`);
+    }
+  }
+
   for (const fund of moneyMarketFunds) {
     // Cost Efficiency: score normally using existing MM category benchmarks
     const mmCost = scoreCostEfficiency(fund.expense_ratio, fund.name);
     costResults.set(fund.ticker, mmCost);
 
+    // ── Resolve fund type + yield: prefer live N-MFP3, fall back to static ──
+    const nmfpData = nmfpDataMap.get(fund.ticker);
+    const staticData = MM_FUND_DATA.get(fund.ticker);
+    const dataSource = nmfpData ? 'N-MFP3' : (staticData ? 'static' : 'name-heuristic');
+
     // Quality → Credit Quality proxy
-    // Prefer API data; fall back to static MM_FUND_DATA (90-day refresh)
-    const mmData = MM_FUND_DATA.get(fund.ticker);
-    const isGovernment = mmData?.type === 'government'
-      || fund.name.toLowerCase().includes('government')
-      || fund.name.toLowerCase().includes('treasury');
+    const isGovernment = nmfpData
+      ? nmfpData.fundType === 'government'
+      : (staticData?.type === 'government'
+          || fund.name.toLowerCase().includes('government')
+          || fund.name.toLowerCase().includes('treasury'));
     const creditQualityScore = isGovernment
       ? MM_SCORING.GOVERNMENT_QUALITY
       : MM_SCORING.PRIME_QUALITY;
 
     // Momentum → 7-Day SEC Yield proxy
     // Linear interpolation between yield floor/ceiling
-    const secYield = mmData?.secYield7Day ?? 0.04; // default ~4% if unknown
+    const secYield = nmfpData?.secYield7Day ?? staticData?.secYield7Day ?? 0.04;
     const yieldClamped = Math.max(MM_SCORING.YIELD_FLOOR, Math.min(MM_SCORING.YIELD_CEILING, secYield));
     const yieldFraction = (yieldClamped - MM_SCORING.YIELD_FLOOR)
       / (MM_SCORING.YIELD_CEILING - MM_SCORING.YIELD_FLOOR);
@@ -672,6 +698,12 @@ export async function runFullPipeline(
 
     // Positioning: neutral
     const positioningScore = MM_SCORING.NEUTRAL_POSITIONING;
+
+    // Quality reasoning includes data source + WAM/WAL when available from N-MFP3
+    const qualityReasoning = nmfpData
+      ? `Money market credit quality: ${isGovernment ? 'government-only' : 'prime'} ` +
+        `(N-MFP3 ${nmfpData.reportDate}, WAM=${nmfpData.wam}d, WAL=${nmfpData.wal}d)`
+      : `Money market credit quality: ${isGovernment ? 'government-only (UST/USG paper)' : 'prime (commercial paper)'} [${dataSource}]`;
 
     fundScoreInputs.push({
       ticker: fund.ticker,
@@ -688,7 +720,7 @@ export async function runFullPipeline(
         costEfficiency: mmCost,
         holdingsQuality: {
           score: creditQualityScore,
-          reasoning: `Money market credit quality: ${isGovernment ? 'government-only (UST/USG paper)' : 'prime (commercial paper)'}`,
+          reasoning: qualityReasoning,
           holdingScores: [],
           unscoredHoldings: [],
           coveragePct: 1.0,
@@ -711,7 +743,7 @@ export async function runFullPipeline(
       },
     });
     console.log(
-      `[pipeline] ${fund.ticker}: MM scoring — cost=${mmCost.score}, ` +
+      `[pipeline] ${fund.ticker}: MM scoring [${dataSource}] — cost=${mmCost.score}, ` +
       `quality=${creditQualityScore} (${isGovernment ? 'govt' : 'prime'}), ` +
       `yield=${yieldScore} (${(secYield * 100).toFixed(2)}%), positioning=${positioningScore}`
     );
