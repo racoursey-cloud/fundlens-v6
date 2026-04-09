@@ -300,25 +300,25 @@ function extractHoldingFinancials(
     weightPct: weight,
     sector,
     profitability: {
-      grossMargin: extractRatioValue(dims?.profitability?.ratios, 'grossProfitMargin'),
-      operatingMargin: extractRatioValue(dims?.profitability?.ratios, 'operatingProfitMargin'),
-      netMargin: extractRatioValue(dims?.profitability?.ratios, 'netProfitMargin'),
-      returnOnEquity: extractRatioValue(dims?.profitability?.ratios, 'returnOnEquity'),
-      returnOnAssets: extractRatioValue(dims?.profitability?.ratios, 'returnOnAssets'),
+      grossMargin: extractRatioValue(dims?.profitability?.ratios, 'Gross Profit Margin'),
+      operatingMargin: extractRatioValue(dims?.profitability?.ratios, 'Operating Margin'),
+      netMargin: extractRatioValue(dims?.profitability?.ratios, 'Net Profit Margin'),
+      returnOnEquity: extractRatioValue(dims?.profitability?.ratios, 'Return on Equity'),
+      returnOnAssets: extractRatioValue(dims?.profitability?.ratios, 'Return on Assets'),
     },
     balanceSheet: {
-      debtToEquity: extractRatioValue(dims?.balanceSheet?.ratios, 'debtEquityRatio'),
-      currentRatio: extractRatioValue(dims?.balanceSheet?.ratios, 'currentRatio'),
-      interestCoverage: extractRatioValue(dims?.balanceSheet?.ratios, 'interestCoverage'),
+      debtToEquity: extractRatioValue(dims?.balanceSheet?.ratios, 'Debt to Equity'),
+      currentRatio: extractRatioValue(dims?.balanceSheet?.ratios, 'Current Ratio'),
+      interestCoverage: extractRatioValue(dims?.balanceSheet?.ratios, 'Interest Coverage'),
     },
     cashFlow: {
-      freeCashFlowPerShare: extractRatioValue(dims?.cashFlow?.ratios, 'freeCashFlowPerShare'),
-      operatingCashFlowPerShare: extractRatioValue(dims?.cashFlow?.ratios, 'operatingCashFlowPerShare'),
+      freeCashFlowPerShare: extractRatioValue(dims?.cashFlow?.ratios, 'Free CF per Share'),
+      operatingCashFlowPerShare: extractRatioValue(dims?.cashFlow?.ratios, 'Operating CF per Share'),
     },
     valuation: {
-      peRatio: extractRatioValue(dims?.valuation?.ratios, 'priceEarningsRatio'),
-      priceToBook: extractRatioValue(dims?.valuation?.ratios, 'priceToBookRatio'),
-      priceToSales: extractRatioValue(dims?.valuation?.ratios, 'priceToSalesRatio'),
+      peRatio: extractRatioValue(dims?.valuation?.ratios, 'P/E Ratio'),
+      priceToBook: extractRatioValue(dims?.valuation?.ratios, 'P/B Ratio'),
+      priceToSales: extractRatioValue(dims?.valuation?.ratios, 'Price to Sales'),
     },
   };
 }

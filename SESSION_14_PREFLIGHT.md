@@ -328,3 +328,97 @@ MAD: 17
 
 ### Reminders
 - [ ] Update FUNDLENS_SPEC.md §9 + §10
+
+---
+
+## Brief Generation Test (Task 14.5)
+
+**Date:** April 8, 2026 (evening)
+**Triggered at:** ~03:34 UTC, April 9 (8:34 PM Pacific, April 8)
+
+### Generation
+- Triggered via: `POST /api/briefs/generate?sendEmail=false` (from browser JS using Supabase JWT)
+- Completed: **YES**
+- Brief ID: `5ac87218-3a52-434c-a967-ce90da2f4af0`
+- Pipeline run ID: `e373b485-7d54-4842-a439-b1c293eb65ca`
+- Model: `claude-opus-4-6` (matches spec §4.2)
+- Generation time: **53,879ms** (~54 seconds)
+- Content length: **8,129 characters** (~1,329 words)
+- Error: None
+
+### Structure Check
+- [x] Section 1 present: "Where the Numbers Point" — leads with allocation table + per-fund rationale
+- [x] Section 2 present: "What Happened" — macro narrative + allocation delta woven together
+- [x] Section 3 present: "What We're Watching" — Iran situation, Fed policy, AI cycle, consumer sentiment
+- [x] Section 4 present: "Where We Stand" — fund-by-fund analysis with financials
+
+### Editorial Policy Check
+- [~] Voice: **PARTIALLY COMPLIANT.** Conversational and uses "your"/"we" naturally ("The big shift: we've spread things out"), but still too Wall Street in places. Uses jargon the "buddy at the cookout" wouldn't: "dry powder," "negative real returns," "margin headwind," "rate-sensitive." Spec §7.3 says "explains it over coffee without dumbing it down or showing off." The voice reads more like a polished financial advisor than the buddy at work who happens to be good at markets. Closer to spec than the older Sonnet Briefs, but needs tuning.
+- [x] No model internals revealed — zero prohibited terms found (composite score, z-score, factor weight, MAD, Kelly, CDF, tier names, score scales, rankings). The only false positive was "made" containing "mad" as a substring.
+- [x] No AI self-reference — no instances of "as an AI", "I was trained", "language model", etc.
+- [x] Allocation with specific percentages in Section 1 — table with all 6 funds and percentages summing to 100%
+- [x] No exclamation points
+- [x] No sales language ("exciting opportunity", "don't miss", "act now", etc.)
+- [x] No certainty language ("will definitely", "guaranteed", etc.)
+- [x] Hedging language present ("may", "could", "historically")
+- [ ] **Evidence-based — FAIL on fund-level detail.** Macro data is well-cited (WTI $114, Brent $127, CPI 327.46, unemployment 4.3%, payrolls 178K, consumer sentiment 56.60, Fed 3.64%, 10Y-2Y spread 50bp). BUT fund-level detail is **critically missing**: no specific financial metrics for any holding (no margins, no ROE, no P/E, no debt ratios). Claude can only cite returns, expense ratios, and sector weights because that's all the data packet contains. Root cause: BUG-9 (see below).
+- [x] Material negatives disclosed (e.g., DRRYX expense ratio 0.88%, HRAUX "weakest recent performer in the recommended group")
+- [x] Length: 1,329 words — slightly above the 800-1200 target in editorial-policy.md.
+
+### Allocation in Brief
+| Fund | Allocation % |
+|------|-------------|
+| FXAIX | 31% |
+| DRRYX | 27% |
+| PRPFX | 18% |
+| TGEPX | 10% |
+| VFWAX | 8% |
+| HRAUX | 6% |
+
+**Matches Portfolio page exactly.** Sum = 100%.
+
+### Allocation Delta (§7.7)
+The Brief correctly detected changes from the prior allocation:
+- FXAIX: changed 38% → 31% (decreased)
+- DRRYX: changed 62% → 27% (decreased)
+- PRPFX: new at 18%
+- TGEPX: new at 10%
+- VFWAX: new at 8%
+- HRAUX: new at 6%
+
+The "What Happened" section successfully weaves these changes into the macro narrative: "The big shift: we've spread things out. The concentration that made sense when the picture was clearer needs to give way to broader positioning now that energy shocks, inflation, and Fed uncertainty are all hitting at once."
+
+### Allocation History Persistence
+- Prior allocation read: **YES** (from Brief `67db2382`, 2 funds: DRRYX 62%, FXAIX 38%)
+- Delta computed: **YES** (2 changed + 4 new = 6 entries)
+- New allocation persisted: **YES** (per brief-engine.ts lines 919-937, `persistAllocationHistory()` runs after Brief save)
+
+### Quality Assessment
+The Brief has correct structure and doesn't leak model internals, but it falls short of the spec in two critical ways: (1) **No fund-level financial data** — the Brief can't cite any holding margins, ROE, P/E, etc. because BUG-9 prevents that data from reaching Claude. Claude is forced to write generic characterizations instead of the evidence-backed analysis the editorial policy demands. (2) **Voice is too Wall Street** — reads more like a polished financial advisor than the "buddy at a company cookout" the spec calls for. Would Robert be comfortable sending this to ~200 coworkers? **Not yet.** The structure is right but the substance is hollow — the Brief says things like "These companies have real cash flow and pricing power" without citing the actual cash flow or margins. Fix BUG-9 and the quality improves dramatically because Claude will have real numbers to work with.
+
+### Issues Found
+
+**BUG-5: Briefs.tsx does not render Brief content (Severity: HIGH)**
+The HISTORY tab (at `/briefs`) shows the Brief list correctly (5 briefs, all "GENERATED" status, correct dates and models). When a Brief is selected, the detail pane shows title, date, model, and status — but the body says **"Brief content not available."** The `content_md` field IS populated in the database (8,129 chars confirmed via API), so this is a client-side rendering issue. Briefs.tsx either (a) is not fetching GET /api/briefs/:id for the full content, or (b) is not rendering the content_md from the response. This means users cannot read their Briefs in the app.
+
+**BUG-6: "BRIEF" tab shows Thesis page, not Briefs (Severity: MEDIUM)**
+Clicking the "BRIEF" tab navigates to `/thesis` (the Thesis/Macro page). The actual Briefs archive is on the "HISTORY" tab at `/briefs`. Per spec §6.7, the nav should be: Portfolio | Thesis | Briefs | Settings. The tab labels are swapped. This was already noted as ISSUE-3 in the preflight report.
+
+**BUG-7: Brief subtitle says "written by Claude Opus" (Severity: LOW)**
+The Briefs page header reads: "Your personalized research document, written by Claude Opus." Per the behind-the-curtain rule (§7.4), the reader should never think "a computer wrote this." Exposing the model name in the UI undermines the advisory voice. This text should be removed or changed to something like "Your personalized investment brief."
+
+**BUG-8: Prior Brief allocation mismatch — 2 funds vs 6 (Severity: MEDIUM)**
+The most recent cron-generated Brief (67db2382, April 8 06:00 UTC) allocated to only 2 funds (DRRYX 62%, FXAIX 38%), while the current Portfolio page shows 6 funds. This Brief was generated from pipeline run `ee95587f` which used pre-quality-fix scores (before commit `be49b1d`). The unclamped quality scores (FXAIX quality=996, DRRYX quality=958) caused extreme z-score distortion, concentrating the allocation. The new Brief (generated from post-fix pipeline run `e373b485`) correctly allocates to 6 funds matching the Portfolio. **Users who read the cron Brief would have seen a different allocation than what the Portfolio page shows.**
+
+**BUG-9: extractRatioValue() name mismatch — ZERO financial data reaches Claude (Severity: CRITICAL)**
+File: `src/engine/brief-engine.ts`, function `extractRatioValue()` (line 272-278)
+The function searches `factor_details.holdingsQuality.holdingScores[].dimensions.*.ratios[]` by name, using camelCase FMP API identifiers (e.g., `"grossProfitMargin"`, `"returnOnEquity"`, `"priceEarningsRatio"`). But the stored ratio names are human-readable (e.g., `"Gross Profit Margin"`, `"Return on Equity"`, `"P/E Ratio"`). Every lookup returns null. Result: the data packet sent to Claude has zero holding financials — no margins, no ROE, no P/E, no debt ratios, no cash flow data. Claude is forced to write generic fund characterizations with no specific evidence. This directly violates the editorial policy's evidence rules: "If you say a fund's companies have strong margins, name the companies and the margins."
+**Impact:** Every Brief ever generated has had this bug. Claude has never received holding-level financial data. This is the single biggest quality issue with the Brief.
+**Fix:** Map the camelCase identifiers to the stored human-readable names in `extractRatioValue()`, or normalize ratio names at scoring time to match what the Brief engine expects.
+
+**Root cause of Sonnet Briefs (RESOLVED):**
+3 of 5 Briefs (April 5, 6, 7) used `claude-sonnet-4-6` because `BRIEF_MODEL` was Sonnet prior to Session 1. Commit `72b5d29` (April 7, 11:26 AM ET) fixed it to `claude-opus-4-6`. All 3 Sonnet Briefs were generated at 06:00 UTC (2:00 AM ET) — before the fix was deployed that day. The April 8+ Briefs correctly use Opus.
+
+**BUG-10: Editorial policy fallback says "research analyst" (Severity: MEDIUM)**
+File: `src/engine/brief-scheduler.ts`, line 92
+If `editorial-policy.md` cannot be found on the filesystem, the fallback prompt is: "You are a research analyst writing an Investment Brief for a 401(k) participant." This is the exact opposite of the spec §7.3 voice ("buddy who's good at markets"). If the file path resolution fails on Railway (which it could, since the code tries 3 different paths), every Brief silently falls back to the wrong voice with zero structural guidance (no 4 W sections, no behind-the-curtain rule). The fallback should match the spec voice and include the 4-section structure at minimum.
