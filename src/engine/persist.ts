@@ -16,7 +16,7 @@
  * References: Master Reference §8 Step 14.
  */
 
-import { supaFetch, supaInsert, supaUpdate } from './supabase.js';
+import { supaFetch, supaInsert, supaUpdate, supaDelete } from './supabase.js';
 import { computeCompositeFromZScores } from './scoring.js';
 import { DEFAULT_FACTOR_WEIGHTS } from './constants.js';
 import type { FundRow, FundScoresRow } from './types.js';
@@ -150,6 +150,20 @@ export async function persistPipelineResults(
     }));
 
     if (rows.length === 0) continue;
+
+    // ── Holdings persist fix: Delete stale rows before inserting fresh ones ──
+    // The unique index on holdings_cache is (fund_id, accession_number, cusip).
+    // Old pipeline runs wrote rows with real accession numbers from EDGAR,
+    // but the current pipeline always sets accession_number = ''. This means
+    // upsert can't match old rows (different accession_number), creating
+    // duplicates — and the API returns mixed stale (NULL sector) + fresh rows.
+    // Fix: wipe all holdings for this fund first, then insert the fresh set.
+    const { error: deleteError } = await supaDelete('holdings_cache', {
+      fund_id: `eq.${fund.id}`,
+    });
+    if (deleteError) {
+      console.warn(`[persist] Holdings ${ticker}: failed to delete stale rows — ${deleteError}`);
+    }
 
     const { error } = await supaInsert('holdings_cache', rows, { upsert: true });
 
