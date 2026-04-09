@@ -19,6 +19,7 @@
  * No Claude calls. No external API calls. Pure math.
  *
  * Session 6: Extracted from brief-engine.ts, rewritten to match spec §3.1–3.6.
+ * Session 13: Replaced capture threshold (Step 4) with de minimis floor per §3.5.
  */
 
 import {
@@ -30,8 +31,6 @@ import {
   RISK_MIN,
   RISK_MAX,
 } from './constants.js';
-
-const { CAPTURE_HIGH, CAPTURE_STEP } = ALLOCATION;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -215,26 +214,17 @@ export function computeAllocations(
     allocMap.set(ticker, (rawWeight / totalRaw) * 100);
   }
 
-  // ── STEP 4 — Capture Threshold Trim (v5.1 pattern, continuous) ──────
-  // Rank funds descending by allocation weight. Walk down until cumulative
-  // weight hits the risk-scaled target. Cut everything below, renormalize.
-  // targetCapture = CAPTURE_HIGH - (risk - 1) * CAPTURE_STEP
-  // Continuous on the 1.0–7.0 scale — no rounding, no stair steps.
-  const targetCapture = CAPTURE_HIGH - (rt - 1) * CAPTURE_STEP;
+  // ── STEP 4 — De Minimis Floor (§3.5) ─────────────────────────────────
+  // Drop any fund with allocation below 5% (DE_MINIMIS_PCT).
+  // Renormalize survivors to sum to 100%.
+  //
+  // This is a single-pass operation: removing sub-threshold funds only
+  // increases survivor allocations (denominator shrinks), so no fund
+  // that was above 5% can drop below 5% after removal.
+  const deMinimisThreshold = ALLOCATION.DE_MINIMIS_PCT * 100; // 5 (percentage points)
 
-  const ranked = [...allocMap.entries()].sort((a, b) => b[1] - a[1]);
-  let cumulative = 0;
-  const survivors = new Set<string>();
-
-  for (const [ticker, pct] of ranked) {
-    survivors.add(ticker);
-    cumulative += pct;
-    if (cumulative >= targetCapture) break;
-  }
-
-  // Remove everything that didn't make the cut
-  for (const ticker of allocMap.keys()) {
-    if (!survivors.has(ticker)) {
+  for (const [ticker, pct] of allocMap) {
+    if (pct < deMinimisThreshold) {
       allocMap.delete(ticker);
     }
   }
