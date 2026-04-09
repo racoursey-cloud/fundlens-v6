@@ -70,6 +70,8 @@ export interface MomentumScore {
   returns: FundMomentum['returns'];
   /** Rank within the fund menu (1 = best momentum) */
   rank: number;
+  /** True when score is a synthetic neutral (no real data available) */
+  isFallback?: boolean;
 }
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -229,6 +231,7 @@ export function scoreMomentumCrossSectional(
       blendedReturn: null,
       returns: m.returns,
       rank: 1,
+      isFallback: true,
     }));
     return {
       scores,
@@ -304,6 +307,7 @@ export function scoreMomentumCrossSectional(
         blendedReturn: null,
         returns: m2.returns,
         rank: 2,
+        isFallback: true,
       });
     }
     return {
@@ -341,6 +345,7 @@ export function scoreMomentumCrossSectional(
         blendedReturn: null,
         returns: m.returns,
         rank: withData.length + 1,
+        isFallback: true,
       });
     }
     return {
@@ -408,6 +413,7 @@ export function scoreMomentumCrossSectional(
       blendedReturn: null,
       returns: m.returns,
       rank: scored.length + 1,
+      isFallback: true,
     });
   }
 

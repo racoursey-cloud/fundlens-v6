@@ -226,6 +226,7 @@ export function scoreCostEfficiency(
       twelveb1Penalty: 0,
       feeDataSource: feeData?.source || 'unknown',
       reasoning: 'Expense ratio not available — scored at neutral midpoint.',
+      isFallback: true,
     };
   }
 
@@ -334,6 +335,8 @@ export interface CostEfficiencyResult {
   feeDataSource: string;
   /** Human-readable explanation of the score */
   reasoning: string;
+  /** True when score is a synthetic neutral (no real data available) */
+  isFallback?: boolean;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

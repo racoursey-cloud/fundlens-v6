@@ -77,6 +77,8 @@ export interface FundCompositeScore {
   tier: string;
   /** Tier color for UI display (§6.3) */
   tierColor: string;
+  /** Number of factors using synthetic fallback data (0 = all real data) */
+  fallbackCount: number;
   /** Factor-level detail for the UI */
   factorDetails: {
     costEfficiency: CostEfficiencyResult;
@@ -321,6 +323,7 @@ export function scoreAndRankFunds(
     name: string;
     raw: FundRawScores;
     factorDetails: FundCompositeScore['factorDetails'];
+    fallbackCount?: number;
   }>,
   weights: FactorWeights = DEFAULT_FACTOR_WEIGHTS,
   perFundWeights?: Map<string, FactorWeights>
@@ -407,6 +410,7 @@ export function scoreAndRankFunds(
       rank: i + 1,
       tier: tierInfo.tier,
       tierColor: tierInfo.tierColor,
+      fallbackCount: f.fallbackCount ?? 0,
       factorDetails: f.factorDetails,
     };
   });

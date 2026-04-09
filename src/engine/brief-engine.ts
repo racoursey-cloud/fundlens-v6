@@ -205,6 +205,8 @@ interface FundBriefData {
   dataCoverage: number;
   /** Whether this is a bond-heavy fund */
   isBondFund: boolean;
+  /** Number of factors using synthetic fallback data (0 = all real) */
+  fallbackCount: number;
   /** Internal only — used for allocation computation, NOT sent to Claude */
   _composite: number;
   /** Internal only — used for ordering */
@@ -350,7 +352,7 @@ function extractReturns(factorDetails: Record<string, unknown>): FundReturns {
  * advisor would use.
  */
 function computeAllocationForBrief(
-  rankedFunds: Array<{ ticker: string; name: string; composite: number; expenseRatio: number | null; isBondFund: boolean }>,
+  rankedFunds: Array<{ ticker: string; name: string; composite: number; expenseRatio: number | null; isBondFund: boolean; fallbackCount?: number }>,
   riskTolerance: number
 ): Array<{ ticker: string; name: string; percentage: number; reason: string }> {
 
@@ -360,7 +362,7 @@ function computeAllocationForBrief(
     ticker: f.ticker,
     compositeScore: f.composite,
     isMoneyMarket: MONEY_MARKET_TICKERS.has(f.ticker),
-    fallbackCount: 0,
+    fallbackCount: f.fallbackCount ?? 0,
   }));
 
   const results = computeAllocations(inputs, riskTolerance);
@@ -623,6 +625,7 @@ export async function assembleDataPacket(
       sectorExposure,
       dataCoverage: qualityData?.coveragePct ?? 0,
       isBondFund,
+      fallbackCount: (fd as Record<string, unknown>).fallbackCount as number ?? 0,
       _composite: composite,
       _rank: 0,
     });
@@ -640,6 +643,7 @@ export async function assembleDataPacket(
       composite: f._composite,
       expenseRatio: f.expenseRatio,
       isBondFund: f.isBondFund,
+      fallbackCount: f.fallbackCount,
     })),
     profile.risk_tolerance
   );

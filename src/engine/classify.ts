@@ -215,8 +215,10 @@ export async function classifyHoldingSectors(
     console.log(`[classify] Pre-classified ${preClassifiedCount} holdings from EDGAR metadata (debt/bond/cash)`);
   }
 
-  // Filter to holdings that still need classification (equity holdings with real tickers)
-  const needsClassification = holdings.filter(h => !h.sector && h.ticker);
+  // Filter to holdings that still need classification.
+  // Include holdings with a ticker OR a name — bond holdings often have names
+  // but no ticker after the pre-classification gate filters out pseudo-tickers.
+  const needsClassification = holdings.filter(h => !h.sector && (h.ticker || h.name));
 
   if (needsClassification.length === 0) {
     console.log('[classify] All holdings already classified');
@@ -292,8 +294,14 @@ async function classifyBatch(
   holdings: ResolvedHolding[]
 ): Promise<Map<string, string>> {
   // SESSION 0 SECURITY: Sanitize holding names before embedding in prompt
+  // Use ticker as the key when available, otherwise use the holding name.
+  // This ensures the JSON response keys match what we use for lookup.
   const holdingsList = holdings
-    .map(h => `- ${sanitizeHoldingText(h.ticker || 'N/A')}: ${sanitizeHoldingText(h.name)}`)
+    .map(h => {
+      const key = sanitizeHoldingText(h.ticker || h.name);
+      const label = h.ticker ? sanitizeHoldingText(h.name) : '(classify by name)';
+      return `- ${key}: ${label}`;
+    })
     .join('\n');
 
   const sectorList = VALID_SECTORS.join(', ');
@@ -301,11 +309,11 @@ async function classifyBatch(
   const response = await client.messages.create({
     model: CLAUDE.CLASSIFICATION_MODEL,
     max_tokens: 1000,
-    system: `You are a financial sector classifier. Classify each company into exactly one sector from this list: ${sectorList}. Respond with ONLY a JSON object mapping ticker to sector. No explanation.`,
+    system: `You are a financial sector classifier. Classify each holding into exactly one sector from this list: ${sectorList}. Respond with ONLY a JSON object mapping the key (ticker or name) to sector. No explanation.`,
     messages: [
       {
         role: 'user',
-        content: `Classify these holdings:\n${holdingsList}\n\nRespond as JSON: {"TICKER": "Sector", ...}`,
+        content: `Classify these holdings:\n${holdingsList}\n\nRespond as JSON: {"KEY": "Sector", ...} where KEY is the identifier before the colon on each line.`,
       },
     ],
   });

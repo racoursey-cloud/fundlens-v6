@@ -78,6 +78,8 @@ export interface QualityFactorResult {
   equityRatio: number;
   /** Ratio of bond weight to total weight */
   bondRatio: number;
+  /** True when score is a synthetic neutral (no real data available) */
+  isFallback?: boolean;
 }
 
 /** Input for a single holding to be quality-scored */
@@ -553,6 +555,7 @@ export function scoreQualityFactor(
 
   // ── Blended fund scoring (§2.4.3) ───────────────────────────────────
   let fundScore: number;
+  let qualityIsFallback = false;
 
   if (equityScore != null && bondScore != null) {
     // Both paths have data — blend by portfolio share (clamped 0–100 as safety net)
@@ -563,6 +566,7 @@ export function scoreQualityFactor(
     fundScore = Math.max(0, Math.min(100, Math.round(bondScore)));
   } else {
     fundScore = 50; // Neutral fallback with dataQuality flag
+    qualityIsFallback = true;
   }
 
   // ── Coverage percentage (§2.4.1) ────────────────────────────────────
@@ -600,6 +604,7 @@ export function scoreQualityFactor(
     coveragePct,
     equityRatio,
     bondRatio,
+    isFallback: qualityIsFallback,
   };
 }
 

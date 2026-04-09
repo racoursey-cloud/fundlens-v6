@@ -328,6 +328,7 @@ export async function runFullPipeline(
         equityRatio: 0,
         bondRatio: 0,
         reasoning: 'Holdings data unavailable — using neutral quality score',
+        isFallback: true,
       });
       console.log(`[pipeline] ${fund.ticker}: no EDGAR holdings — quality defaults to 50`);
       continue;
@@ -622,6 +623,7 @@ export async function runFullPipeline(
         score: 50,
         sectorBreakdown: [],
         reasoning: 'Holdings data unavailable — using neutral positioning score',
+        isFallback: true,
       });
       console.log(`[pipeline] ${fund.ticker}: no EDGAR holdings — positioning defaults to 50`);
       continue;
@@ -637,6 +639,7 @@ export async function runFullPipeline(
     ticker: string;
     name: string;
     raw: FundRawScores;
+    fallbackCount: number;
     factorDetails: FundCompositeScore['factorDetails'];
   }> = [];
 
@@ -716,6 +719,7 @@ export async function runFullPipeline(
         positioning: positioningScore,
         momentum: yieldScore,
       },
+      fallbackCount: 0, // MM funds have real data from N-MFP3/SEC
       factorDetails: {
         costEfficiency: mmCost,
         holdingsQuality: {
@@ -796,10 +800,19 @@ export async function runFullPipeline(
         weight: Math.round(h.pctOfNav * 10) / 10,
       }));
 
+    // Count how many factors are using synthetic fallback data
+    const fallbackCount = [
+      cost.isFallback,
+      quality.isFallback,
+      positioning.isFallback,
+      momentum.isFallback,
+    ].filter(Boolean).length;
+
     fundScoreInputs.push({
       ticker: fund.ticker,
       name: fund.name,
       raw,
+      fallbackCount,
       factorDetails: {
         costEfficiency: cost,
         holdingsQuality: quality,

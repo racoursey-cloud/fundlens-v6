@@ -36,6 +36,8 @@ export interface PositioningResult {
   sectorBreakdown: SectorContribution[];
   /** Human-readable summary */
   reasoning: string;
+  /** True when score is a synthetic neutral (no real data available) */
+  isFallback?: boolean;
 }
 
 /** How one sector contributes to the fund's positioning score */
@@ -129,6 +131,13 @@ export function scorePositioning(
   const normalizedScore = totalWeight > 0 ? rawScore / totalWeight : 0.5;
   const score = Math.round(normalizedScore * 100);
 
+  // Determine if this is a reliable score or a fallback.
+  // When >50% of fund weight is Unclassified, the score gravitates toward 50
+  // regardless of thesis — it's noise, not signal. Flag it as fallback.
+  const unclassifiedEntry = sectorBreakdown.find(s => s.sector === 'Unclassified');
+  const unclassifiedWeight = unclassifiedEntry?.fundWeight ?? 0;
+  const isFallback = totalWeight > 0 && (unclassifiedWeight / totalWeight) > 0.5;
+
   // Sort breakdown by contribution (biggest impact first)
   sectorBreakdown.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
 
@@ -137,6 +146,9 @@ export function scorePositioning(
   const unfavorable = sectorBreakdown.filter(s => s.alignment === 'unfavorable');
 
   let reasoning = `Positioning: ${score}/100. `;
+  if (isFallback) {
+    reasoning += `WARNING: ${(unclassifiedWeight / totalWeight * 100).toFixed(0)}% of fund weight is unclassified — score unreliable. `;
+  }
   if (favorable.length > 0) {
     const favNames = favorable.slice(0, 3).map(s => s.sector).join(', ');
     const favWeight = favorable.reduce((sum, s) => sum + s.fundWeight, 0);
@@ -151,7 +163,7 @@ export function scorePositioning(
     reasoning += 'Fund exposure is mostly in thesis-neutral sectors.';
   }
 
-  return { score, sectorBreakdown, reasoning };
+  return { score, sectorBreakdown, reasoning, isFallback };
 }
 
 // ─── Internal ───────────────────────────────────────────────────────────────

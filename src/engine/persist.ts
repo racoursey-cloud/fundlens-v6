@@ -88,6 +88,7 @@ export async function persistPipelineResults(
       tier_color: fundScore.tierColor,
       factor_details: {
         ...fundScore.factorDetails,
+        fallbackCount: fundScore.fallbackCount,
         summary: fundSummaries?.[fundScore.ticker] ?? null,
       },
       scored_at: new Date().toISOString(),
