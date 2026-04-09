@@ -1163,7 +1163,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 
 ### 9.5 Build Roadmap
 
-**Completed Sessions (1–11):**
+**Completed Sessions (1–13):**
 
 | Session | Focus | Status |
 |---------|-------|--------|
@@ -1180,12 +1180,12 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 10 | Pipeline Performance (Caching) | **DONE** |
 | 11 | v5.1 UI Port | **DONE** |
 | 12 | Full Assessment (READ-ONLY) | **DONE** — repo cleaned, spec updated, ASSESSMENT_REPORT.md written |
+| 13 | Allocation Fix + Portfolio Allocation Display | **DONE** — CRITICAL-6 resolved, MISSING-14 resolved. NOTE: deployment failure after push (client tsc errors); hotfixed in `ede0184`. Open model misunderstanding flagged by Robert — see SESSION_13_NOTES.md. |
 
-**Remaining Sessions (minimum 3 to match v5.1, 5 for full spec compliance):**
+**Remaining Sessions (minimum 2 to match v5.1, 4 for full spec compliance):**
 
 | Session | Focus | Gaps Addressed | Estimate |
 |---------|-------|----------------|----------|
-| 13 | Allocation Fix + Portfolio Allocation Display | CRITICAL-6 (de minimis floor), MISSING-14 (allocation on Portfolio page) | 1 session |
 | 14 | End-to-End Integration Testing | Run full pipeline against real 18-fund TerrAscend universe. Verify all cache layers, scoring outputs, Brief generation. | 1 session |
 | 15 | HHI + Documentation + Polish | MISSING-7 (HHI display), MISSING-16 (spec file inventory), final UI polish | 0.5–1 session |
 | 16 | Help Section (optional) | MISSING-9 (FAQs + Claude Haiku chat) | 1 session |

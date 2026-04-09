@@ -55,7 +55,7 @@ Wait for Robert's approval before writing any code.
 
 Make the approved changes. One file at a time. Report after each file. If you discover something unexpected, STOP and ask.
 
-After all changes, run `tsc --noEmit` and report results.
+After all changes, run `npm run build` (NOT just `tsc --noEmit` — that only checks the server, not the client) and report results.
 
 ### Phase 4: VERIFY & COMMIT
 
@@ -80,7 +80,7 @@ Before ending, verify:
 - [ ] Assignment file marked COMPLETED
 - [ ] Spec §9 updated
 - [ ] Spec §10 changelog entry added
-- [ ] `tsc --noEmit` passes
+- [ ] `npm run build` passes (NOT just `tsc --noEmit`)
 - [ ] No uncommitted changes (`git status` clean)
 
 ---
@@ -95,7 +95,7 @@ Configure push access first thing (see spec §1 "Repository & Git Setup"). Ask R
 
 ## Emergency Rules
 
-- If `tsc --noEmit` fails after your changes, fix it before committing
+- If `npm run build` fails after your changes, fix it before committing
 - If you break something unrelated to your assignment, revert your changes to that file and report it
 - If your assignment depends on something that doesn't exist or doesn't work as described, STOP and ask Robert
 - Never edit FUNDLENS_SPEC.md except as part of the Phase 4 update (§9 + §10 only)

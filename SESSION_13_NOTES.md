@@ -1,7 +1,7 @@
 # Session 13 Notes
 
 ## Status
-All 5 assignments (13.1–13.5) completed, committed, and pushed to main. `tsc --noEmit` passes.
+All 5 assignments (13.1–13.5) completed, committed, and pushed to main. Deployed to Railway.
 
 ## OPEN ISSUE — Robert flagged a model misunderstanding
 
@@ -29,5 +29,26 @@ The AI claimed: "when all funds have identical scores, the algorithm degrades gr
 - `FUNDLENS_SPEC.md` — §9 CRITICAL-6 resolved, MISSING-14 resolved, §10 changelog entries
 - `assignments/13_*.md` — all 5 marked COMPLETED
 
-### Dead code note
-`client/src/engine/allocation.ts` line 32 defines `MM_TICKERS` but it is never used within that module. The `isMoneyMarket` flag is passed in as input from Portfolio.tsx instead. This is harmless but sloppy.
+## DEPLOYMENT FAILURE — Fixed
+
+After Task 13.5 was committed and pushed, Railway deployment failed. The AI had been verifying with `tsc --noEmit` from the server root, which does NOT check the client build. The actual Railway build runs `npm run build` which includes `cd client && tsc -b && vite build` — stricter TypeScript checking.
+
+### Errors (in `client/src/engine/allocation.ts`)
+1. `MM_TICKERS` declared but never read (TS6133) — dead code from Task 13.3
+2. `sorted[mid]` is `number | undefined`, needs non-null assertion (TS2322)
+3. `sorted[mid-1]` and `sorted[mid]` possibly undefined (TS2532)
+
+### Fix
+- Removed unused `MM_TICKERS` constant
+- Added `!` non-null assertion and `?? 0` nullish coalescing to median()
+- Commit: `ede0184`
+
+### Root cause
+The AI verified every task with `tsc --noEmit` (server tsconfig) instead of `npm run build` (full build including client). The assignment files specified `tsc --noEmit` as the verification step, but the AI should have recognized that a new client-side file requires client-side build verification.
+
+### Lesson for future sessions
+**ALWAYS verify with `npm run build`, not `tsc --noEmit`.** The server tsconfig does not cover client code. This must be the verification step after any change to files under `client/`.
+
+## OPEN ISSUE — Robert flagged a model misunderstanding
+
+This is UNRESOLVED. The AI does not know what it got wrong. Next session must ask Robert before proceeding.

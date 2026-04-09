@@ -29,7 +29,7 @@ Every session operates in phases. You may NOT skip ahead.
 - Change ONLY what was approved in Phase 2. Nothing else
 - One file at a time. Report after each file change
 - If you discover something unexpected, STOP and ask. Do not "fix" things you weren't asked to fix
-- After all changes, run `tsc --noEmit` and report results
+- After all changes, run `npm run build` (NOT just `tsc --noEmit` — that only checks the server) and report results
 
 ### Phase 4: VERIFY & COMMIT
 - Show a `git diff` of everything you changed
