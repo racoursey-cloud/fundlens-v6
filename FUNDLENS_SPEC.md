@@ -1195,17 +1195,16 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 13 | Allocation Fix + Portfolio Allocation Display | **DONE** — CRITICAL-6 resolved, MISSING-14 resolved. NOTE: deployment failure after push (client tsc errors); hotfixed in `ede0184`. Open model misunderstanding flagged by Robert — see SESSION_13_NOTES.md. |
 | 14 | End-to-End Integration Testing | **DONE** — Full pipeline verified against 22-fund universe. BUG-9 (CRITICAL: zero financial data reaching Claude) fixed. BUG-1 (quality scores >100) fixed. 9 open bugs documented in BUGS.md. 15/22 funds scoring (BUG-4). Brief rendering broken (BUG-5). Cold pipeline: 2m47s (PASS). Warm pipeline: 1m42s (PASS). |
 | 15 | HHI + Bugfixes + Documentation | **DONE** — HHI display added, 7 bugs resolved (BUG-2/4/5/6/7/10/12), 2 deferred. |
-| 16 | BUG-3 + BUG-11 Fixes | **DONE** — ISIN fallback for international CUSIPs (BUG-3), editorial voice overhaul (BUG-11). All 12 bugs resolved. Zero open. |
+| 16 | BUG-3 + BUG-11 Fixes + Help Section | **DONE** — ISIN fallback for international CUSIPs (BUG-3), editorial voice overhaul (BUG-11). All 12 bugs resolved. Zero open. Help page with FAQs + Claude Haiku chat (MISSING-9). |
+| 17 | Final Feature Completion | **DONE** — Brief 4-section W layout (MISSING-10), fund-of-funds look-through (MISSING-15), MISSING-16 resolved. pipelineRateLimit re-enabled then relaxed to 60s for testing. All 16 MISSING items resolved. All 12 bugs resolved. |
 
-**Remaining Sessions (optional, for full spec compliance):**
+**All planned sessions complete.** 16 MISSING items resolved, 12 bugs resolved, zero open issues. See SESSION_17_NOTES.md for watch list items and next-session reminders.
 
-| Session | Focus | Gaps Addressed | Estimate |
-|---------|-------|----------------|----------|
-| 14 | ~~End-to-End Integration Testing~~ | **COMPLETED** — see above | — |
-| 15 | ~~HHI + Bugfixes + Documentation~~ | **COMPLETED** — HHI display added, 4 bugs fixed (BUG-4/5/6/7), documentation updated | — |
-| 16 | ~~BUG-3 + BUG-11 Fixes~~ | **COMPLETED** — ISIN fallback for international CUSIP resolution (BUG-3), editorial voice overhaul with jargon blacklist (BUG-11). All 12 bugs now resolved. | — |
-| 17 | ~~Help Section~~ | **COMPLETED in Session 16** — MISSING-9 resolved | — |
-| 18 | ~~Fund-of-Funds + Brief Redesign + Cleanup~~ | **COMPLETED in Session 17** — MISSING-10/15/16 resolved, pipelineRateLimit re-enabled | — |
+**Watch list:**
+
+| ID | Description | Severity | Notes |
+|----|-------------|----------|-------|
+| WATCH-1 | Risk tolerance change does not affect Brief allocation | MEDIUM-HIGH | Robert observed: changed risk, regenerated Brief, allocation unchanged. Investigate server-side risk reading path in brief-engine.ts. |
 
 ---
 

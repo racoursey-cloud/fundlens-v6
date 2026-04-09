@@ -54,9 +54,9 @@ export const router = Router();
 // ─── SESSION 0 SECURITY: Rate limiters for expensive endpoints ────────────
 
 const pipelineRateLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3,                    // 3 pipeline runs per hour
-  message: { error: 'Pipeline rate limit exceeded. Max 3 per hour.' },
+  windowMs: 60 * 1000,       // 60-second cooldown window
+  max: 1,                     // 1 run per 60 seconds (no burst, but no hard cap)
+  message: { error: 'Pipeline cooldown — wait 60 seconds between runs.' },
   keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
