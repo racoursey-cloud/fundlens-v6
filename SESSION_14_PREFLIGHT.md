@@ -164,9 +164,9 @@ Robert activated the 7 missing funds via SQL (`UPDATE funds SET is_active = true
 - **14.2 (Pipeline Execution):** ✅ COMPLETE (15 of 15 active funds scored; 7 newly activated funds awaiting next pipeline run)
 - **14.3 (Scoring Validation):** ✅ COMPLETE — all 15 composites verified manually. BUG-1 (quality >100) fixed in commit `be49b1d`.
 - **14.4 (Allocation Validation):** ✅ COMPLETE — manual calculation matches engine output exactly at risk=5.5.
-- **14.5 (Brief Generation Test):** NOT STARTED — next assignment
-- **14.6 (Performance Measurement):** NOT STARTED
-- **14.7 (Bug Documentation):** NOT STARTED
+- **14.5 (Brief Generation Test):** ✅ COMPLETE — 4 W sections present in API, UI doesn't render content (BUG-5). Voice too Wall Street (BUG-11). BUG-9 fixed (ac1409c). Opus confirmed.
+- **14.6 (Performance Measurement):** ✅ COMPLETE — Cold 68s, Warm ~70s. Both PASS. Opus call is 64% of pipeline time.
+- **14.7 (Bug Documentation):** ✅ COMPLETE — BUGS.md created (163b933). Spec §9.5 + §10 updated (a972189). Pushed.
 
 ### Database Changes (by Robert, not in git)
 - 7 funds activated: `UPDATE funds SET is_active = true WHERE ticker IN ('QFVRX','MADFX','RNWGX','OIBIX','VWIGX','BPLBX','CFSTX')`
@@ -180,8 +180,8 @@ Robert activated the 7 missing funds via SQL (`UPDATE funds SET is_active = true
 5. Continue through 14.4–14.7
 
 ### Reminders for End of Session 14
-- [ ] Re-enable `pipelineRateLimit` in routes.ts (remove the comment-out)
-- [ ] Mark completed 14.x assignments as COMPLETED
+- [ ] Re-enable `pipelineRateLimit` in routes.ts line 505 (remove the comment-out from commit f2b451f) — **DEFERRED per Robert: do after ALL testing is complete, not now**
+- [x] Mark completed 14.x assignments as COMPLETED — done (all 7 marked above)
 
 ---
 
@@ -488,3 +488,38 @@ All 8 runs show `fundsFailed: 2`. The log says "Holdings fetched for 18/20 funds
 **BUG-10: Editorial policy fallback says "research analyst" (Severity: MEDIUM)**
 File: `src/engine/brief-scheduler.ts`, line 92
 If `editorial-policy.md` cannot be found on the filesystem, the fallback prompt is: "You are a research analyst writing an Investment Brief for a 401(k) participant." This is the exact opposite of the spec §7.3 voice ("buddy who's good at markets"). If the file path resolution fails on Railway (which it could, since the code tries 3 different paths), every Brief silently falls back to the wrong voice with zero structural guidance (no 4 W sections, no behind-the-curtain rule). The fallback should match the spec voice and include the 4-section structure at minimum.
+
+---
+
+## Session 14 Final Status: COMPLETE
+
+**All 7 assignments delivered.** Commits pushed to main:
+
+| Commit | Description |
+|--------|-------------|
+| `e6aafa7` | Fix factor score display to use CDF-normalized z-scores |
+| `f2b451f` | Disable pipeline rate limit for integration testing |
+| `be49b1d` | Fix quality scoring: 3 ratio functions treated linearScore (0-100) as 0-1 |
+| `5063624` | Session 14: Update preflight report with pipeline results + session state |
+| `c579bd5` | Session 14: Mark 14.1-14.4 complete, document scoring + allocation validation |
+| `ac1409c` | Session 14: Fix BUG-9 — Brief engine ratio name mismatch |
+| `f8047b2` | Session 14: Document pipeline performance measurement (Task 14.6) |
+| `163b933` | Session 14: Add BUGS.md — 12 bugs cataloged |
+| `a972189` | Session 14: Update spec §9.5 roadmap + §10 changelog |
+
+---
+
+## Session 15 Handoff
+
+### Priority Bugs (fix these first)
+1. **BUG-4 (HIGH):** 7 funds not scoring — only 15/22 have `fund_scores` rows. Check Railway logs for EDGAR failures or persistence errors.
+2. **BUG-5 (HIGH):** Briefs.tsx doesn't render `content_md`. Users see "Brief content not available" despite full content in DB.
+3. **BUG-6 (MEDIUM):** Tab labels swapped — "BRIEF" goes to Thesis, "HISTORY" goes to Briefs. Quick fix in nav config.
+4. **BUG-7 (LOW):** UI says "written by Claude Opus" — violates behind-the-curtain rule. Remove model name from subtitle.
+
+### Deferred Cleanup (do after ALL testing is complete)
+- **Re-enable `pipelineRateLimit`** in `src/routes/routes.ts` line 505. Currently commented out (commit `f2b451f`). Robert said: "Remind me about rate limits when we are done with all testing, but not now."
+- **Clean up stalled pipeline run** `e6f6b1e5` — stuck in "running" status with 0 funds. Run: `UPDATE pipeline_runs SET status = 'failed', completed_at = now() WHERE id = 'e6f6b1e5-...' AND status = 'running';`
+
+### Session 15 Assignment Files
+Already exist in `assignments/`: 15_1 (HHI computation), 15_2 (HHI display), 15_3 (Session 14 bugfixes), 15_4 (documentation cleanup). See BUILD_PLAN.md for details.

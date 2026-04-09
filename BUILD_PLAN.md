@@ -51,46 +51,38 @@ FundLens v6 is ~85% complete. The scoring engine math is correct. Three critical
 
 ---
 
-## Session 14: End-to-End Integration Testing
+## Session 14: End-to-End Integration Testing — ✅ COMPLETE
 
-**Goal:** Run the full pipeline against the real 18-fund TerrAscend universe. Verify every component works together. Document any bugs found.
+**Goal:** Run the full pipeline against the real 22-fund TerrAscend universe. Verify every component works together. Document any bugs found.
 
-| Task | File | Description | Estimate |
-|------|------|-------------|----------|
-| 14.1 | `assignments/14_1_PREFLIGHT_CHECKS.md` | Verify env vars, migrations, cache tables, server startup | 20 min |
-| 14.2 | `assignments/14_2_PIPELINE_EXECUTION.md` | Run full pipeline, capture output, note failures | 30 min |
-| 14.3 | `assignments/14_3_SCORING_VALIDATION.md` | Spot-check scoring math against manual calculation | 30 min |
-| 14.4 | `assignments/14_4_ALLOCATION_VALIDATION.md` | Verify allocation output against manual calculation | 20 min |
-| 14.5 | `assignments/14_5_BRIEF_GENERATION_TEST.md` | Generate a Brief, verify 4-section structure + editorial policy | 20 min |
-| 14.6 | `assignments/14_6_PERFORMANCE_MEASUREMENT.md` | Measure pipeline execution time, identify bottlenecks | 15 min |
-| 14.7 | `assignments/14_7_BUG_DOCUMENTATION.md` | Catalog all failures into BUGS.md with severity + fix plan | 20 min |
+| Task | File | Status |
+|------|------|--------|
+| 14.1 | `assignments/14_1_PREFLIGHT_CHECKS.md` | ✅ DONE |
+| 14.2 | `assignments/14_2_PIPELINE_EXECUTION.md` | ✅ DONE |
+| 14.3 | `assignments/14_3_SCORING_VALIDATION.md` | ✅ DONE — all 15 composites verified manually |
+| 14.4 | `assignments/14_4_ALLOCATION_VALIDATION.md` | ✅ DONE — 6 allocations match at risk=5.5 |
+| 14.5 | `assignments/14_5_BRIEF_GENERATION_TEST.md` | ✅ DONE — BUG-9 (CRITICAL) fixed |
+| 14.6 | `assignments/14_6_PERFORMANCE_MEASUREMENT.md` | ✅ DONE — 70s avg, well under targets |
+| 14.7 | `assignments/14_7_BUG_DOCUMENTATION.md` | ✅ DONE — BUGS.md + spec updated |
 
-**Dependencies:** 14.1 → 14.2 → (14.3, 14.4, 14.5, 14.6 can run in parallel) → 14.7
-
-**Prerequisites:** Session 13 must be complete. Railway environment must be accessible with all API keys from spec §5.6.
-
-**Session 14 Definition of Done:**
-- Pipeline completes against real 18-fund universe without fatal errors
-- At least 3 fund scores spot-checked against manual calculation
-- At least 1 allocation spot-checked against manual calculation
-- Brief generated with correct 4-section structure
-- Pipeline runtime measured and documented
-- All bugs cataloged in BUGS.md with severity ratings
+**Results:** 12 bugs found (9 open, 3 resolved). 2 CRITICAL bugs fixed during session (BUG-1: quality >100, BUG-9: ratio name mismatch). Pipeline: 68-77s, PASS on all timing targets. See `SESSION_14_PREFLIGHT.md` and `BUGS.md` for full details.
 
 ---
 
 ## Session 15: HHI + Documentation + Polish
 
-**Goal:** Implement HHI concentration display, fix any bugs found in Session 14, clean up documentation.
+**Goal:** Implement HHI concentration display, fix HIGH-priority bugs from Session 14, clean up documentation.
 
 | Task | File | Description | Estimate |
 |------|------|-------------|----------|
 | 15.1 | `assignments/15_1_HHI_COMPUTATION.md` | Create HHI utility function | 20 min |
 | 15.2 | `assignments/15_2_HHI_DISPLAY.md` | Add HHI to FundDetail sidebar | 30 min |
-| 15.3 | `assignments/15_3_SESSION_14_BUGFIXES.md` | Fix bugs documented in Session 14's BUGS.md | 60 min |
+| 15.3 | `assignments/15_3_SESSION_14_BUGFIXES.md` | Fix bugs from BUGS.md (priority: BUG-4, BUG-5, BUG-6, BUG-7) | 60 min |
 | 15.4 | `assignments/15_4_DOCUMENTATION_CLEANUP.md` | Update spec §5.5, §9, §10 with final status | 20 min |
 
-**Dependencies:** 15.1 → 15.2. 15.3 depends on Session 14's BUGS.md. 15.4 is last.
+**Dependencies:** 15.1 → 15.2. 15.3 depends on Session 14's `BUGS.md` (12 bugs: 9 open, 3 resolved). 15.4 is last.
+
+**Session 14 bug priority for 15.3:** BUG-4 (7 missing fund scores), BUG-5 (Brief content not rendering), BUG-6 (tab labels swapped), BUG-7 (model name in UI).
 
 **Session 15 Definition of Done:**
 - HHI displayed per fund in FundDetail sidebar
