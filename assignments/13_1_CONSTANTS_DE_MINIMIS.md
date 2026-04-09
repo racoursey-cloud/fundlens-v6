@@ -1,3 +1,5 @@
+**STATUS: COMPLETED** — April 8, 2026 (Session 13)
+
 # Assignment 13.1: Replace Capture Threshold Constants with De Minimis
 
 **Session:** 13

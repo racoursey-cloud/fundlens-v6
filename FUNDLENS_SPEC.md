@@ -965,7 +965,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 7, 2026 (after Session 11)
+**Last updated:** April 8, 2026 (after Session 13 partial)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1053,20 +1053,10 @@ This section tells future sessions exactly what state the codebase is in relativ
 
 These are the highest priority. The code runs but produces wrong results.
 
-**CRITICAL-6: Allocation Engine — Capture Threshold Instead of De Minimis Floor (§3.5)**
+**CRITICAL-6: Allocation Engine — Capture Threshold Instead of De Minimis Floor (§3.5) — IN PROGRESS**
 File: `src/engine/allocation.ts`, lines 218-241
 Spec: §3.5 — "Drop any fund with allocation < 5%. Renormalize survivors to sum to 100%."
-Code: Step 4 implements a capture threshold trim (v5.1 pattern):
-```
-targetCapture = CAPTURE_HIGH - (rt - 1) * CAPTURE_STEP
-// = 70 - (risk - 1) × 5
-// risk=1: 70%, risk=4: 55%, risk=7: 40%
-```
-Ranks funds by weight, walks down until cumulative weight hits targetCapture, cuts everything below. This is the v5.1 pattern that §3.4 and changelog item 11 explicitly say was replaced.
-Constants.ts has `CAPTURE_HIGH: 70` and `CAPTURE_STEP: 5` but does NOT define `DE_MINIMIS_PCT`.
-The file header comment claims "5% de minimis floor" was implemented, but the code implements capture threshold.
-Impact: Every allocation computed by v6 differs from spec. De minimis removes individual funds below 5%; capture threshold removes by cumulative weight from bottom — fundamentally different behavior.
-Fix: Replace capture threshold with iterative de minimis (drop < 5%, renormalize, repeat). Remove `CAPTURE_HIGH`/`CAPTURE_STEP` from constants. Add `DE_MINIMIS_PCT: 0.05`.
+Status: **Session 13 partial.** Task 13.1 complete: `CAPTURE_HIGH`/`CAPTURE_STEP` removed from constants.ts, `DE_MINIMIS_PCT: 0.05` added. Task 13.2 remaining: rewrite allocation.ts Step 4 to use de minimis floor instead of capture threshold. `tsc --noEmit` currently fails (allocation.ts still references removed constants). Next session picks up at Assignment 13.2.
 
 **~~CRITICAL-1: Scoring Engine — Missing Z-Space + CDF (§2.1)~~ — RESOLVED (Session 4)**
 File: `src/engine/scoring.ts`
@@ -1242,6 +1232,20 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 16. **No culture/trends in scoring.** Social media sentiment, generational preferences, etc. add noise to the objective model. Claude may reference current events and cultural context in the Investment Brief narrative when it enhances readability and relevance.
 
 17. **Cost Efficiency enhanced with Tiingo fee components.** When 12b-1 marketing fees are present, apply penalty within cost factor (-5 points per 0.10% of 12b-1, capped at -15). Distinguishes funds with identical headline expense ratios but different fee structures.
+
+## April 8, 2026 — Session 13 (partial): Allocation De Minimis Constants
+
+**Goal:** Begin CRITICAL-6 fix — replace capture threshold constants with de minimis floor.
+
+**Changes:**
+
+1. **constants.ts: Removed `CAPTURE_HIGH: 70` and `CAPTURE_STEP: 5` from ALLOCATION object.** These implemented the v5.1 capture threshold pattern that §3.4 and changelog item 11 explicitly replaced. Removed the associated comment block (lines 94–99).
+
+2. **constants.ts: Added `DE_MINIMIS_PCT: 0.05` to ALLOCATION object.** Per §3.5 — funds with allocation below 5% are dropped and survivors renormalized.
+
+**State at session end:** `tsc --noEmit` fails (expected). `allocation.ts` line 34 still destructures the removed `CAPTURE_HIGH`/`CAPTURE_STEP`. Next session picks up at **Assignment 13.2** (rewrite allocation.ts Step 4).
+
+**Assignments completed:** 13.1. **Remaining:** 13.2, 13.3, 13.4, 13.5.
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 

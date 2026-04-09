@@ -91,15 +91,10 @@ export const ALLOCATION = {
   MAD_CONSISTENCY: 0.6745,
   /** Quality gate: funds with this many or more fallbacks are excluded */
   QUALITY_GATE_MAX_FALLBACKS: 4,
-  /**
-   * Capture threshold (v5.1 pattern, continuous).
-   * Rank funds descending by weight, walk down until cumulative weight
-   * hits the target, cut everything below, renormalize survivors.
-   * targetCapture = CAPTURE_HIGH - (risk - 1) * CAPTURE_STEP
-   * Linear on the continuous 1.0–7.0 risk scale — no stair steps.
-   */
-  CAPTURE_HIGH: 70,
-  CAPTURE_STEP: 5,
+  /** De minimis floor (§3.5). Funds with allocation below this threshold are
+   *  dropped and survivors renormalized. Industry-standard minimum position size.
+   *  Single-pass: removing sub-threshold funds only increases survivor allocations. */
+  DE_MINIMIS_PCT: 0.05,
 } as const;
 
 // ─── FRED Commodity Series (Spec §4.4) ──────────────────────────────────────
