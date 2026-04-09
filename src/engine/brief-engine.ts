@@ -24,7 +24,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { CLAUDE, BRIEF, KELLY_RISK_TABLE, RISK_MAX, MONEY_MARKET_TICKERS } from './constants.js';
+import { CLAUDE, BRIEF, KELLY_RISK_TABLE, RISK_MAX, MONEY_MARKET_TICKERS, ALLOCATION } from './constants.js';
 import { computeCompositeFromZScores } from './scoring.js';
 import type { FundZScores } from './scoring.js';
 import { delay } from './types.js';
@@ -34,6 +34,7 @@ import type { MacroThesis, SectorPreference } from './thesis.js';
 import { computeAllocations } from './allocation.js';
 import type { AllocationInput } from './allocation.js';
 import { supaFetch, supaSelect, supaInsert } from './supabase.js';
+import { alertCashSweepYellow } from './admin-alert.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -642,6 +643,20 @@ export async function assembleDataPacket(
     })),
     profile.risk_tolerance
   );
+
+  // ── Cash sweep monitoring (§3.5, Session 23) ──────────────────────────
+  // green ≤10% → silent, yellow 10-15% → admin alert, red >15% → hard cap
+  const cashAlertPct = ALLOCATION.CASH_ALERT_PCT * 100; // 10
+  for (const pos of allocation) {
+    if (MONEY_MARKET_TICKERS.has(pos.ticker) && pos.percentage > cashAlertPct) {
+      console.warn(
+        `[brief-engine] Cash sweep yellow: ${pos.ticker} at ${pos.percentage}% for user ${userId.slice(0, 8)}...`
+      );
+      // Fire-and-forget — never blocks Brief generation
+      alertCashSweepYellow(userId, pos.ticker, pos.percentage, profile.risk_tolerance)
+        .catch(err => console.error(`[brief-engine] Cash sweep alert failed: ${err}`));
+    }
+  }
 
   // Fetch previous allocation for "What Changed" delta (§7.7)
   const previousAllocation = await fetchPreviousAllocation(userId);

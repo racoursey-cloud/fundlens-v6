@@ -143,6 +143,11 @@ export const ALLOCATION = {
    *  Swept weight above this cap reverts to proportional redistribution.
    *  15% ≈ 0.83% annual drag at ~5.5% equity-MM spread. */
   MM_CASH_CAP: 0.15,
+  /** Cash sweep monitoring thresholds (§3.5, Session 22/23).
+   *  green  ≤ CASH_ALERT_PCT  → no action
+   *  yellow   CASH_ALERT_PCT to MM_CASH_CAP  → admin alert email
+   *  red    > MM_CASH_CAP     → hard cap triggers (handled above) */
+  CASH_ALERT_PCT: 0.10,
 } as const;
 
 // ─── FRED Commodity Series (Spec §4.4) ──────────────────────────────────────
