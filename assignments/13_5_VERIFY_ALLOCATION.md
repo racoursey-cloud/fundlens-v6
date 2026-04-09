@@ -1,3 +1,5 @@
+**STATUS: COMPLETED** — April 8, 2026 (Session 13)
+
 # Assignment 13.5: Verify Allocation Fix + Update Spec
 
 **Session:** 13

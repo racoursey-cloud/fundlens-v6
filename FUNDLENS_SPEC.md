@@ -965,7 +965,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 8, 2026 (after Session 13, Task 13.4)
+**Last updated:** April 8, 2026 (after Session 13, complete)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1028,7 +1028,7 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Positioning: correct normalization | §2.6.3 | positioning.ts | `(score - 1) / 9` maps 1–10 → 0–1. Unclassified = neutral 0.5 — Session 6 |
 | Deterministic FRED sector priors | §2.6.2 | thesis.ts | `computeSectorPriors()`: yield curve, CPI, fed stance, employment rules — Session 6 |
 | FRED commodity series | §4.4 | fred.ts, constants.ts | WTI, Brent, Gold, Dollar Index in INDICATOR_META + fetchMacroSnapshot — Session 6 |
-| Allocation: MAD + Kelly exponential | §3.1–3.4, §3.6 | allocation.ts | MAD z-score, quality gate, e^(k×modZ), rounding absorption — Session 6. **NOTE: Step 4 uses capture threshold, NOT de minimis floor per §3.5. See CRITICAL-6.** |
+| Allocation: MAD + Kelly exponential + de minimis | §3.1–3.6 | allocation.ts | MAD z-score, quality gate, e^(k×modZ), 5% de minimis floor, rounding absorption — Session 6 + Session 13 (Step 4 fixed: capture threshold → de minimis floor per §3.5). |
 | Money market global skip | §2.7 | pipeline.ts, constants.ts, allocation.ts | FDRXX/ADAXX fixed composite 50, skip all factor scoring, MM tier — Session 6 |
 | Portfolio: Invalid Date fix | §6 | Portfolio.tsx | Null/invalid timestamp guard for pipeline run display — Session 6 |
 | Tier badges: end-to-end wiring | §6.3 | scoring.ts, persist.ts, types.ts, api.ts, Portfolio.tsx, FundDetail.tsx | MAD z-score → tier computed in scoring engine, persisted to fund_scores, rendered in fund table + detail sidebar. Client-side recomputation on slider change. — Session 7 |
@@ -1048,6 +1048,8 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Brief serif headers | §7.2 | Briefs.tsx | Section headings use Libre Baskerville serif font. — Session 11 |
 | Theme: serif font + surfaceAlt | §6.1 | theme.ts | Added Libre Baskerville, surfaceAlt color. — Session 11 |
 | ThesisData typed API client | §2.6.1 | api.ts | Typed ThesisData interface for /api/thesis/latest. — Session 11 |
+| Client-side allocation engine | §3.1–3.6, §5.2 | client/src/engine/allocation.ts | Pure-math port of server allocation.ts. Inlined constants, zero server imports. computeClientAllocations() for instant Portfolio recomputation. — Session 13 |
+| Portfolio: real Kelly allocation display | §6.4, §6.7 | Portfolio.tsx | Fund Allocation donut powered by real Kelly allocations. Alloc column in 8-column fund table. Both risk + weight sliders trigger instant recomputation via useMemo. — Session 13 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
