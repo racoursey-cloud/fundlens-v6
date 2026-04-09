@@ -24,11 +24,10 @@ import { HelpChat } from './HelpChat';
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
 const TABS = [
-  { path: '/',        label: 'Portfolio' },
-  { path: '/thesis',  label: 'Thesis' },
-  { path: '/briefs',  label: 'Briefs' },
+  { path: '/',         label: 'Your Brief' },
+  { path: '/research', label: 'Research' },
   { path: '/settings', label: 'Settings' },
-  { path: '/help',    label: 'Help' },
+  { path: '/help',     label: 'Help' },
 ];
 
 // ─── Source badge (v5.1 pattern) ──────────────────────────────────────────────

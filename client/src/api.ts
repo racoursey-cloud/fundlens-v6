@@ -83,6 +83,8 @@ export interface Brief {
   id: string;
   title: string;
   content_md?: string;
+  /** Full data packet used to generate this brief (includes user.riskTolerance) */
+  data_packet?: Record<string, unknown>;
   status: 'generated' | 'sent' | 'failed';
   generated_at: string;
   model_used: string;

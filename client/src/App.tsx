@@ -32,9 +32,8 @@ import { AppShell } from './components/AppShell';
 import { Login } from './pages/Login';
 import { SetupWizard } from './pages/SetupWizard';
 import { AuthCallback } from './pages/AuthCallback';
-import { Portfolio } from './pages/Portfolio';
-import { Thesis } from './pages/Thesis';
-import { Briefs } from './pages/Briefs';
+import { YourBrief } from './pages/YourBrief';
+import { Research } from './pages/Research';
 import { Settings } from './pages/Settings';
 import { Pipeline } from './pages/Pipeline';
 import { Help } from './pages/Help';
@@ -62,12 +61,14 @@ export function App() {
                 <AppShell />
               </ProtectedRoute>
             }>
-              <Route index element={<Portfolio />} />
-              <Route path="/thesis" element={<Thesis />} />
-              <Route path="/briefs" element={<Briefs />} />
+              <Route index element={<YourBrief />} />
+              <Route path="/research" element={<Research />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/help" element={<Help />} />
               <Route path="/pipeline" element={<Pipeline />} />
+              {/* Redirects for old bookmarked URLs */}
+              <Route path="/thesis" element={<Navigate to="/research" replace />} />
+              <Route path="/briefs" element={<Navigate to="/" replace />} />
             </Route>
 
             {/* Catch-all → redirect to home */}

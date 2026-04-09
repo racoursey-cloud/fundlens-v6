@@ -81,6 +81,12 @@ export function Settings() {
   const [nameSaving, setNameSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  // Factor weights + risk (interactive sliders)
+  const [factorWeights, setFactorWeights] = useState({
+    cost: 0.25, quality: 0.30, positioning: 0.20, momentum: 0.25,
+  });
+  const [riskTolerance, setRiskTolerance] = useState<number>(4.0);
+
   // Pipeline state
   const [pipelineStatus, setPipelineStatus] = useState<{
     latestRun: PipelineRun | null;
@@ -93,6 +99,13 @@ export function Settings() {
       if (pRes.data?.profile) {
         setProfile(pRes.data.profile);
         setDisplayName(pRes.data.profile.display_name ?? '');
+        setFactorWeights({
+          cost: pRes.data.profile.weight_cost,
+          quality: pRes.data.profile.weight_quality,
+          positioning: pRes.data.profile.weight_positioning,
+          momentum: pRes.data.profile.weight_momentum,
+        });
+        setRiskTolerance(pRes.data.profile.risk_tolerance);
       }
       if (fRes.data?.funds) setFunds(fRes.data.funds);
       if (psRes.data) setPipelineStatus(psRes.data);
@@ -103,6 +116,25 @@ export function Settings() {
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
+  }, []);
+
+  // Proportional weight redistribution
+  const handleWeightChange = useCallback((key: keyof typeof factorWeights, newVal: number) => {
+    setFactorWeights(prev => {
+      const others = Object.keys(prev).filter(k => k !== key) as Array<keyof typeof prev>;
+      const remaining = 1 - newVal;
+      const otherSum = others.reduce((s, k) => s + prev[k], 0);
+      const next = { ...prev, [key]: newVal };
+      if (otherSum > 0) {
+        for (const k of others) next[k] = Math.max(0.05, (prev[k] / otherSum) * remaining);
+      } else {
+        const share = remaining / others.length;
+        for (const k of others) next[k] = share;
+      }
+      const total = Object.values(next).reduce((s, v) => s + v, 0);
+      for (const k of Object.keys(next) as Array<keyof typeof next>) next[k] = next[k] / total;
+      return next;
+    });
   }, []);
 
   const handleNameBlur = async () => {
@@ -214,36 +246,124 @@ export function Settings() {
 
       <Divider />
 
-      {/* ═══ SECTION 2 — SCORING PREFERENCES (read-only summary) ═══ */}
+      {/* ═══ SECTION 2 — SCORING PREFERENCES (interactive sliders) ═══ */}
       <section style={{ marginBottom: 32 }}>
         <SectionHeader>Scoring Preferences</SectionHeader>
 
         {profile && (
-          <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Risk tolerance */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <span style={{ fontSize: 13, color: theme.colors.textMuted }}>Risk Tolerance</span>
-              <span style={{
-                fontSize: 14, fontWeight: 700, color: theme.colors.text,
-                fontFamily: theme.fonts.mono,
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {/* Factor weight sliders */}
+            <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <div style={{
+                fontSize: 12, fontWeight: 600, color: theme.colors.textDim,
+                letterSpacing: '0.04em', textTransform: 'uppercase',
+              }}>Factor Weights</div>
+
+              <WeightSlider label="Cost Efficiency" value={factorWeights.cost}
+                onChange={(v) => handleWeightChange('cost', v)} />
+              <WeightSlider label="Holdings Quality" value={factorWeights.quality}
+                onChange={(v) => handleWeightChange('quality', v)} />
+              <WeightSlider label="Momentum" value={factorWeights.momentum}
+                onChange={(v) => handleWeightChange('momentum', v)} />
+              <WeightSlider label="Positioning" value={factorWeights.positioning}
+                onChange={(v) => handleWeightChange('positioning', v)} />
+
+              {/* Weight sum indicator */}
+              <div style={{
+                display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6,
+                paddingTop: 4, borderTop: `1px solid ${theme.colors.border}`,
               }}>
-                {profile.risk_tolerance.toFixed(1)} — {nearestRiskLabel(profile.risk_tolerance)}
-              </span>
+                <span style={{ fontSize: 11, color: theme.colors.textDim }}>Total:</span>
+                <span style={{
+                  fontSize: 12, fontWeight: 700, fontFamily: theme.fonts.mono,
+                  color: Math.abs(Object.values(factorWeights).reduce((s, v) => s + v, 0) - 1) < 0.02
+                    ? theme.colors.success : theme.colors.error,
+                }}>
+                  {Math.round(Object.values(factorWeights).reduce((s, v) => s + v, 0) * 100)}%
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => {
+                    setFactorWeights({ cost: 0.25, quality: 0.30, positioning: 0.20, momentum: 0.25 });
+                    updateProfile({ weight_cost: 0.25, weight_quality: 0.30, weight_positioning: 0.20, weight_momentum: 0.25 });
+                    showToast('Weights reset to defaults');
+                  }}
+                  style={{
+                    padding: '8px 16px', borderRadius: 6,
+                    border: `1px solid ${theme.colors.border}`, background: 'transparent',
+                    color: theme.colors.textMuted, fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', transition: 'all 0.15s', flex: 1,
+                  }}
+                >Reset to Defaults</button>
+                <button
+                  onClick={() => {
+                    updateProfile({
+                      weight_cost: factorWeights.cost,
+                      weight_quality: factorWeights.quality,
+                      weight_positioning: factorWeights.positioning,
+                      weight_momentum: factorWeights.momentum,
+                    });
+                    showToast('Factor weights saved');
+                  }}
+                  style={{
+                    flex: 1, padding: '8px 16px', borderRadius: 6,
+                    border: 'none', background: theme.colors.accentBlue,
+                    color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >Save Weights</button>
+              </div>
             </div>
 
-            {/* Factor weights */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <WeightRow label="Cost Efficiency" value={profile.weight_cost} />
-              <WeightRow label="Holdings Quality" value={profile.weight_quality} />
-              <WeightRow label="Momentum" value={profile.weight_momentum} />
-              <WeightRow label="Positioning" value={profile.weight_positioning} />
-            </div>
+            {/* Risk tolerance slider */}
+            <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{
+                fontSize: 12, fontWeight: 600, color: theme.colors.textDim,
+                letterSpacing: '0.04em', textTransform: 'uppercase',
+              }}>Investment Style</div>
 
-            <p style={{
-              fontSize: 12, color: theme.colors.textDim, margin: 0, lineHeight: 1.5,
-            }}>
-              Adjust weights and risk from the Portfolio page using the sliders.
-            </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 13, color: theme.colors.text, fontWeight: 600 }}>
+                  {nearestRiskLabel(riskTolerance)}
+                </span>
+                <span style={{
+                  fontSize: 24, fontWeight: 700, color: theme.colors.accentBlue,
+                  fontFamily: theme.fonts.mono, fontVariantNumeric: 'tabular-nums',
+                }}>{riskTolerance.toFixed(1)}</span>
+              </div>
+
+              <input
+                type="range" min={1} max={7} step={0.1}
+                value={riskTolerance}
+                onChange={(e) => {
+                  const val = Math.round(Number(e.target.value) * 10) / 10;
+                  setRiskTolerance(val);
+                  updateProfile({ risk_tolerance: val });
+                }}
+                style={{
+                  width: '100%', height: 4,
+                  appearance: 'none', WebkitAppearance: 'none',
+                  background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${((riskTolerance - 1) / 6) * 100}%, ${theme.colors.border} ${((riskTolerance - 1) / 6) * 100}%, ${theme.colors.border} 100%)`,
+                  borderRadius: 2, outline: 'none', cursor: 'pointer',
+                }}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: theme.colors.textDim }}>
+                <span>Very Conservative</span>
+                <span>Very Aggressive</span>
+              </div>
+
+              <div style={{
+                marginTop: 4, padding: 14, borderRadius: 8,
+                background: 'rgba(59,130,246,0.06)', fontSize: 12, lineHeight: 1.6,
+                color: theme.colors.textMuted,
+              }}>
+                <strong style={{ color: theme.colors.text }}>How this works:</strong> Risk tolerance
+                controls how aggressively allocation tilts toward top-scoring funds. Affects
+                allocation sizing only — scores do not change.
+              </div>
+            </div>
           </div>
         )}
       </section>
@@ -374,31 +494,26 @@ export function Settings() {
   );
 }
 
-// ─── Weight Row ─────────────────────────────────────────────────────────────
+// ─── Weight Slider ──────────────────────────────────────────────────────────
 
-function WeightRow({ label, value }: { label: string; value: number }) {
+function WeightSlider({ label, value, onChange }: {
+  label: string; value: number; onChange: (val: number) => void;
+}) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <span style={{ fontSize: 13, color: theme.colors.textMuted }}>{label}</span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{
-          width: 80, height: 4, borderRadius: 2,
-          background: theme.colors.border, overflow: 'hidden',
-        }}>
-          <div style={{
-            height: '100%', borderRadius: 2,
-            background: theme.colors.accentBlue,
-            width: `${Math.round(value * 100)}%`,
-            transition: 'width 0.3s',
-          }} />
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: theme.colors.text }}>{label}</span>
         <span style={{
-          fontSize: 13, fontFamily: theme.fonts.mono, fontWeight: 600,
-          color: theme.colors.text, minWidth: 36, textAlign: 'right',
-        }}>
-          {Math.round(value * 100)}%
-        </span>
+          fontSize: 12, fontWeight: 700, color: theme.colors.accentBlue,
+          fontFamily: theme.fonts.mono, fontVariantNumeric: 'tabular-nums',
+        }}>{Math.round(value * 100)}%</span>
       </div>
+      <input
+        type="range" min={5} max={60} step={1}
+        value={Math.round(value * 100)}
+        onChange={e => onChange(Number(e.target.value) / 100)}
+        style={{ width: '100%', accentColor: theme.colors.accentBlue }}
+      />
     </div>
   );
 }
