@@ -1181,12 +1181,13 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 11 | v5.1 UI Port | **DONE** |
 | 12 | Full Assessment (READ-ONLY) | **DONE** — repo cleaned, spec updated, ASSESSMENT_REPORT.md written |
 | 13 | Allocation Fix + Portfolio Allocation Display | **DONE** — CRITICAL-6 resolved, MISSING-14 resolved. NOTE: deployment failure after push (client tsc errors); hotfixed in `ede0184`. Open model misunderstanding flagged by Robert — see SESSION_13_NOTES.md. |
+| 14 | End-to-End Integration Testing | **DONE** — Full pipeline verified against 22-fund universe. BUG-9 (CRITICAL: zero financial data reaching Claude) fixed. BUG-1 (quality scores >100) fixed. 9 open bugs documented in BUGS.md. 15/22 funds scoring (BUG-4). Brief rendering broken (BUG-5). Cold pipeline: 2m47s (PASS). Warm pipeline: 1m42s (PASS). |
 
-**Remaining Sessions (minimum 2 to match v5.1, 4 for full spec compliance):**
+**Remaining Sessions (minimum 1 to match v5.1, 3 for full spec compliance):**
 
 | Session | Focus | Gaps Addressed | Estimate |
 |---------|-------|----------------|----------|
-| 14 | End-to-End Integration Testing | Run full pipeline against real 18-fund TerrAscend universe. Verify all cache layers, scoring outputs, Brief generation. | 1 session |
+| 14 | ~~End-to-End Integration Testing~~ | **COMPLETED** — see above | — |
 | 15 | HHI + Documentation + Polish | MISSING-7 (HHI display), MISSING-16 (spec file inventory), final UI polish | 0.5–1 session |
 | 16 | Help Section (optional) | MISSING-9 (FAQs + Claude Haiku chat) | 1 session |
 | 17 | Fund-of-Funds Look-Through (optional) | MISSING-15 (wire resolveSubFundTicker) | 0.5–1 session |
@@ -1294,6 +1295,26 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 **State at session end:** `tsc --noEmit` passes clean. MISSING-14 resolved. Next assignment: **13.5** (verify allocation with manual calculation).
 
 **Assignments completed:** 13.1, 13.2, 13.3, 13.4. **Remaining:** 13.5.
+
+## April 8–9, 2026 — Session 14: End-to-End Integration Testing
+
+**Goal:** Run full pipeline against real 22-fund TerrAscend universe. Verify scoring, Brief generation, editorial voice, and performance.
+
+**Changes:**
+
+1. **BUG-1 fixed (commit be49b1d): Quality raw scores >100.** Three ratio scoring functions in quality.ts treated `linearScore()` 0–100 output as 0–1, producing scores up to 3087. Added `× 0.01` correction and safety clamps. All factor scores now guaranteed 0–100.
+
+2. **BUG-9 fixed (commit ac1409c): extractRatioValue() name mismatch.** `extractHoldingFinancials()` in brief-engine.ts searched for camelCase FMP identifiers (e.g., `grossProfitMargin`) but `factor_details` stores human-readable names (e.g., `Gross Profit Margin`). All 13 ratio name strings corrected. Claude now receives actual holding-level financial data for the first time.
+
+3. **BUGS.md created.** 12 bugs cataloged (9 open, 3 resolved). Severity breakdown: 0 CRITICAL open, 2 HIGH (BUG-4: 15/22 funds scored; BUG-5: Brief content not rendering), 5 MEDIUM (BUG-2/3/6/10/11), 2 LOW (BUG-7/12).
+
+4. **Performance measured.** Cold pipeline: 2m47s (22 funds, PASS vs <5min target). Warm pipeline: 1m42s (PASS vs <3min target). Bottleneck: EDGAR fetches (network-bound, ~45s cold).
+
+5. **Brief generation tested.** 4-section W structure present in API response. UI does not render Brief content (BUG-5). Editorial voice improved but still too Wall Street (BUG-11). Model name exposed in UI subtitle (BUG-7).
+
+**Session 14 priority bugs for Session 15:** BUG-4 (7 missing fund scores), BUG-5 (Brief content not rendering), BUG-6 (tab labels swapped), BUG-7 (model name in UI).
+
+**Assignments completed:** 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7.
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 
