@@ -13,7 +13,7 @@
  * Session 11/12. Destination: client/src/components/AppShell.tsx
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { fetchPipelineStatus, triggerPipeline, abortPipeline } from '../api';
@@ -106,6 +106,13 @@ export function AppShell() {
   const [stepMessage, setStepMessage] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
+  // Guard: prevents the poll from closing the overlay before the trigger
+  // POST has completed and the DB row exists. React 18 can flush renders
+  // at await boundaries, causing the poll useEffect to fire before
+  // triggerPipeline() returns. The ref is updated synchronously so the
+  // poll can check it without render-cycle delays.
+  const triggerConfirmedRef = useRef(false);
+
   const displayName =
     user?.user_metadata?.display_name ||
     user?.email?.split('@')[0] ||
@@ -135,18 +142,26 @@ export function AppShell() {
     });
   }, []);
 
-  // Poll while running — immediate first poll, then every 2s
+  // Poll while running — every 2s (first poll delayed until trigger confirmed)
   useEffect(() => {
     if (!isRunning) return;
     const poll = async () => {
+      // Don't trust "not running" from the DB until the trigger POST has
+      // completed and confirmed the run record exists. Without this guard,
+      // React 18's render-at-await can fire this poll before the POST
+      // returns, getting a false negative that kills the overlay.
       const res = await fetchPipelineStatus();
       if (res.data) {
         if (!res.data.isRunning) {
-          setSource('live');
-          setIsRunning(false);
-          setCurrentStep(null);
-          setStepMessage(null);
-          setActiveRunId(null);
+          if (triggerConfirmedRef.current) {
+            // Trigger completed AND DB says not running → genuinely done
+            setSource('live');
+            setIsRunning(false);
+            setCurrentStep(null);
+            setStepMessage(null);
+            setActiveRunId(null);
+          }
+          // else: trigger still in flight — ignore the false negative
         } else {
           const d = res.data as Record<string, unknown>;
           if (d.currentStep != null) setCurrentStep(d.currentStep as number);
@@ -154,7 +169,7 @@ export function AppShell() {
         }
       }
     };
-    poll(); // immediate first poll
+    poll(); // immediate first poll (guarded by triggerConfirmedRef)
     const interval = setInterval(poll, 2000);
     return () => clearInterval(interval);
   }, [isRunning]);
@@ -180,6 +195,7 @@ export function AppShell() {
   }, [activeRunId]);
 
   const handleRefreshAnalysis = async () => {
+    triggerConfirmedRef.current = false; // reset guard — trigger in flight
     setIsRunning(true);
     setSource('analyzing');
     setCurrentStep(null);
@@ -189,8 +205,10 @@ export function AppShell() {
       setIsRunning(false);
       setSource('seed');
       setActiveRunId(null);
+      triggerConfirmedRef.current = false;
     } else if (res.data) {
       setActiveRunId(res.data.runId);
+      triggerConfirmedRef.current = true; // DB row confirmed — poll can now trust status
     }
   };
 
