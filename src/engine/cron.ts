@@ -24,6 +24,12 @@ import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 import { runFullPipeline } from './pipeline.js';
 import { persistPipelineResults } from './persist.js';
 import { checkAndSendBriefs } from './brief-scheduler.js';
+import {
+  alertPipelineFailure,
+  alertPipelineErrors,
+  alertBriefFailures,
+  alertStaleRun,
+} from './admin-alert.js';
 import type { FundRow, PipelineRunRow } from './types.js';
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -99,6 +105,7 @@ async function scheduledPipelineRun(): Promise<void> {
         error_message: 'No active funds found',
         completed_at: new Date().toISOString(),
       }, { id: `eq.${run.id}` });
+      alertPipelineFailure(run.id, 'No active funds found').catch(() => {});
       jobState.pipelineRunning = false;
       return;
     }
@@ -115,6 +122,11 @@ async function scheduledPipelineRun(): Promise<void> {
       `${persistResult.holdingsWritten} holding sectors, ` +
       `${persistResult.errors.length} errors`
     );
+
+    // Alert admins if pipeline completed with partial errors
+    if (result.stats.errors.length > 0) {
+      alertPipelineErrors(run.id, result.stats.errors).catch(() => {});
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[cron] Pipeline run ${run.id} failed: ${msg}`);
@@ -124,6 +136,9 @@ async function scheduledPipelineRun(): Promise<void> {
       error_message: msg,
       completed_at: new Date().toISOString(),
     }, { id: `eq.${run.id}` });
+
+    // Alert admins of total pipeline failure
+    alertPipelineFailure(run.id, msg).catch(() => {});
   } finally {
     jobState.pipelineRunning = false;
   }
@@ -159,9 +174,15 @@ async function scheduledBriefDelivery(): Promise<void> {
       `${result.errors.length} errors, ` +
       `${(result.durationMs / 1000 / 60).toFixed(1)} min`
     );
+
+    // Alert admins if any brief deliveries failed
+    if (result.errors.length > 0) {
+      alertBriefFailures(result.usersEligible, result.briefsSent, result.errors).catch(() => {});
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[cron] Brief delivery failed: ${msg}`);
+    alertBriefFailures(0, 0, [{ userId: 'N/A', step: 'scheduler', error: msg }]).catch(() => {});
   } finally {
     jobState.briefsRunning = false;
   }
@@ -194,6 +215,8 @@ async function cleanupStaleRuns(): Promise<void> {
         error_message: 'Marked as failed by stale run cleanup — exceeded 15-minute timeout',
         completed_at: new Date().toISOString(),
       }, { id: `eq.${stale.id}` });
+
+      alertStaleRun(stale.id, stale.started_at).catch(() => {});
     }
   }
 }
