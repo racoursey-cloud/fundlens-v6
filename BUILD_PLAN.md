@@ -69,27 +69,22 @@ FundLens v6 is ~85% complete. The scoring engine math is correct. Three critical
 
 ---
 
-## Session 15: HHI + Documentation + Polish
+## Session 15: HHI + Bugfixes + Documentation — ✅ COMPLETE
 
-**Goal:** Implement HHI concentration display, fix HIGH-priority bugs from Session 14, clean up documentation.
+**Goal:** Implement HHI concentration display, fix priority bugs from Session 14, clean up documentation.
 
-| Task | File | Description | Estimate |
-|------|------|-------------|----------|
-| 15.1 | `assignments/15_1_HHI_COMPUTATION.md` | Create HHI utility function | 20 min |
-| 15.2 | `assignments/15_2_HHI_DISPLAY.md` | Add HHI to FundDetail sidebar | 30 min |
-| 15.3 | `assignments/15_3_SESSION_14_BUGFIXES.md` | Fix bugs from BUGS.md (priority: BUG-4, BUG-5, BUG-6, BUG-7) | 60 min |
-| 15.4 | `assignments/15_4_DOCUMENTATION_CLEANUP.md` | Update spec §5.5, §9, §10 with final status | 20 min |
+| Task | File | Status |
+|------|------|--------|
+| 15.1 | `assignments/15_1_HHI_COMPUTATION.md` | ✅ DONE |
+| 15.2 | `assignments/15_2_HHI_DISPLAY.md` | ✅ DONE |
+| 15.3 | `assignments/15_3_SESSION_14_BUGFIXES.md` | ✅ DONE — 7 bugs resolved (BUG-2/4/5/6/7/10/12) |
+| 15.4 | `assignments/15_4_DOCUMENTATION_CLEANUP.md` | ✅ DONE |
 
-**Dependencies:** 15.1 → 15.2. 15.3 depends on Session 14's `BUGS.md` (12 bugs: 9 open, 3 resolved). 15.4 is last.
+**Results:** HHI display added to FundDetail Sectors tab. 7 bugs resolved (including 3 beyond original scope: BUG-2, BUG-10, BUG-12). 2 bugs deferred with rationale (BUG-3: intl CUSIP resolution, BUG-11: voice tuning). Bug tracker: 10 of 12 resolved. See `SESSION_15_NOTES.md` and `BUGS.md` for full details.
 
-**Session 14 bug priority for 15.3:** BUG-4 (7 missing fund scores), BUG-5 (Brief content not rendering), BUG-6 (tab labels swapped), BUG-7 (model name in UI).
-
-**Session 15 Definition of Done:**
-- HHI displayed per fund in FundDetail sidebar
-- All Session 14 bugs with severity "high" or "critical" are fixed
-- Spec §5.5 lists fund-summaries.ts
-- Spec §9 reflects final state of all features
-- `tsc --noEmit` passes
+**Deferred reminders:**
+- Re-enable `pipelineRateLimit` in routes.ts when all testing is done
+- Re-run pipeline to verify BUG-4 fix (22 funds should score) and BUG-2 fix (MM composite = 50)
 
 ---
 

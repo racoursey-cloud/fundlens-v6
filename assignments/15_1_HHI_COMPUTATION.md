@@ -1,8 +1,9 @@
-# Assignment 15.1: HHI Concentration Utility Function
+# Assignment 15.1: HHI Concentration Utility Function — COMPLETED
 
 **Session:** 15
 **Estimate:** 20 minutes
 **Depends on:** None (independent of Session 14 bugfixes)
+**Status:** ✅ COMPLETED (Session 15, commit 2c1e4d0)
 
 ---
 

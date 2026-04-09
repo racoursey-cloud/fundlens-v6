@@ -1,8 +1,9 @@
-# Assignment 15.3: Fix Session 14 Bugs
+# Assignment 15.3: Fix Session 14 Bugs — COMPLETED (7 of 12 resolved, 2 deferred, 3 resolved in Session 14)
 
 **Session:** 15
 **Estimate:** 60 minutes (varies based on bug count and severity)
 **Depends on:** Session 14 complete (BUGS.md exists)
+**Status:** ✅ COMPLETED (Session 15, commits 2c1e4d0 + 644e9ef). Resolved: BUG-2, BUG-4, BUG-5, BUG-6, BUG-7, BUG-10, BUG-12. Deferred: BUG-3 (intl CUSIP resolution), BUG-11 (voice tuning).
 
 ---
 

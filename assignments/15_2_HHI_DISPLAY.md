@@ -1,8 +1,9 @@
-# Assignment 15.2: Add HHI Display to FundDetail Sidebar
+# Assignment 15.2: Add HHI Display to FundDetail Sidebar — COMPLETED
 
 **Session:** 15
 **Estimate:** 30 minutes
 **Depends on:** 15.1 (HHI utility exists)
+**Status:** ✅ COMPLETED (Session 15, commit 2c1e4d0)
 
 ---
 

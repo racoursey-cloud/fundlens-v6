@@ -523,3 +523,23 @@ If `editorial-policy.md` cannot be found on the filesystem, the fallback prompt 
 
 ### Session 15 Assignment Files
 Already exist in `assignments/`: 15_1 (HHI computation), 15_2 (HHI display), 15_3 (Session 14 bugfixes), 15_4 (documentation cleanup). See BUILD_PLAN.md for details.
+
+---
+
+## Session 15 Resolution (April 9, 2026)
+
+All Session 14 priority bugs resolved in Session 15. See `SESSION_15_NOTES.md` for full details.
+
+| Bug | Severity | Status | Fix Summary |
+|-----|----------|--------|-------------|
+| BUG-4 | HIGH | ✅ RESOLVED | Neutral fallback scores for EDGAR-failed funds |
+| BUG-5 | HIGH | ✅ RESOLVED | Fetch full brief content on auto-select |
+| BUG-6 | MEDIUM | ✅ RESOLVED | Tab labels corrected (Thesis, Briefs) |
+| BUG-7 | LOW | ✅ RESOLVED | Model name removed from UI |
+| BUG-2 | MEDIUM | ✅ RESOLVED | MM composite forced to 50, bypass z-standardization |
+| BUG-10 | MEDIUM | ✅ RESOLVED | Editorial fallback rewritten to spec §7.3 voice |
+| BUG-12 | LOW | ✅ RESOLVED | Stale run threshold reduced to 15 minutes |
+
+Deferred cleanup items from Session 14 still open:
+- [ ] Re-enable `pipelineRateLimit` (commit `f2b451f`)
+- [ ] Verify pipeline scores all 22 funds after BUG-4 fix deploys
