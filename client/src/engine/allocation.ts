@@ -29,8 +29,6 @@ const RISK_MIN = 1;
 const RISK_MAX = 7;
 const DEFAULT_RISK = 4;
 
-const MM_TICKERS = new Set(['FDRXX', 'ADAXX']);
-
 const TIER_BADGES = [
   { zMin: 2.0,       label: 'Breakaway', color: '#F59E0B' },
   { zMin: 1.2,       label: 'Strong',    color: '#10B981' },
@@ -80,8 +78,8 @@ function median(arr: number[]): number {
   const sorted = [...arr].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 !== 0
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
+    ? sorted[mid]!
+    : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
 }
 
 /** Clamp risk tolerance to valid 1.0–7.0 range (continuous, §3.4) */
