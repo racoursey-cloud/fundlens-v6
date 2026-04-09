@@ -32,7 +32,7 @@ import { delay } from './types.js';
 import { supaFetch, supaSelect } from './supabase.js';
 import { generateBrief } from './brief-engine.js';
 import { sendBriefEmail } from './brief-email.js';
-import type { UserProfileRow, PipelineRunRow } from './types.js';
+import type { UserProfileRow, PipelineRunRow, AllocationHistoryRow } from './types.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -213,6 +213,107 @@ export async function generateBriefForUser(
   }
 
   return { briefId: result.briefId, sent: false, error: null };
+}
+
+/**
+ * After a pipeline run completes, check each user's current risk_tolerance
+ * against the risk_tolerance stored in their most recent allocation_history
+ * row (§7.7). If they differ — or if no prior allocation exists — generate
+ * a fresh Brief so the allocation reflects the user's current risk setting.
+ *
+ * This resolves WATCH-1: risk tolerance changes now automatically trigger
+ * Brief regeneration instead of requiring a manual "Generate Brief" click.
+ *
+ * Called from:
+ *   - routes.ts after manual pipeline completion (POST /api/pipeline/run)
+ *   - cron.ts after scheduled pipeline completion
+ *
+ * References: §3.4 (risk drives k parameter), §7.7 (allocation_history
+ * stores risk_tolerance per Brief), §7.8 (automatic delivery).
+ */
+export async function regenerateBriefsIfRiskChanged(
+  pipelineRunId: string
+): Promise<{ regenerated: number; skipped: number; errors: number }> {
+  console.log(`[brief-scheduler] Checking for risk tolerance changes after pipeline ${pipelineRunId}`);
+
+  // Fetch all users who have completed setup and have briefs enabled
+  const { data: users } = await supaSelect<UserProfileRow[]>(
+    'user_profiles',
+    {
+      setup_completed: 'eq.true',
+      briefs_enabled: 'eq.true',
+    }
+  );
+
+  if (!users || users.length === 0) {
+    console.log('[brief-scheduler] No eligible users for risk-change check');
+    return { regenerated: 0, skipped: 0, errors: 0 };
+  }
+
+  const editorialPolicy = loadEditorialPolicy();
+  let regenerated = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const user of users) {
+    try {
+      // Fetch user's most recent allocation_history entry
+      const { data: lastAlloc } = await supaFetch<AllocationHistoryRow>(
+        'allocation_history',
+        {
+          params: {
+            user_id: `eq.${user.id}`,
+            order: 'created_at.desc',
+            limit: '1',
+          },
+          single: true,
+        }
+      );
+
+      const currentRisk = Math.round(user.risk_tolerance * 10) / 10;
+      const previousRisk = lastAlloc
+        ? Math.round(lastAlloc.risk_tolerance * 10) / 10
+        : null;
+
+      if (previousRisk !== null && currentRisk === previousRisk) {
+        // Risk hasn't changed — skip
+        skipped++;
+        continue;
+      }
+
+      const reason = previousRisk === null
+        ? 'no prior allocation'
+        : `risk changed from ${previousRisk} to ${currentRisk}`;
+
+      console.log(
+        `[brief-scheduler] Regenerating Brief for user ${user.id} (${user.email}): ${reason}`
+      );
+
+      const result = await generateBrief(user.id, pipelineRunId, editorialPolicy);
+
+      if (result) {
+        regenerated++;
+        console.log(`[brief-scheduler] Brief ${result.briefId} regenerated for user ${user.id}`);
+      } else {
+        errors++;
+        console.error(`[brief-scheduler] Brief generation failed for user ${user.id}`);
+      }
+
+      // Delay between users — sequential Claude calls (§5.3)
+      await delay(CLAUDE.CALL_DELAY_MS * 2);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[brief-scheduler] Error checking user ${user.id}: ${msg}`);
+      errors++;
+    }
+  }
+
+  console.log(
+    `[brief-scheduler] Risk-change check complete: ` +
+    `${regenerated} regenerated, ${skipped} skipped, ${errors} errors`
+  );
+
+  return { regenerated, skipped, errors };
 }
 
 /**

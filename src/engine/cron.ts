@@ -23,7 +23,7 @@ import cron from 'node-cron';
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 import { runFullPipeline } from './pipeline.js';
 import { persistPipelineResults } from './persist.js';
-import { checkAndSendBriefs } from './brief-scheduler.js';
+import { checkAndSendBriefs, regenerateBriefsIfRiskChanged } from './brief-scheduler.js';
 import {
   alertPipelineFailure,
   alertPipelineErrors,
@@ -127,6 +127,12 @@ async function scheduledPipelineRun(): Promise<void> {
     if (result.stats.errors.length > 0) {
       alertPipelineErrors(run.id, result.stats.errors).catch(() => {});
     }
+
+    // Auto-regenerate Briefs for users whose risk tolerance changed (WATCH-1 fix)
+    regenerateBriefsIfRiskChanged(run.id).catch(err => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[cron] Auto-Brief regeneration failed: ${msg}`);
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[cron] Pipeline run ${run.id} failed: ${msg}`);

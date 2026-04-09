@@ -54,9 +54,9 @@ export const router = Router();
 // ─── SESSION 0 SECURITY: Rate limiters for expensive endpoints ────────────
 
 const pipelineRateLimit = rateLimit({
-  windowMs: 60 * 1000,       // 60-second cooldown window
-  max: 1,                     // 1 run per 60 seconds (no burst, but no hard cap)
-  message: { error: 'Pipeline cooldown — wait 60 seconds between runs.' },
+  windowMs: 5 * 60 * 1000,    // 5-minute cooldown window
+  max: 1,                     // 1 run per 5 minutes (testing cadence)
+  message: { error: 'Pipeline cooldown — wait 5 minutes between runs.' },
   keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
@@ -646,6 +646,13 @@ async function runPipelineAsync(runId: string): Promise<void> {
     }, { id: `eq.${runId}` }).catch(() => {});
 
     console.log(`[routes] Pipeline run ${runId} completed successfully`);
+
+    // Auto-regenerate Briefs for users whose risk tolerance changed (WATCH-1 fix)
+    import('../engine/brief-scheduler.js').then(({ regenerateBriefsIfRiskChanged }) => {
+      regenerateBriefsIfRiskChanged(runId).catch(err => {
+        console.error(`[routes] Auto-Brief regeneration failed: ${err}`);
+      });
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[routes] Pipeline run ${runId} failed: ${msg}`);
