@@ -1,12 +1,16 @@
 /**
  * FundLens v6 — Research Page
  *
- * Deep-dive analysis tab. Combines:
- *   1. Market Environment — macro stance, narrative, key themes
- *   2. Sector Outlook — SectorScorecard grid (1–10 per GICS sector)
- *   3. Fund Analysis — sector exposure donut (interactive), full fund scores table
+ * Deep-dive analysis tab. Layout (top to bottom):
+ *   1. Dual donuts row: Fund Allocation (click fund → see its sectors)
+ *      + Sector Exposure (click sector → see contributing funds)
+ *   2. Market Environment — macro stance, narrative (industry-standard framing:
+ *      Macro Environment → Thematic Drivers → Asset Class Outlook → Positioning)
+ *   3. Sector Outlook — SectorScorecard grid (1–10 per GICS sector)
+ *   4. Fund Analysis — full fund scores table with expandable FundDetail
  *
- * Session 18 deliverable — UI restructure.
+ * Session 19 redesign — dual donuts restored, W-structure removed from narrative,
+ * industry-standard framing adopted (BlackRock/PIMCO/T. Rowe Price model).
  * References: Spec §2.6, §6.1–§6.7
  */
 
@@ -25,7 +29,7 @@ import { DonutChart, DonutLegend, type DonutSlice, type DonutDrillItem } from '.
 import { FundDetail } from '../components/FundDetail';
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
-// ─── Shared Utilities (from Portfolio.tsx) ──────────────────────────────────
+// ─── Shared Utilities ─────────────────────────────────────────────────────
 
 function normalCDF(z: number): number {
   const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
@@ -92,6 +96,12 @@ const SECTOR_COLORS: Record<string, string> = {
   'Cash & Equivalents':     '#94a3b8',
   Other:                    '#71717a',
 };
+
+const FUND_PALETTE = [
+  '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#a78bfa',
+  '#fb923c', '#84cc16',
+];
 
 function scoreBg(score: number): string {
   if (score >= 75) return '#22c55e22';
@@ -221,38 +231,41 @@ export function Research() {
     return map;
   }, [allocations]);
 
-  // ── Sector Exposure donut ─────────────────────────────────────────────
+  // ── Sector Exposure donut — click sector → see contributing funds ────
 
   const { sectorSlices, sectorDrillData } = useMemo(() => {
     const sectorAgg = new Map<string, number>();
-    const sectorHoldings = new Map<string, DonutDrillItem[]>();
+    const sectorFunds = new Map<string, DonutDrillItem[]>();
 
     for (const s of scores) {
+      const ticker = s.funds?.ticker || s.fund_id;
+      const fundAlloc = allocMap.get(ticker) ?? 0;
       const details = s.factor_details as Record<string, unknown> | undefined;
       const sectors = (details?.sectorExposure || details?.sectors) as Record<string, number> | undefined;
-      const holdings = (details?.holdings || details?.topHoldings) as Array<{
-        name?: string; ticker?: string; sector?: string; weight?: number; pct_of_nav?: number;
-      }> | undefined;
 
       if (sectors) {
         for (const [sector, weight] of Object.entries(sectors)) {
           sectorAgg.set(sector, (sectorAgg.get(sector) || 0) + weight);
-        }
-      }
-      if (holdings) {
-        for (const h of holdings) {
-          const sector = h.sector || 'Other';
-          const weight = h.weight ?? h.pct_of_nav ?? 0;
-          if (weight <= 0) continue;
-          const existing = sectorHoldings.get(sector) || [];
-          existing.push({ name: h.name || 'Unknown', ticker: h.ticker, weight: weight * 100 });
-          sectorHoldings.set(sector, existing);
+
+          // Drill: sector → funds contributing to this sector
+          if (fundAlloc > 0) {
+            const existing = sectorFunds.get(sector) || [];
+            const contribution = Math.round(weight * fundAlloc * 10) / 10;
+            if (contribution > 0) {
+              existing.push({
+                name: s.funds?.name || ticker,
+                ticker,
+                weight: contribution,
+              });
+              sectorFunds.set(sector, existing);
+            }
+          }
         }
       }
     }
 
-    for (const [sector, items] of sectorHoldings.entries()) {
-      sectorHoldings.set(sector, items.sort((a, b) => b.weight - a.weight).slice(0, 20));
+    for (const [sector, items] of sectorFunds.entries()) {
+      sectorFunds.set(sector, items.sort((a, b) => b.weight - a.weight).slice(0, 20));
     }
 
     const total = [...sectorAgg.values()].reduce((s, v) => s + v, 0);
@@ -264,8 +277,39 @@ export function Research() {
         color: SECTOR_COLORS[label] ?? '#71717a',
       }));
 
-    return { sectorSlices: slices, sectorDrillData: sectorHoldings };
-  }, [scores]);
+    return { sectorSlices: slices, sectorDrillData: sectorFunds };
+  }, [scores, allocMap]);
+
+  // ── Fund Allocation donut — click fund → see its sector breakdown ────
+
+  const { fundSlices, fundDrillData } = useMemo(() => {
+    const slices: DonutSlice[] = allocations
+      .filter(a => a.allocationPct > 0)
+      .map((a, i) => ({
+        id: a.ticker, label: a.ticker, pct: a.allocationPct,
+        color: FUND_PALETTE[i % FUND_PALETTE.length]!,
+      }));
+
+    const fundSectors = new Map<string, DonutDrillItem[]>();
+    for (const s of scores) {
+      const ticker = s.funds?.ticker || s.fund_id;
+      if (!allocMap.has(ticker)) continue;
+      const details = s.factor_details as Record<string, unknown> | undefined;
+      const sectors = (details?.sectorExposure || details?.sectors) as Record<string, number> | undefined;
+      if (sectors) {
+        const items: DonutDrillItem[] = Object.entries(sectors)
+          .filter(([, w]) => w > 0.001)
+          .sort((a, b) => b[1] - a[1])
+          .map(([sector, w]) => ({
+            name: sector,
+            weight: Math.round(w * 1000) / 10,
+          }));
+        fundSectors.set(ticker, items);
+      }
+    }
+
+    return { fundSlices: slices, fundDrillData: fundSectors };
+  }, [allocations, scores, allocMap]);
 
   // ── Loading state ─────────────────────────────────────────────────────
 
@@ -292,7 +336,62 @@ export function Research() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 1100 }}>
 
-      {/* ═══ SECTION 1: Market Environment ═══════════════════════════════ */}
+      {/* ═══ SECTION 1: Dual Donuts ═════════════════════════════════════════ */}
+      {!loadingScores && scores.length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gap: 24,
+        }}>
+          {/* Fund Allocation donut — click fund → see its sector breakdown */}
+          <div style={{
+            background: theme.colors.surface, borderRadius: theme.radii.lg,
+            border: `1px solid ${theme.colors.border}`,
+            padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+          }}>
+            {fundSlices.length > 0 ? (
+              <>
+                <DonutChart
+                  slices={fundSlices}
+                  size={220}
+                  title="Recommended Allocation"
+                  drillData={fundDrillData}
+                />
+                <DonutLegend items={fundSlices} />
+              </>
+            ) : (
+              <div style={{ color: theme.colors.textDim, fontSize: 13, padding: 40, textAlign: 'center' }}>
+                No allocation data available.
+              </div>
+            )}
+          </div>
+
+          {/* Sector Exposure donut — click sector → see contributing funds */}
+          <div style={{
+            background: theme.colors.surface, borderRadius: theme.radii.lg,
+            border: `1px solid ${theme.colors.border}`,
+            padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+          }}>
+            {sectorSlices.length > 0 ? (
+              <>
+                <DonutChart
+                  slices={sectorSlices}
+                  size={220}
+                  title="Aggregate Sector Exposure"
+                  drillData={sectorDrillData}
+                />
+                <DonutLegend items={sectorSlices} />
+              </>
+            ) : (
+              <div style={{ color: theme.colors.textDim, fontSize: 13, padding: 40, textAlign: 'center' }}>
+                No holdings data available for sector breakdown.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ SECTION 2: Market Environment ═══════════════════════════════ */}
       {thesis && stance && (
         <div style={{
           background: theme.colors.surface,
@@ -315,7 +414,7 @@ export function Research() {
           </div>
 
           <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Badges */}
+            {/* Badges row */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -337,7 +436,7 @@ export function Research() {
               )}
             </div>
 
-            {/* Narrative — rendered as continuous prose, subheadings as context labels */}
+            {/* Narrative — continuous prose with topic-based subheadings */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 720 }}>
               {thesis.narrative.split(/\n\s*\n/).map((para, i) => {
                 const trimmed = para.trim();
@@ -384,7 +483,7 @@ export function Research() {
         </div>
       )}
 
-      {/* ═══ SECTION 2: Sector Outlook ═══════════════════════════════════ */}
+      {/* ═══ SECTION 3: Sector Outlook ═══════════════════════════════════ */}
       {thesis && Object.keys(sectorScores).length > 0 && (
         <div style={{
           background: theme.colors.surface,
@@ -409,33 +508,9 @@ export function Research() {
         </div>
       )}
 
-      {/* ═══ SECTION 3: Fund Analysis ════════════════════════════════════ */}
+      {/* ═══ SECTION 4: Fund Analysis ════════════════════════════════════ */}
       {!loadingScores && scores.length > 0 && (
         <>
-          {/* Sector Exposure Donut */}
-          <div style={{
-            background: theme.colors.surface, borderRadius: theme.radii.lg,
-            border: `1px solid ${theme.colors.border}`,
-            padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
-          }}>
-            {sectorSlices.length > 0 ? (
-              <>
-                <DonutChart
-                  slices={sectorSlices}
-                  size={220}
-                  title="Aggregate Sector Exposure"
-                  drillData={sectorDrillData}
-                />
-                <DonutLegend items={sectorSlices} />
-              </>
-            ) : (
-              <div style={{ color: theme.colors.textDim, fontSize: 13, padding: 40, textAlign: 'center' }}>
-                No holdings data available for sector breakdown.
-              </div>
-            )}
-          </div>
-
-          {/* Fund Scores Table */}
           <div style={{
             background: theme.colors.surface, borderRadius: theme.radii.lg,
             border: `1px solid ${theme.colors.border}`, overflow: 'hidden',
@@ -550,7 +625,7 @@ export function Research() {
         </>
       )}
 
-      {/* Empty state if no scores */}
+      {/* Empty state */}
       {!loadingScores && scores.length === 0 && !thesis && (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',

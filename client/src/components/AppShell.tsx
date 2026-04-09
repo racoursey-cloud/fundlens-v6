@@ -19,7 +19,7 @@ import { useAuth } from '../context/AuthContext';
 import { fetchPipelineStatus, triggerPipeline, abortPipeline } from '../api';
 import { theme } from '../theme';
 import { PipelineOverlay } from './PipelineOverlay';
-import { HelpChat } from './HelpChat';
+// HelpChat floating button removed — Help tab in menu bar is sufficient
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
@@ -396,7 +396,7 @@ export function AppShell() {
       <PipelineOverlay isRunning={isRunning} currentStep={currentStep} stepMessage={stepMessage} />
 
       {/* ═══ HELP CHAT (floating widget) ═════════════════════════════ */}
-      <HelpChat />
+      {/* HelpChat floating button removed — Help tab covers it */}
     </div>
   );
 }

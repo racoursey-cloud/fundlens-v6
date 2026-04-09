@@ -1,14 +1,13 @@
 /**
  * FundLens v6 — Your Brief Page
  *
- * Primary landing page — the product. Combines:
- *   - Investment Brief narrative (4 W-structure sections)
- *   - Brief history sidebar
- *   - Allocation donut (non-interactive, updates with risk slider)
- *   - Streamlined fund highlights table
- *   - Compact risk slider (Option B: stale indicator + refresh)
+ * Primary landing page — the product. Layout (top to bottom):
+ *   1. Header row with title + Generate / Generate & Email buttons
+ *   2. Allocation donut card (full-width, with fund highlights table + risk slider)
+ *   3. Brief narrative (full-width, 4 W-structure sections)
+ *   4. Brief history rows (natural table at bottom)
  *
- * Session 18 deliverable — UI restructure.
+ * Session 19 redesign — donut on top, history at bottom as rows, full-width.
  * References: Spec §6.1, §7.1–§7.9, editorial-policy.md
  */
 
@@ -29,7 +28,7 @@ import { theme } from '../theme';
 import { DonutChart, DonutLegend, type DonutSlice } from '../components/DonutChart';
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
-// ─── Shared Utilities (from Portfolio.tsx / Briefs.tsx) ─────────────────────
+// ─── Shared Utilities ─────────────────────────────────────────────────────
 
 function normalCDF(z: number): number {
   const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
@@ -102,7 +101,6 @@ function nearestRiskLabel(value: number): string {
 
 // ─── Stale Brief Detection (Option B) ──────────────────────────────────────
 
-/** Extract the numeric risk tolerance from a brief's data_packet */
 function extractBriefRisk(brief: Brief | null): number | null {
   if (!brief?.data_packet) return null;
   const dp = brief.data_packet as { user?: { riskTolerance?: string } };
@@ -491,9 +489,10 @@ export function YourBrief() {
   // ── Main view ─────────────────────────────────────────────────────────
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: 600, margin: '0 0 8px', color: theme.colors.text }}>
             Your Brief
@@ -516,14 +515,14 @@ export function YourBrief() {
       {genError && (
         <div style={{
           background: `${theme.colors.error}15`, border: `1px solid ${theme.colors.error}40`,
-          borderRadius: theme.radii.md, padding: '10px 16px', marginBottom: '16px',
+          borderRadius: theme.radii.md, padding: '10px 16px',
           fontSize: '13px', color: theme.colors.error,
         }}>{genError}</div>
       )}
       {genMessage && (
         <div style={{
           background: `${theme.colors.success}15`, border: `1px solid ${theme.colors.success}40`,
-          borderRadius: theme.radii.md, padding: '10px 16px', marginBottom: '16px',
+          borderRadius: theme.radii.md, padding: '10px 16px',
           fontSize: '13px', color: theme.colors.success,
         }}>{genMessage}</div>
       )}
@@ -532,7 +531,7 @@ export function YourBrief() {
       {isStale && selectedBrief && (
         <div style={{
           background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
-          borderRadius: theme.radii.md, padding: '10px 16px', marginBottom: '16px',
+          borderRadius: theme.radii.md, padding: '10px 16px',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <span style={{ fontSize: '13px', color: '#fbbf24' }}>
@@ -557,7 +556,7 @@ export function YourBrief() {
       {generating && (
         <div style={{
           background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-          borderRadius: theme.radii.lg, padding: '48px 32px', textAlign: 'center', marginBottom: '16px',
+          borderRadius: theme.radii.lg, padding: '48px 32px', textAlign: 'center',
         }}>
           <div style={spinnerStyle} />
           <p style={{ color: theme.colors.text, margin: '16px 0 4px', fontWeight: 500, fontSize: '15px' }}>
@@ -569,223 +568,243 @@ export function YourBrief() {
         </div>
       )}
 
-      {/* Two-column layout: history + content */}
-      <div style={{ display: 'flex', gap: '16px' }}>
-
-        {/* History sidebar */}
-        <div style={{ width: '240px', flexShrink: 0 }}>
+      {/* ═══ ALLOCATION CARD (donut + table + risk slider) — TOP ═══════════ */}
+      {!loadingScores && scores.length > 0 && (
+        <div style={{
+          background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
+          borderRadius: theme.radii.lg, overflow: 'hidden',
+        }}>
           <div style={{
-            background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-            borderRadius: theme.radii.lg, overflow: 'hidden',
+            padding: '16px 24px', borderBottom: `1px solid ${theme.colors.border}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
-            <div style={{
-              padding: '12px 16px', borderBottom: `1px solid ${theme.colors.border}`,
-              fontSize: '12px', fontWeight: 600, color: theme.colors.textDim,
-              textTransform: 'uppercase', letterSpacing: '0.05em',
-            }}>
-              History ({briefs.length})
+            <span style={{
+              fontSize: 13, fontWeight: 600, color: theme.colors.textMuted,
+              letterSpacing: '0.04em', textTransform: 'uppercase',
+            }}>Your Allocation</span>
+            <span style={{ fontSize: 12, color: theme.colors.textDim }}>
+              Risk: {nearestRiskLabel(risk)} ({risk.toFixed(1)})
+            </span>
+          </div>
+
+          <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+            {/* Donut + Fund highlights — side by side */}
+            <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              {/* Donut + legend */}
+              {fundSlices.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                  <DonutChart slices={fundSlices} size={200} title="Recommended Allocation" />
+                  <DonutLegend items={fundSlices} />
+                </div>
+              )}
+
+              {/* Fund highlights table */}
+              <div style={{ flex: 1, minWidth: 300, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
+                      {['Fund', 'Name', 'Allocation', 'Score', 'Tier'].map((h, idx) => (
+                        <th key={h} style={{
+                          padding: '8px 12px', textAlign: idx < 2 ? 'left' : 'center',
+                          fontWeight: 600, color: theme.colors.textDim, fontSize: 11,
+                          letterSpacing: '0.05em', textTransform: 'uppercase',
+                        }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rankedScores
+                      .filter(s => allocMap.has(s.funds?.ticker || s.fund_id))
+                      .map((s, i) => {
+                        const ticker = s.funds?.ticker || s.fund_id.slice(0, 8);
+                        const name = s.funds?.name || '';
+                        const alloc = allocMap.get(ticker);
+                        return (
+                          <tr key={s.id} style={{
+                            borderBottom: i < allocMap.size - 1 ? `1px solid ${theme.colors.border}` : 'none',
+                          }}>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{
+                                fontWeight: 700, color: theme.colors.accentBlue,
+                                fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
+                              }}>{ticker}</span>
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{
+                                fontSize: 12, color: theme.colors.textMuted,
+                                maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap', display: 'inline-block',
+                              }}>{name}</span>
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              <span style={{
+                                fontWeight: 700, fontFamily: theme.fonts.mono,
+                                color: theme.colors.text, fontSize: 14,
+                              }}>{alloc}%</span>
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              <span style={{
+                                fontWeight: 600, fontFamily: theme.fonts.mono, fontSize: 13,
+                                color: theme.colors.text,
+                              }}>{s.userComposite}</span>
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              <span style={{
+                                padding: '3px 8px', borderRadius: 4, fontSize: 11,
+                                fontWeight: 600, letterSpacing: '0.03em',
+                                color: s.userTierColor,
+                                background: `${s.userTierColor}18`,
+                                border: `1px solid ${s.userTierColor}40`,
+                              }}>{s.userTier}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
-              {briefs.map((b) => {
-                const isActive = selectedBrief?.id === b.id;
-                return (
-                  <button
-                    key={b.id}
-                    onClick={() => handleSelectBrief(b.id)}
-                    style={{
-                      display: 'block', width: '100%', padding: '12px 16px',
-                      background: isActive ? theme.colors.surfaceHover : 'transparent',
-                      border: 'none', borderBottom: `1px solid ${theme.colors.border}`,
-                      cursor: 'pointer', textAlign: 'left', fontFamily: theme.fonts.body,
-                      transition: 'background 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = theme.colors.surfaceHover; }}
-                    onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                  >
-                    <div style={{
-                      fontSize: '13px', fontWeight: isActive ? 600 : 400,
-                      color: isActive ? theme.colors.text : theme.colors.textMuted,
-                      marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>{b.title}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '11px', color: theme.colors.textDim, fontFamily: theme.fonts.mono }}>
-                        {fmtDate(b.generated_at)}
-                      </span>
-                      <StatusBadge status={b.status} />
-                    </div>
-                  </button>
-                );
-              })}
+
+            {/* Compact risk slider */}
+            <div style={{
+              borderTop: `1px solid ${theme.colors.border}`,
+              paddingTop: 20, display: 'flex', flexDirection: 'column', gap: 10,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: theme.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Risk Setting
+                </span>
+                <span style={{
+                  fontSize: 18, fontWeight: 700, color: theme.colors.accentBlue,
+                  fontFamily: theme.fonts.mono, fontVariantNumeric: 'tabular-nums',
+                }}>{risk.toFixed(1)}</span>
+              </div>
+              <input
+                type="range"
+                min={1} max={7} step={0.1}
+                value={risk}
+                onChange={(e) => handleRiskChange(Math.round(Number(e.target.value) * 10) / 10)}
+                style={{
+                  width: '100%', height: 4,
+                  appearance: 'none', WebkitAppearance: 'none',
+                  background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${((risk - 1) / 6) * 100}%, ${theme.colors.border} ${((risk - 1) / 6) * 100}%, ${theme.colors.border} 100%)`,
+                  borderRadius: 2, outline: 'none', cursor: 'pointer',
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: theme.colors.textDim }}>
+                <span>Very Conservative</span>
+                <span>{nearestRiskLabel(risk)}</span>
+                <span>Very Aggressive</span>
+              </div>
             </div>
           </div>
         </div>
+      )}
 
-        {/* Main content column */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
-          {/* Brief content card */}
-          {selectedBrief ? (
-            <div style={{
-              background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-              borderRadius: theme.radii.lg, overflow: 'hidden',
-            }}>
-              <div style={{ padding: '20px 24px', borderBottom: `1px solid ${theme.colors.border}` }}>
-                <h2 style={{ fontSize: '18px', fontWeight: 600, color: theme.colors.text, margin: '0 0 8px' }}>
-                  {selectedBrief.title}
-                </h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '12px', color: theme.colors.textDim }}>
-                  <span>{fmtDateTime(selectedBrief.generated_at)}</span>
-                  <StatusBadge status={selectedBrief.status} />
-                </div>
-              </div>
-              <div style={{ padding: '24px', fontFamily: theme.fonts.body }}>
-                {selectedBrief.content_md ? (
-                  <BriefBody contentMd={selectedBrief.content_md} />
-                ) : (
-                  <p style={{ color: theme.colors.textDim, fontStyle: 'italic', margin: 0 }}>
-                    Brief content not available.
-                  </p>
-                )}
-              </div>
+      {/* ═══ BRIEF NARRATIVE (full-width) ═══════════════════════════════════ */}
+      {selectedBrief ? (
+        <div style={{
+          background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
+          borderRadius: theme.radii.lg, overflow: 'hidden',
+        }}>
+          <div style={{ padding: '20px 24px', borderBottom: `1px solid ${theme.colors.border}` }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 600, color: theme.colors.text, margin: '0 0 8px' }}>
+              {selectedBrief.title}
+            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '12px', color: theme.colors.textDim }}>
+              <span>{fmtDateTime(selectedBrief.generated_at)}</span>
+              <StatusBadge status={selectedBrief.status} />
             </div>
-          ) : (
-            <div style={{
-              background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-              borderRadius: theme.radii.lg, padding: '48px 32px', textAlign: 'center',
-            }}>
-              <p style={{ color: theme.colors.textDim, margin: 0 }}>
-                Select a Brief from the history to view it.
+          </div>
+          <div style={{ padding: '24px', fontFamily: theme.fonts.body }}>
+            {selectedBrief.content_md ? (
+              <BriefBody contentMd={selectedBrief.content_md} />
+            ) : (
+              <p style={{ color: theme.colors.textDim, fontStyle: 'italic', margin: 0 }}>
+                Brief content not available.
               </p>
-            </div>
-          )}
-
-          {/* Allocation card (donut + fund highlights + risk slider) */}
-          {!loadingScores && scores.length > 0 && (
-            <div style={{
-              background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
-              borderRadius: theme.radii.lg, overflow: 'hidden',
-            }}>
-              <div style={{
-                padding: '16px 24px', borderBottom: `1px solid ${theme.colors.border}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              }}>
-                <span style={{
-                  fontSize: 13, fontWeight: 600, color: theme.colors.textMuted,
-                  letterSpacing: '0.04em', textTransform: 'uppercase',
-                }}>Your Allocation</span>
-                <span style={{ fontSize: 12, color: theme.colors.textDim }}>
-                  Based on current risk setting: {nearestRiskLabel(risk)} ({risk.toFixed(1)})
-                </span>
-              </div>
-
-              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 24 }}>
-
-                {/* Donut + Legend */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 32, flexWrap: 'wrap', justifyContent: 'center' }}>
-                  {fundSlices.length > 0 && (
-                    <>
-                      <DonutChart slices={fundSlices} size={200} title="Recommended Allocation" />
-                      <DonutLegend items={fundSlices} />
-                    </>
-                  )}
-                </div>
-
-                {/* Fund highlights table */}
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
-                        {['Fund', 'Allocation', 'Tier'].map((h, idx) => (
-                          <th key={h} style={{
-                            padding: '8px 16px', textAlign: idx === 0 ? 'left' : 'center',
-                            fontWeight: 600, color: theme.colors.textDim, fontSize: 11,
-                            letterSpacing: '0.05em', textTransform: 'uppercase',
-                          }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rankedScores
-                        .filter(s => allocMap.has(s.funds?.ticker || s.fund_id))
-                        .map((s, i) => {
-                          const ticker = s.funds?.ticker || s.fund_id.slice(0, 8);
-                          const name = s.funds?.name || '';
-                          const alloc = allocMap.get(ticker);
-                          return (
-                            <tr key={s.id} style={{
-                              borderBottom: i < allocMap.size - 1 ? `1px solid ${theme.colors.border}` : 'none',
-                            }}>
-                              <td style={{ padding: '10px 16px', textAlign: 'left' }}>
-                                <span style={{
-                                  fontWeight: 700, color: theme.colors.accentBlue,
-                                  fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
-                                }}>{ticker}</span>
-                                {name && (
-                                  <span style={{
-                                    marginLeft: 8, fontSize: 12, color: theme.colors.textDim,
-                                    maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                  }}>{name}</span>
-                                )}
-                              </td>
-                              <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-                                <span style={{
-                                  fontWeight: 700, fontFamily: theme.fonts.mono,
-                                  color: theme.colors.text, fontSize: 14,
-                                }}>{alloc}%</span>
-                              </td>
-                              <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-                                <span style={{
-                                  padding: '3px 8px', borderRadius: 4, fontSize: 11,
-                                  fontWeight: 600, letterSpacing: '0.03em',
-                                  color: s.userTierColor,
-                                  background: `${s.userTierColor}18`,
-                                  border: `1px solid ${s.userTierColor}40`,
-                                }}>{s.userTier}</span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Compact risk slider */}
-                <div style={{
-                  borderTop: `1px solid ${theme.colors.border}`,
-                  paddingTop: 20, display: 'flex', flexDirection: 'column', gap: 10,
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: theme.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                      Risk Setting
-                    </span>
-                    <span style={{
-                      fontSize: 18, fontWeight: 700, color: theme.colors.accentBlue,
-                      fontFamily: theme.fonts.mono, fontVariantNumeric: 'tabular-nums',
-                    }}>{risk.toFixed(1)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={1} max={7} step={0.1}
-                    value={risk}
-                    onChange={(e) => handleRiskChange(Math.round(Number(e.target.value) * 10) / 10)}
-                    style={{
-                      width: '100%', height: 4,
-                      appearance: 'none', WebkitAppearance: 'none',
-                      background: `linear-gradient(to right, ${theme.colors.accentBlue} 0%, ${theme.colors.accentBlue} ${((risk - 1) / 6) * 100}%, ${theme.colors.border} ${((risk - 1) / 6) * 100}%, ${theme.colors.border} 100%)`,
-                      borderRadius: 2, outline: 'none', cursor: 'pointer',
-                    }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: theme.colors.textDim }}>
-                    <span>Very Conservative</span>
-                    <span>{nearestRiskLabel(risk)}</span>
-                    <span>Very Aggressive</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div style={{
+          background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
+          borderRadius: theme.radii.lg, padding: '48px 32px', textAlign: 'center',
+        }}>
+          <p style={{ color: theme.colors.textDim, margin: 0 }}>
+            Select a Brief from history to view it.
+          </p>
+        </div>
+      )}
+
+      {/* ═══ BRIEF HISTORY (rows at bottom) ═════════════════════════════════ */}
+      {briefs.length > 0 && (
+        <div style={{
+          background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
+          borderRadius: theme.radii.lg, overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '12px 24px', borderBottom: `1px solid ${theme.colors.border}`,
+            fontSize: '12px', fontWeight: 600, color: theme.colors.textDim,
+            textTransform: 'uppercase', letterSpacing: '0.05em',
+          }}>
+            Brief History ({briefs.length})
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
+                {['Title', 'Generated', 'Status', ''].map((h, idx) => (
+                  <th key={idx} style={{
+                    padding: '8px 24px', textAlign: 'left',
+                    fontWeight: 600, color: theme.colors.textDim, fontSize: 11,
+                    letterSpacing: '0.05em', textTransform: 'uppercase',
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {briefs.map((b, i) => {
+                const isActive = selectedBrief?.id === b.id;
+                return (
+                  <tr
+                    key={b.id}
+                    onClick={() => handleSelectBrief(b.id)}
+                    style={{
+                      cursor: 'pointer',
+                      background: isActive ? theme.colors.surfaceHover : 'transparent',
+                      borderBottom: i < briefs.length - 1 ? `1px solid ${theme.colors.border}` : 'none',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = theme.colors.surfaceHover; }}
+                    onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <td style={{
+                      padding: '12px 24px',
+                      fontWeight: isActive ? 600 : 400,
+                      color: isActive ? theme.colors.text : theme.colors.textMuted,
+                    }}>{b.title}</td>
+                    <td style={{
+                      padding: '12px 24px',
+                      fontSize: '12px', color: theme.colors.textDim, fontFamily: theme.fonts.mono,
+                    }}>{fmtDate(b.generated_at)}</td>
+                    <td style={{ padding: '12px 24px' }}>
+                      <StatusBadge status={b.status} />
+                    </td>
+                    <td style={{ padding: '12px 24px', textAlign: 'right' }}>
+                      {isActive && (
+                        <span style={{ fontSize: 11, color: theme.colors.accentBlue, fontWeight: 600 }}>
+                          VIEWING
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
