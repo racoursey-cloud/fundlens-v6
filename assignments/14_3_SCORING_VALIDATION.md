@@ -1,3 +1,5 @@
+**STATUS: COMPLETED** — April 8, 2026 (Session 14)
+
 # Assignment 14.3: Scoring Output Validation
 
 **Session:** 14
