@@ -364,7 +364,16 @@ Sectors present in fund holdings but absent from thesis default to score 5.0 (ne
 
 ### 2.7 Special Cases
 
-- **Money market funds** (FDRXX, ADAXX, and any fund classified as money market): Fixed composite score of 50. Skip all factor scoring. Display as "MM" tier in UI. Include in allocation engine at weight 0 (never recommended, but shown in fund list).
+- **Money market funds** (FDRXX, ADAXX, and any fund classified as money market): Scored on real factors adapted to MM characteristics. **Approved by Robert, April 9, 2026 14:43 EDT.** Replaces previous rule (fixed composite 50, skip all scoring).
+
+  **MM Factor Scoring:**
+  - **Cost Efficiency (25%):** Score normally using existing money market category benchmarks (§2.3). FDRXX at 0.015% vs ADAXX at 0.52% is a meaningful difference.
+  - **Holdings Quality → Credit Quality (30%):** Repurposed as credit quality/safety proxy. Government-only MM funds (hold only UST/USG paper) score higher than prime MM funds (hold commercial paper). Prefer API data from Finnhub/FMP fund profiles; fall back to static classification with 90-day refresh cadence if API unavailable.
+  - **Momentum → 7-Day SEC Yield (25%):** Repurposed as yield comparison. The 7-day SEC yield is the MM equivalent of returns — the standardized measure of what the fund is currently earning. Prefer API data; fall back to static with 90-day refresh cadence.
+  - **Positioning (20%):** Neutralized at 50. Macro sector positioning does not apply to cash instruments.
+
+  **MM funds in the allocation engine:** MM funds are excluded from the Kelly exponential curve (they do not compete with equity/bond funds for position sizing). Instead, they receive allocation via the de minimis cash sweep (§3.5). Display as "MM" tier in UI.
+
 - **Null raw scores:** If any factor cannot be computed for a fund, that factor defaults to 50 (neutral) and a dataQuality flag is set. The goal is to eliminate all 50-defaults through complete data coverage of the TerrAscend fund universe.
 
 ### 2.8 Worked Example
@@ -482,15 +491,31 @@ The 7 named anchor points provide orientation ("I'm somewhere between Moderate a
 
 **Are three non-linear transforms too many? (Session 9 discussion with Robert):** Robert asked whether stacking z-standardization → CDF → MAD z-scoring → exponential corrupts the signal. Answer: no, because each layer answers a different question and none are redundant. Layer 1 (z-standardization + CDF, §2.1) makes factors *comparable* — removes scale differences so a cost score clustering 60–90 doesn't dominate a momentum score spreading 20–80. Standard portfolio analytics (Grinold & Kahn). Layer 2 (MAD z-scoring, §3.2) measures fund *separation* — how far each fund stands from the pack. Uses MAD instead of stdev so a single outlier fund (e.g. FXAIX at 92 when everything else is 40–65) doesn't distort the spread measurement for all other funds. Layer 3 (exponential, §3.4) converts separation into *position sizing* — the Kelly criterion application where risk appetite (k) scales how aggressively the portfolio concentrates on high-conviction picks. Each layer preserves fund ordering and relative distances while progressively removing sensitivity to distributional quirks (outliers, skewed factors, fat tails). Corruption would manifest as: meaningfully different funds getting near-identical allocations, or tiny score differences producing wildly different allocations. The §3.7 worked example shows neither pathology. The key insight: Layer 1 z-scores per-factor raw scores (for comparability), Layer 2 z-scores the final composites (for robust separation) — same technique applied to different inputs for different purposes, with MAD in Layer 2 specifically chosen for its outlier robustness, which would be wrong in Layer 1 where you need Gaussian properties for CDF mapping.
 
-### 3.5 Step 4: De Minimis Floor (5%)
+### 3.5 Step 4: De Minimis Floor (5%) + Cash Sweep
 
 ```
 After normalization:
   Drop any fund with allocation < 5%
-  Renormalize survivors to sum to 100%
+  swept_pct = sum of removed fund allocations
+  cash_pct = min(swept_pct, 15%)          // MM_CASH_CAP
+  If cash_pct > 0 and MM funds exist:
+    top_mm = highest-scoring money market fund
+    Renormalize survivors to sum to (100 - cash_pct)%
+    Assign cash_pct to top_mm
+  Else:
+    Renormalize survivors to sum to 100%   // fallback (no MM funds)
 ```
 
-**Research basis:** Industry-standard de minimis threshold. Positions below 5% contribute negligibly to portfolio outcomes (Journal of Financial Economics, 2025 — active fund managers cluster positions asymmetrically below 5%). A 401(k) participant would not realistically set a fund to 3% in their plan interface.
+**De minimis research basis:** Industry-standard de minimis threshold. Positions below 5% contribute negligibly to portfolio outcomes (Journal of Financial Economics, 2025 — active fund managers cluster positions asymmetrically below 5%). A 401(k) participant would not realistically set a fund to 3% in their plan interface.
+
+**Cash sweep research basis (Session 22, approved by Robert April 9, 2026 14:43 EDT):** Routing de minimis swept weight to the top-scoring money market fund is consistent with fractional Kelly theory (un-allocated capital is inherent to the framework), Modern Portfolio Theory (cash is the risk-free leg of the CML), and risk parity practice (~5-6% cash sleeve standard). The cash allocation is emergent — concentrated portfolios (aggressive risk) sweep less, dispersed portfolios (conservative risk) sweep more — naturally mirroring risk tolerance.
+
+**15% cap rationale:** At ~5.5% annual opportunity cost of cash (equity returns minus MM yield), 15% cash = ~0.83% annual drag — the upper bound of acceptable for a managed 401(k) portfolio. Beyond 15%, excess reverts to proportional redistribution among survivors. Research: Bogle cash drag estimates, CME Group cash equitization studies.
+
+**Monitoring thresholds:**
+- **Green (≤10%):** Normal operating range. Brief mentions cash position naturally.
+- **Yellow (10–15%):** Admin alert email. Investigate score compression or fund universe changes.
+- **Red (>15%):** Hard cap triggers. Excess redistributed to survivors. Admin alert explains why.
 
 ### 3.6 Step 5: Rounding and Error Absorption
 
@@ -1197,8 +1222,13 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 15 | HHI + Bugfixes + Documentation | **DONE** — HHI display added, 7 bugs resolved (BUG-2/4/5/6/7/10/12), 2 deferred. |
 | 16 | BUG-3 + BUG-11 Fixes + Help Section | **DONE** — ISIN fallback for international CUSIPs (BUG-3), editorial voice overhaul (BUG-11). All 12 bugs resolved. Zero open. Help page with FAQs + Claude Haiku chat (MISSING-9). |
 | 17 | Final Feature Completion | **DONE** — Brief 4-section W layout (MISSING-10), fund-of-funds look-through (MISSING-15), MISSING-16 resolved. pipelineRateLimit re-enabled then relaxed to 60s for testing. All 16 MISSING items resolved. All 12 bugs resolved. |
+| 18 | UI Restructure — 2-Tab Layout | **DONE** — Replaced 5-tab nav with 2-tab layout (Your Brief + Research). |
+| 19 | UI Polish — Full-Width Brief, Dual Donuts | **DONE** — Full-width Brief layout, dual cross-linked donuts, removed floating help widget. |
+| 20 | Pipeline Stop Button, Narrative Overhaul | **DONE** — Pipeline stop button, narrative framing overhaul, Don Draper voice, markdown table rendering in briefs. |
+| 21 | EDGAR Series Fix, Fund Explorer, Admin Alerts, Tier Rename | **DONE** — Fixed EDGAR series mismatch (6 funds at risk of wrong holdings), ticker overrides for BPLBX/OIBIX, three-panel fund explorer, bar chart legends, "Breakaway" → "Top Pick" tier rename across 8 files, admin alert emails for pipeline/brief failures. |
+| 22 | MM Fund Scoring + Cash Allocation | **IN PROGRESS** — Score MM funds on real factors, route de minimis swept weight to top MM fund, data pipeline redundancy review. |
 
-**All planned sessions complete.** 16 MISSING items resolved, 12 bugs resolved, zero open issues. See SESSION_17_NOTES.md for watch list items and next-session reminders.
+**Sessions 0–21 complete.** 16 MISSING items resolved, 12 bugs resolved, zero open issues.
 
 **Watch list:**
 
@@ -1909,6 +1939,42 @@ v6 previously classified per-fund (same AAPL classified 5 times if it appeared i
 **Resolved:** MISSING-13 (pipeline performance)
 **Database migration required:** Run `migrations/session10_cache_tables.sql` in Supabase SQL Editor before deploying. Creates 4 new tables: `fmp_cache`, `tiingo_price_cache`, `finnhub_fee_cache`, `sector_classifications`.
 **Verification:** `tsc --noEmit` passes clean on both server and client.
+
+## April 9, 2026 — Session 21: EDGAR Series Fix, Fund Explorer, Admin Alerts, Tier Rename
+
+**Goal:** Fix critical EDGAR data corruption, UI polish, operational alerting.
+
+**Changes:**
+
+1. **EDGAR series mismatch fix (CRITICAL).** `findLatestNportFiling()` was grabbing the first NPORT-P filing for a CIK without checking which fund series it belonged to. For multi-series registrants (TCW=11, Fidelity=19, Allspring=25 series), we were potentially scoring funds with the wrong holdings data. 6 funds affected: FXAIX, WFPRX, WEGRX, BGHIX, HRAUX, RTRIX, TGEPX. Fix: series-aware filing lookup checks each candidate's XML header (first 12KB via HTTP Range request) for the target series ID.
+
+2. **Ticker overrides for BPLBX and OIBIX.** Both tickers missing from SEC's `company_tickers_mf.json`. Added `TICKER_OVERRIDES` map in `edgar.ts` with CIK + series ID.
+
+3. **Admin alert emails.** New `src/engine/admin-alert.ts` sends Resend emails to rcoursey@gmail.com on pipeline failures, brief errors, and stale run cleanup. Fire-and-forget pattern.
+
+4. **Three-panel fund explorer (Brief tab).** Sector bars | donut chart | top holdings table. Click-to-select fund chips.
+
+5. **Tier rename: Breakaway → Top Pick.** Changed across 8 files (constants, allocation, pipeline, portfolio, research, editorial policy, help agent, brief scheduler).
+
+6. **Chart legend overhaul.** Horizontal `BarBreakdown` replacing busy donut legends on Research tab.
+
+7. **Narrative formatting.** Bold sector names on first mention, parenthetical jargon explainers.
+
+**Files changed:** `src/engine/edgar.ts`, `src/engine/admin-alert.ts` (new), `src/engine/cron.ts`, `src/engine/constants.ts`, `src/engine/allocation.ts`, `src/engine/pipeline.ts`, `src/engine/thesis.ts`, `src/engine/brief-engine.ts`, `src/engine/brief-scheduler.ts`, `src/engine/types.ts`, `src/prompts/editorial-policy.md`, `src/prompts/help-agent.md`, `client/src/components/DonutChart.tsx`, `client/src/pages/Research.tsx`, `client/src/pages/YourBrief.tsx`, `client/src/pages/Portfolio.tsx`
+
+## April 9, 2026 — Session 22: MM Fund Scoring + Cash Allocation (IN PROGRESS)
+
+**Goal:** Score money market funds on real factors, route de minimis swept weight to top MM fund.
+
+**Approved by Robert, April 9, 2026 14:43 EDT.** Replaces §2.7 (fixed composite 50 → real factor scoring) and extends §3.5 (de minimis floor → cash sweep with 15% cap).
+
+**Research findings (Part 0):**
+- Fractional Kelly theory endorses un-allocated capital as inherent safety buffer
+- MPT treats cash as the risk-free leg of the Capital Market Line
+- Risk parity practice includes ~5-6% cash sleeve
+- Cash allocation is emergent from the math: concentrated portfolios sweep less, dispersed portfolios sweep more
+- 15% cap limits annual drag to ~0.83% (Bogle estimates)
+- Monitoring: green ≤10%, yellow 10-15% (admin alert), red >15% (hard cap triggers)
 
 ---
 

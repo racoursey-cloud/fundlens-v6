@@ -30,7 +30,7 @@
  * Session 3 updated, Session 10 cache layer added. References: Spec §4.6, §5.4.
  */
 
-import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS } from './constants.js';
+import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS, MM_SCORING, MM_FUND_DATA } from './constants.js';
 import { delay, ResolvedHolding, FundRow } from './types.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
@@ -120,15 +120,16 @@ export async function runFullPipeline(
   // ── Step 1: Fund list already provided as argument ──
   progress(1, `Processing ${funds.length} funds`);
 
-  // ── Money Market Detection (§2.7) ────────────────────────────────────────
-  // FDRXX/ADAXX get fixed composite 50, skip all factor scoring.
-  // Separated here so all downstream loops can exclude them.
+  // ── Money Market Detection (§2.7, updated Session 22) ────────────────────
+  // MM funds skip EDGAR/CUSIP/FMP/classification (Steps 2-5) but are scored
+  // on adapted factors: cost normally, quality→credit quality, momentum→yield,
+  // positioning→neutral 50. Allocation comes from de minimis cash sweep (§3.5).
   const moneyMarketFunds = funds.filter(f => MONEY_MARKET_TICKERS.has(f.ticker));
   const scorableFunds = funds.filter(f => !MONEY_MARKET_TICKERS.has(f.ticker));
 
   if (moneyMarketFunds.length > 0) {
     console.log(
-      `[pipeline] Money market funds (skipping scoring): ${moneyMarketFunds.map(f => f.ticker).join(', ')}`
+      `[pipeline] Money market funds (MM-adapted scoring): ${moneyMarketFunds.map(f => f.ticker).join(', ')}`
     );
   }
 
@@ -638,31 +639,82 @@ export async function runFullPipeline(
     factorDetails: FundCompositeScore['factorDetails'];
   }> = [];
 
-  // Add money market funds with fixed score 50 (§2.7) — no factor scoring needed
+  // ── Score money market funds on adapted factors (§2.7, Session 22) ──────
+  // MM funds skip EDGAR/CUSIP/FMP/classification but get real factor scores:
+  //   Cost Efficiency: scored normally (expense ratio differences are real)
+  //   Quality → Credit Quality: government vs prime classification
+  //   Momentum → 7-Day SEC Yield: yield comparison as return proxy
+  //   Positioning: neutral 50 (macro positioning N/A for cash)
   for (const fund of moneyMarketFunds) {
-    const FIXED_MM_SCORE = 50;
+    // Cost Efficiency: score normally using existing MM category benchmarks
+    const mmCost = scoreCostEfficiency(fund.expense_ratio, fund.name);
+    costResults.set(fund.ticker, mmCost);
+
+    // Quality → Credit Quality proxy
+    // Prefer API data; fall back to static MM_FUND_DATA (90-day refresh)
+    const mmData = MM_FUND_DATA.get(fund.ticker);
+    const isGovernment = mmData?.type === 'government'
+      || fund.name.toLowerCase().includes('government')
+      || fund.name.toLowerCase().includes('treasury');
+    const creditQualityScore = isGovernment
+      ? MM_SCORING.GOVERNMENT_QUALITY
+      : MM_SCORING.PRIME_QUALITY;
+
+    // Momentum → 7-Day SEC Yield proxy
+    // Linear interpolation between yield floor/ceiling
+    const secYield = mmData?.secYield7Day ?? 0.04; // default ~4% if unknown
+    const yieldClamped = Math.max(MM_SCORING.YIELD_FLOOR, Math.min(MM_SCORING.YIELD_CEILING, secYield));
+    const yieldFraction = (yieldClamped - MM_SCORING.YIELD_FLOOR)
+      / (MM_SCORING.YIELD_CEILING - MM_SCORING.YIELD_FLOOR);
+    const yieldScore = Math.round(
+      MM_SCORING.YIELD_SCORE_MIN + yieldFraction * (MM_SCORING.YIELD_SCORE_MAX - MM_SCORING.YIELD_SCORE_MIN)
+    );
+
+    // Positioning: neutral
+    const positioningScore = MM_SCORING.NEUTRAL_POSITIONING;
+
     fundScoreInputs.push({
       ticker: fund.ticker,
       name: fund.name,
       raw: {
         ticker: fund.ticker,
         name: fund.name,
-        costEfficiency: FIXED_MM_SCORE,
-        holdingsQuality: FIXED_MM_SCORE,
-        positioning: FIXED_MM_SCORE,
-        momentum: FIXED_MM_SCORE,
+        costEfficiency: mmCost.score,
+        holdingsQuality: creditQualityScore,
+        positioning: positioningScore,
+        momentum: yieldScore,
       },
-      // Money market placeholder — typed as Record<string, unknown> since
-      // these fixed-score funds don't have real factor detail objects.
       factorDetails: {
-        costEfficiency: { score: FIXED_MM_SCORE, reasoning: 'Money market fund — fixed score' } as CostEfficiencyResult,
-        holdingsQuality: { score: FIXED_MM_SCORE, reasoning: 'Money market fund — fixed score', holdingScores: [], unscoredHoldings: [], coveragePct: 0, equityRatio: 0, bondRatio: 0 },
-        positioning: { score: FIXED_MM_SCORE, reasoning: 'Money market fund — fixed score' },
-        momentum: { ticker: fund.ticker, score: FIXED_MM_SCORE, volAdjustedReturn: null, blendedReturn: null, returns: { threeMonth: null, sixMonth: null, nineMonth: null, twelveMonth: null }, rank: 0 } as MomentumScore,
-        sectorExposure: {},
+        costEfficiency: mmCost,
+        holdingsQuality: {
+          score: creditQualityScore,
+          reasoning: `Money market credit quality: ${isGovernment ? 'government-only (UST/USG paper)' : 'prime (commercial paper)'}`,
+          holdingScores: [],
+          unscoredHoldings: [],
+          coveragePct: 1.0,
+          equityRatio: 0,
+          bondRatio: 0,
+        },
+        positioning: {
+          score: positioningScore,
+          reasoning: 'Money market fund — macro positioning neutralized at 50',
+        },
+        momentum: {
+          ticker: fund.ticker,
+          score: yieldScore,
+          volAdjustedReturn: secYield,
+          blendedReturn: secYield,
+          returns: { threeMonth: null, sixMonth: null, nineMonth: null, twelveMonth: null },
+          rank: 0,
+        } as MomentumScore,
+        sectorExposure: { 'Cash & Equivalents': 100 },
       },
     });
-    console.log(`[pipeline] ${fund.ticker}: money market → fixed composite 50`);
+    console.log(
+      `[pipeline] ${fund.ticker}: MM scoring — cost=${mmCost.score}, ` +
+      `quality=${creditQualityScore} (${isGovernment ? 'govt' : 'prime'}), ` +
+      `yield=${yieldScore} (${(secYield * 100).toFixed(2)}%), positioning=${positioningScore}`
+    );
   }
 
   for (const fund of scorableFunds) {

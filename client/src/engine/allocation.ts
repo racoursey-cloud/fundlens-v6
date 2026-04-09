@@ -12,6 +12,7 @@
  *   5. Round to whole %, absorb error into largest (§3.6)
  *
  * Session 13: Created as client-side port of server allocation engine.
+ * Session 22: De minimis swept weight routes to top-scoring MM fund (§3.5 cash sweep).
  */
 
 // ─── Constants (inlined from server constants.ts) ───────────────────────
@@ -23,6 +24,7 @@ const KELLY_K_TABLE: Record<number, number> = {
 };
 
 const DE_MINIMIS_PCT = 0.05;   // 5% minimum allocation (§3.5)
+const MM_CASH_CAP = 0.15;     // 15% max cash allocation from sweep (§3.5, Session 22)
 const MAD_CONSISTENCY = 0.6745; // 1/Φ⁻¹(0.75)
 const QUALITY_GATE_MAX_FALLBACKS = 4;
 const RISK_MIN = 1;
@@ -224,25 +226,54 @@ export function computeClientAllocations(
     allocMap.set(ticker, (rawWeight / totalRaw) * 100);
   }
 
-  // ── STEP 4 — De Minimis Floor (§3.5) ─────────────────────────────────
+  // ── STEP 4 — De Minimis Floor + Cash Sweep (§3.5, Session 22) ────────
   // Drop any fund with allocation below 5% (DE_MINIMIS_PCT).
-  // Renormalize survivors to sum to 100%.
-  //
-  // This is a single-pass operation: removing sub-threshold funds only
-  // increases survivor allocations (denominator shrinks), so no fund
-  // that was above 5% can drop below 5% after removal.
+  // Route swept weight to top-scoring MM fund (capped at MM_CASH_CAP).
+  // Excess above cap reverts to proportional redistribution among survivors.
   const deMinimisThreshold = DE_MINIMIS_PCT * 100; // 5 (percentage points)
+  const mmCashCap = MM_CASH_CAP * 100;             // 15 (percentage points)
 
+  // Calculate total swept weight before removing
+  let sweptPct = 0;
+  for (const [, pct] of allocMap) {
+    if (pct < deMinimisThreshold) {
+      sweptPct += pct;
+    }
+  }
+
+  // Remove sub-threshold funds
   for (const [ticker, pct] of allocMap) {
     if (pct < deMinimisThreshold) {
       allocMap.delete(ticker);
     }
   }
 
-  // Renormalize survivors to 100%
-  const survivorSum = Array.from(allocMap.values()).reduce((a, b) => a + b, 0) || 1;
-  for (const [ticker, pct] of allocMap) {
-    allocMap.set(ticker, (pct / survivorSum) * 100);
+  // Find top-scoring MM fund for cash sweep
+  const mmFunds = funds
+    .filter(f => f.isMoneyMarket)
+    .sort((a, b) => b.compositeScore - a.compositeScore);
+  const topMM = mmFunds.length > 0 ? mmFunds[0] : null;
+
+  // Route swept weight to MM fund, capped at MM_CASH_CAP
+  let cashPct = 0;
+  if (sweptPct > 0 && topMM) {
+    cashPct = Math.min(sweptPct, mmCashCap);
+    const survivorTarget = 100 - cashPct;
+
+    // Renormalize survivors to (100 - cashPct)%
+    const survivorSum = Array.from(allocMap.values()).reduce((a, b) => a + b, 0) || 1;
+    for (const [ticker, pct] of allocMap) {
+      allocMap.set(ticker, (pct / survivorSum) * survivorTarget);
+    }
+
+    // Assign cash allocation to top MM fund
+    allocMap.set(topMM.ticker, cashPct);
+  } else {
+    // No MM funds available or nothing swept — renormalize to 100%
+    const survivorSum = Array.from(allocMap.values()).reduce((a, b) => a + b, 0) || 1;
+    for (const [ticker, pct] of allocMap) {
+      allocMap.set(ticker, (pct / survivorSum) * 100);
+    }
   }
 
   // ── STEP 5 — Rounding and Error Absorption (§3.6) ─────────────────────
@@ -271,9 +302,11 @@ export function computeClientAllocations(
   }
 
   // ── Assemble Results ──────────────────────────────────────────────────
+  // MM funds may have received allocation via cash sweep even though they
+  // are excluded from the Kelly curve. Check allocMap for all funds.
   const results: ClientAllocationResult[] = withZ.map(fund => ({
     ticker: fund.ticker,
-    allocationPct: fund.excluded ? 0 : (allocMap.get(fund.ticker) ?? 0),
+    allocationPct: allocMap.get(fund.ticker) ?? 0,
     tier: fund.tier,
     tierColor: fund.tierColor,
     modZ: fund.modZ,

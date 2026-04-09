@@ -7,10 +7,54 @@
  * References: Master Reference Document, Sections 4-6, 8, 10
  */
 
-// ─── Money Market Funds (§2.7) ──────────────────────────────────────────────
-// Fixed composite score of 50, skip all factor scoring, display as "MM" tier,
-// weight 0 in allocation engine (never recommended, but shown in fund list).
+// ─── Money Market Funds (§2.7, updated Session 22) ─────────────────────────
+// Scored on real factors adapted to MM characteristics.
+// Cost Efficiency: scored normally. Quality: credit quality proxy.
+// Momentum: 7-day SEC yield proxy. Positioning: neutral 50.
+// Allocation comes from de minimis cash sweep (§3.5), not Kelly curve.
 export const MONEY_MARKET_TICKERS = new Set(['FDRXX', 'ADAXX']);
+
+/**
+ * Money market fund scoring configuration (§2.7, Session 22).
+ *
+ * Quality → credit quality proxy:
+ *   Government-only MM funds (UST/agency paper only) score higher than
+ *   prime MM funds (commercial paper, CDs, repos).
+ *
+ * Momentum → 7-day SEC yield proxy:
+ *   Scored by linear interpolation between yield floor/ceiling.
+ *   SEC yield is the standardized measure of what an MM fund earns.
+ *
+ * Data: prefer Finnhub/FMP API. Fall back to static map (90-day refresh).
+ */
+export const MM_SCORING = {
+  /** Credit quality scores by fund type */
+  GOVERNMENT_QUALITY: 85,  // Government-only funds: highest safety (UST + USG paper)
+  PRIME_QUALITY: 65,       // Prime funds: commercial paper, lower safety
+
+  /** 7-day SEC yield scoring benchmarks (linear interpolation) */
+  YIELD_FLOOR: 0.02,      // 2.0% → score 20 (very low yield environment)
+  YIELD_CEILING: 0.06,    // 6.0% → score 80 (high yield environment)
+  YIELD_SCORE_MIN: 20,
+  YIELD_SCORE_MAX: 80,
+
+  /** Positioning: neutral for all MM funds */
+  NEUTRAL_POSITIONING: 50,
+} as const;
+
+/**
+ * Known MM fund metadata — fallback when APIs don't provide MM-specific data.
+ * Refresh on 90-day cadence (aligned with Finnhub cache TTL).
+ * Source: fund prospectuses, SEC N-MFP filings (public data).
+ */
+export const MM_FUND_DATA: ReadonlyMap<string, {
+  type: 'government' | 'prime';
+  secYield7Day: number;     // 7-day SEC yield as decimal (e.g., 0.0425 = 4.25%)
+  lastUpdated: string;      // ISO date of last manual refresh
+}> = new Map([
+  ['FDRXX', { type: 'government', secYield7Day: 0.0406, lastUpdated: '2026-04-09' }],
+  ['ADAXX', { type: 'government', secYield7Day: 0.0387, lastUpdated: '2026-04-09' }],
+]);
 
 // ─── Factor Weights (defaults — users can customize in profile) ──────────────
 // SESSION 1: Corrected per spec §2.2 — Momentum 25%, Positioning 20%
@@ -95,6 +139,10 @@ export const ALLOCATION = {
    *  dropped and survivors renormalized. Industry-standard minimum position size.
    *  Single-pass: removing sub-threshold funds only increases survivor allocations. */
   DE_MINIMIS_PCT: 0.05,
+  /** Maximum cash allocation from de minimis sweep (§3.5, Session 22).
+   *  Swept weight above this cap reverts to proportional redistribution.
+   *  15% ≈ 0.83% annual drag at ~5.5% equity-MM spread. */
+  MM_CASH_CAP: 0.15,
 } as const;
 
 // ─── FRED Commodity Series (Spec §4.4) ──────────────────────────────────────
