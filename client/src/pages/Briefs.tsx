@@ -24,12 +24,86 @@ import {
 } from '../api';
 import { theme } from '../theme';
 
-// ─── Markdown → HTML Renderer ──────────────────────────────────────────────
+// ─── Section Parsing + Markdown Rendering ─────────────────────────────────
+
+/** A parsed brief section: header title + markdown body */
+interface BriefSection {
+  title: string;
+  body: string;
+  /** 1-based section number within the W structure */
+  index: number;
+}
 
 /**
- * Converts simple markdown to styled HTML. Handles: headings (h1-h3),
- * bold, italic, unordered/ordered lists, paragraphs, horizontal rules.
- * No external library needed — Brief markdown is straightforward.
+ * The 4 canonical section headers from the editorial policy (§7.2).
+ * Used for matching — case-insensitive, ignores leading "## ".
+ */
+const W_SECTION_TITLES = [
+  'Where the Numbers Point',
+  'What Happened',
+  "What We're Watching",
+  'Where We Stand',
+];
+
+/**
+ * Accent colors for each section of the W structure.
+ * Provides subtle visual differentiation without overwhelming the dark theme.
+ */
+const SECTION_ACCENTS = [
+  theme.colors.accentBlue,  // Section 1: recommendation — blue
+  theme.colors.success,     // Section 2: narrative — green
+  theme.colors.warning,     // Section 3: risks — amber
+  theme.colors.accentBlue,  // Section 4: fund detail — blue
+];
+
+/**
+ * Parse brief markdown into W-structure sections.
+ * Splits on `## ` headers. Any content before the first section header
+ * becomes a preamble (rendered without section styling).
+ * Falls back to a single "full brief" section if no headers are found.
+ */
+function parseBriefSections(md: string): { preamble: string; sections: BriefSection[] } {
+  const lines = md.split('\n');
+  let preamble = '';
+  const sections: BriefSection[] = [];
+  let currentTitle = '';
+  let currentLines: string[] = [];
+
+  const flushSection = () => {
+    if (currentTitle) {
+      // Match against canonical W titles for index assignment
+      const canonicalIndex = W_SECTION_TITLES.findIndex(
+        (t) => currentTitle.toLowerCase().includes(t.toLowerCase())
+      );
+      sections.push({
+        title: currentTitle,
+        body: currentLines.join('\n').trim(),
+        index: canonicalIndex >= 0 ? canonicalIndex + 1 : sections.length + 1,
+      });
+    } else if (currentLines.length > 0) {
+      preamble = currentLines.join('\n').trim();
+    }
+  };
+
+  for (const line of lines) {
+    const h2Match = line.match(/^## (.+)/);
+    if (h2Match) {
+      flushSection();
+      currentTitle = h2Match[1]?.trim() ?? '';
+      currentLines = [];
+    } else {
+      currentLines.push(line);
+    }
+  }
+  flushSection();
+
+  return { preamble, sections };
+}
+
+/**
+ * Converts simple markdown to styled HTML. Handles: headings (h3 only —
+ * h2 headers are consumed by section parsing), bold, italic,
+ * unordered/ordered lists, paragraphs, horizontal rules.
  */
 function renderMarkdown(md: string): string {
   const lines = md.split('\n');
@@ -42,7 +116,6 @@ function renderMarkdown(md: string): string {
     if (inOl) { htmlParts.push('</ol>'); inOl = false; }
   };
 
-  /** Escape HTML entities BEFORE any markdown-to-HTML conversion */
   const escapeHtml = (text: string): string => {
     return text
       .replace(/&/g, '&amp;')
@@ -53,7 +126,6 @@ function renderMarkdown(md: string): string {
   };
 
   const inlineFormat = (text: string): string => {
-    // Escape HTML first, then apply markdown formatting
     const escaped = escapeHtml(text);
     return escaped
       .replace(/\*\*(.+?)\*\*/g, `<strong style="color:${theme.colors.text};font-weight:600">$1</strong>`)
@@ -64,20 +136,19 @@ function renderMarkdown(md: string): string {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
 
-    // Horizontal rule
     if (/^---+$/.test(line.trim())) {
       closeList();
       htmlParts.push(`<hr style="border:none;border-top:1px solid ${theme.colors.border};margin:24px 0" />`);
       continue;
     }
 
-    // Headings
     const h3 = line.match(/^### (.+)/);
     if (h3) {
       closeList();
       htmlParts.push(`<h3 style="font-family:${theme.fonts.serif};font-size:16px;font-weight:600;color:${theme.colors.text};margin:28px 0 12px;line-height:1.4">${inlineFormat(h3[1] ?? '')}</h3>`);
       continue;
     }
+    // h2 headers rendered inline when section parsing isn't used (fallback)
     const h2 = line.match(/^## (.+)/);
     if (h2) {
       closeList();
@@ -91,7 +162,6 @@ function renderMarkdown(md: string): string {
       continue;
     }
 
-    // Unordered list
     const ul = line.match(/^[-*] (.+)/);
     if (ul) {
       if (inOl) { htmlParts.push('</ol>'); inOl = false; }
@@ -100,7 +170,6 @@ function renderMarkdown(md: string): string {
       continue;
     }
 
-    // Ordered list
     const ol = line.match(/^\d+\. (.+)/);
     if (ol) {
       if (inUl) { htmlParts.push('</ul>'); inUl = false; }
@@ -109,23 +178,120 @@ function renderMarkdown(md: string): string {
       continue;
     }
 
-    // Blank line
     if (line.trim() === '') {
       closeList();
       continue;
     }
 
-    // Paragraph
     closeList();
     htmlParts.push(`<p style="margin:0 0 16px;color:${theme.colors.textMuted};line-height:1.7;font-size:14px">${inlineFormat(line)}</p>`);
   }
 
   closeList();
-  // Sanitize final HTML output to prevent XSS from any source
   return DOMPurify.sanitize(htmlParts.join('\n'), {
     ALLOWED_TAGS: ['h1', 'h2', 'h3', 'p', 'strong', 'em', 'code', 'ul', 'ol', 'li', 'hr'],
     ALLOWED_ATTR: ['style'],
   });
+}
+
+// ─── Section Card Component ───────────────────────────────────────────────
+
+function BriefSectionCard({ section }: { section: BriefSection }) {
+  const accent = SECTION_ACCENTS[section.index - 1] ?? theme.colors.accentBlue;
+
+  return (
+    <div style={{
+      background: theme.colors.surfaceAlt,
+      border: `1px solid ${theme.colors.border}`,
+      borderLeft: `3px solid ${accent}`,
+      borderRadius: theme.radii.md,
+      padding: '20px 24px',
+      marginBottom: '16px',
+    }}>
+      {/* Section header */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        marginBottom: '16px',
+      }}>
+        <span style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '24px',
+          height: '24px',
+          borderRadius: '50%',
+          background: `${accent}20`,
+          color: accent,
+          fontSize: '12px',
+          fontWeight: 700,
+          fontFamily: theme.fonts.mono,
+          flexShrink: 0,
+        }}>
+          {section.index}
+        </span>
+        <h2 style={{
+          fontFamily: theme.fonts.serif,
+          fontSize: '18px',
+          fontWeight: 700,
+          color: theme.colors.text,
+          margin: 0,
+          lineHeight: 1.4,
+        }}>
+          {section.title}
+        </h2>
+      </div>
+
+      {/* Section body */}
+      <div
+        dangerouslySetInnerHTML={{
+          __html: renderMarkdown(section.body),
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Renders brief content with section-aware layout.
+ * If the brief has recognizable W-structure sections, renders each as a
+ * styled card with accent border and section number. Falls back to flat
+ * markdown rendering for older briefs without the 4-section structure.
+ */
+function BriefBody({ contentMd }: { contentMd: string }) {
+  const { preamble, sections } = parseBriefSections(contentMd);
+
+  // Fallback: if no sections found, render as flat markdown (legacy briefs)
+  if (sections.length === 0) {
+    return (
+      <div
+        dangerouslySetInnerHTML={{
+          __html: renderMarkdown(contentMd),
+        }}
+      />
+    );
+  }
+
+  return (
+    <div>
+      {/* Preamble (any content before the first ## header) */}
+      {preamble && (
+        <div style={{ marginBottom: '20px' }}>
+          <div
+            dangerouslySetInnerHTML={{
+              __html: renderMarkdown(preamble),
+            }}
+          />
+        </div>
+      )}
+
+      {/* W-structure sections */}
+      {sections.map((section, i) => (
+        <BriefSectionCard key={i} section={section} />
+      ))}
+    </div>
+  );
 }
 
 // ─── Status Badge ──────────────────────────────────────────────────────────
@@ -507,17 +673,13 @@ export function Briefs() {
                 </div>
               </div>
 
-              {/* Brief body */}
+              {/* Brief body — W-structure section layout */}
               <div style={{
                 padding: '24px',
                 fontFamily: theme.fonts.body,
               }}>
                 {selectedBrief.content_md ? (
-                  <div
-                    dangerouslySetInnerHTML={{
-                      __html: renderMarkdown(selectedBrief.content_md),
-                    }}
-                  />
+                  <BriefBody contentMd={selectedBrief.content_md} />
                 ) : (
                   <p style={{
                     color: theme.colors.textDim,

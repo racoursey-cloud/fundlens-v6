@@ -22,6 +22,7 @@
 import { HOLDINGS_COVERAGE, PIPELINE } from './constants.js';
 import { fetchEdgarHoldings } from './edgar.js';
 import { resolveCusips } from './cusip.js';
+import { searchByName } from './fmp.js';
 import {
   EdgarHolding,
   EdgarFilingResult,
@@ -396,31 +397,70 @@ async function expandFundOfFunds(
 }
 
 /**
- * Try to resolve a sub-fund holding to a ticker.
+ * Heuristic: does this holding name look like a fund?
+ * Matches common fund family patterns: "Fund", "Trust", "Portfolio", "ETF",
+ * institutional share classes ("Inst", "Inv", "Class A/I/R").
+ */
+const FUND_NAME_PATTERN =
+  /\b(fund|trust|portfolio|etf|index|inst|inv|class\s[a-z])\b/i;
+
+/** FMP exchange names that indicate mutual funds or ETFs */
+const FUND_EXCHANGES = new Set([
+  'MUTUAL_FUND', 'AMEX', 'NASDAQ', 'NYSE', 'BATS', 'Other OTC',
+]);
+
+/**
+ * Try to resolve a sub-fund holding to a ticker using FMP search-by-name.
  *
- * Approach: use the CUSIP to look up the sub-fund in the SEC's mutual
- * fund ticker file. If the CUSIP doesn't match (common for institutional
- * share classes), this returns null and we keep the wrapper holding.
+ * Strategy:
+ *   1. Skip if the holding name doesn't look fund-like (heuristic guard)
+ *   2. Search FMP by holding name
+ *   3. Filter results for fund-like securities (mutual fund exchanges)
+ *   4. Return the best match or null
+ *
+ * Returns null gracefully on any error — the pipeline keeps the wrapper holding.
  */
 async function resolveSubFundTicker(
   holding: EdgarHolding
 ): Promise<string | null> {
-  // Strategy 1: Try fetching the SEC mutual fund ticker file and matching CUSIP
-  // The company_tickers_mf.json doesn't index by CUSIP, but we can check if
-  // the holding name contains a recognizable fund family + fund name pattern
-  // For now, this is a placeholder — full implementation would use FMP's profile
-  // endpoint to search by CUSIP and find the associated ticker.
+  const name = holding.name?.trim();
+  if (!name) {
+    console.log(`[holdings] Sub-fund resolution skipped — no name for CUSIP ${holding.cusip}`);
+    return null;
+  }
 
-  // Strategy 2: If FMP is available, search by name
-  // This will be wired up in Session 3 when the FMP client is built.
-  // For the Session 2 deliverable, we log and return null.
+  // Heuristic guard: only search if the name looks like a fund
+  if (!FUND_NAME_PATTERN.test(name)) {
+    console.log(`[holdings] Sub-fund resolution skipped — name doesn't look fund-like: "${name}"`);
+    return null;
+  }
 
-  console.log(
-    `[holdings] Sub-fund ticker resolution for CUSIP ${holding.cusip} ` +
-      `("${holding.name}") — will use FMP search in Session 3`
-  );
+  try {
+    const results = await searchByName(name, 5);
 
-  return null;
+    if (results.length === 0) {
+      console.log(`[holdings] FMP search returned no results for sub-fund "${name}"`);
+      return null;
+    }
+
+    // Prefer mutual fund exchange matches, then any exchange match
+    const fundMatch = results.find((r) => FUND_EXCHANGES.has(r.exchangeShortName));
+    const ticker = fundMatch?.symbol ?? results[0]?.symbol ?? null;
+
+    if (ticker) {
+      console.log(`[holdings] Resolved sub-fund "${name}" → ${ticker} (via FMP search)`);
+    } else {
+      console.log(`[holdings] FMP search found results but no usable ticker for "${name}"`);
+    }
+
+    return ticker;
+  } catch (err) {
+    console.warn(
+      `[holdings] Sub-fund ticker resolution failed for "${name}" (CUSIP ${holding.cusip}):`,
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
 }
 
 /**

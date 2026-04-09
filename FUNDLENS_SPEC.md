@@ -972,7 +972,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 9, 2026 (after Session 16 — all 12 bugs resolved)
+**Last updated:** April 9, 2026 (after Session 17 — MISSING-10/15/16 resolved, all features complete)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1061,6 +1061,9 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Help page with FAQs | §6.7, MISSING-9 | Help.tsx, App.tsx, AppShell.tsx | 10-item FAQ accordion + Claude Haiku Q&A chat. /help route. 5-tab nav. — Session 16 |
 | Help chat endpoint with rate limiting | §5.3, MISSING-9 | routes.ts, help-agent.ts, help-agent.md | POST /api/help/chat, 20/hour rate limit, scoped system prompt. — Session 16 |
 | Help chat floating widget | MISSING-9 | HelpChat.tsx, AppShell.tsx | Slide-up "?" panel, message history, typing indicator. — Pre-existing (Session 12) |
+| Brief 4-section W layout | §7.2–7.9, MISSING-10 | Briefs.tsx | Section-aware parser splits markdown on `## ` headers. BriefSectionCard renders each section with accent-colored left border, numbered badge, serif title. Legacy fallback for pre-W briefs. — Session 17 |
+| Fund-of-funds look-through | §2.4.4, MISSING-15 | holdings.ts, fmp.ts | `resolveSubFundTicker()` wired to FMP `searchByName()`. Fund-name heuristic guard + exchange filtering. Depth-1 recursion with graceful null fallback. — Session 17 |
+| Pipeline rate limit re-enabled | §5.3 | routes.ts | `pipelineRateLimit` (3/hour) restored on POST /api/pipeline/run. Was disabled during Session 14 integration testing. — Session 17 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -1129,9 +1132,9 @@ Status: ✅ Tiingo prices working (fetchTiingoPrices, convertTiingoPricesToFmpFo
 Spec: Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
 Status: ✅ Complete. `Help.tsx` page with 10 FAQ accordion items + Claude Haiku Q&A chat section. Route at `/help`. Help tab added to 5-tab navigation (Portfolio | Thesis | Briefs | Settings | Help). `HelpChat.tsx` floating widget (slide-up panel from "?" button) already existed from prior session. Server endpoint `POST /api/help/chat` with `helpChatRateLimit` (20/hour). `help-agent.ts` engine + `help-agent.md` system prompt. — Session 16.
 
-**MISSING-10: Investment Brief Redesign — 4-Section Structure + Advisor Voice (§7.2–7.9)**
+**~~MISSING-10: Investment Brief Redesign — 4-Section Structure + Advisor Voice (§7.2–7.9)~~ — RESOLVED (Session 8/9 engine + Session 17 client)**
 Spec: Complete rewrite of §7. 4-section brief ("Where the Numbers Point" → "What Happened" → "What We're Watching" → "Where We Stand"). New voice guidelines (knowledgeable buddy, not research analyst). "Behind the curtain" rule prohibiting model language. Raw data feed to Claude (not scores). Allocation persistence for "What Changed" delta.
-Status: **PARTIALLY COMPLETE (Session 8 + Session 9).** editorial-policy.md rewritten (v2.0 — advisor voice, 4-section W structure, behind-the-curtain rule). brief-engine.ts rewritten (raw data feed, no scores/factor names in prompt, natural-language allocation reasons). ✅ allocation_history table and delta computation added Session 9. Remaining: Briefs.tsx client redesign (→ Session 11).
+Status: ✅ Complete. editorial-policy.md v2.1 (advisor voice, 4-section W structure, jargon blacklist, behind-the-curtain rule). brief-engine.ts rewritten (raw data feed, natural-language allocation reasons). allocation_history table + delta computation (Session 9). Briefs.tsx redesigned with section-aware parsing, `BriefSectionCard` component, accent-colored left borders, numbered section headers, and legacy fallback for older briefs (Session 17).
 
 **~~MISSING-11: Continuous Risk Slider with Interpolation (§3.4, §6.4)~~ — RESOLVED (Session 9)**
 Spec: Risk slider accepts 1.0–7.0 continuous values. k parameter interpolated between anchor points. risk_tolerance stored as FLOAT.
@@ -1149,14 +1152,13 @@ Status: ✅ Complete. Created `cache.ts` with 4 cache layers (FMP 7-day, Tiingo 
 Spec: §6.4 — risk tolerance affects allocation sizing. v5.1 shows allocation_pct per fund in the Portfolio tab with a Fund Allocation donut chart powered by real Kelly-computed allocations.
 Status: ✅ Complete. Portfolio.tsx imports `computeClientAllocations()` from `client/src/engine/allocation.ts`. Allocations computed client-side via useMemo depending on `[rankedScores, risk]`. Fund Allocation donut powered by real Kelly allocations. Alloc column added to fund table (8 columns). Both risk slider and weight sliders trigger instant recomputation — no API calls.
 
-**MISSING-15: Fund-of-Funds Look-Through Wiring (§2.4.4)**
+**~~MISSING-15: Fund-of-Funds Look-Through Wiring (§2.4.4)~~ — RESOLVED (Session 17)**
 Spec: When a holding is itself another fund, fetch sub-fund's NPORT-P, score underlying holdings.
-Status: Scaffolding exists in holdings.ts but `resolveSubFundTicker()` is a stub (always returns null). Look-through cannot fire. Deferred since Session 2.
-Impact: LOW for TerrAscend fund universe (most are direct equity/bond funds), but needed for completeness.
+Status: ✅ Complete. `resolveSubFundTicker()` wired to FMP `searchByName()` with fund-name heuristic guard, exchange-based filtering (MUTUAL_FUND, AMEX, NASDAQ, NYSE, etc.), and graceful null fallback on errors. Look-through fires for any holding with `isInvestmentCompany && pctOfNav >= 1%` and a fund-like name. Depth capped at 1. — Session 17.
 
-**MISSING-16: fund-summaries.ts Not in Spec File Inventory (§5.5)**
-`src/engine/fund-summaries.ts` exists in the codebase and generates natural-language fund summaries via Claude Haiku for the fund detail sidebar. This file is NOT listed in the spec §5.5 file inventory and was added without spec documentation.
-Fix: Add to §5.5 file inventory with purpose description.
+**~~MISSING-16: fund-summaries.ts Not in Spec File Inventory (§5.5)~~ — RESOLVED (Session 12)**
+`src/engine/fund-summaries.ts` was added to the §5.5 file inventory during the Session 12 assessment.
+Status: ✅ Complete.
 
 ### 9.4 CUSIP Resolver — COMPLETED (Session 2)
 
@@ -1202,8 +1204,8 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 14 | ~~End-to-End Integration Testing~~ | **COMPLETED** — see above | — |
 | 15 | ~~HHI + Bugfixes + Documentation~~ | **COMPLETED** — HHI display added, 4 bugs fixed (BUG-4/5/6/7), documentation updated | — |
 | 16 | ~~BUG-3 + BUG-11 Fixes~~ | **COMPLETED** — ISIN fallback for international CUSIP resolution (BUG-3), editorial voice overhaul with jargon blacklist (BUG-11). All 12 bugs now resolved. | — |
-| 17 | Help Section (optional) | MISSING-9 (FAQs + Claude Haiku chat) | 1 session |
-| 18 | Fund-of-Funds Look-Through (optional) | MISSING-15 (wire resolveSubFundTicker) | 0.5–1 session |
+| 17 | ~~Help Section~~ | **COMPLETED in Session 16** — MISSING-9 resolved | — |
+| 18 | ~~Fund-of-Funds + Brief Redesign + Cleanup~~ | **COMPLETED in Session 17** — MISSING-10/15/16 resolved, pipelineRateLimit re-enabled | — |
 
 ---
 
@@ -1370,6 +1372,26 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 6. **MISSING-9 fully resolved.** Help page + floating chat widget + server endpoint + rate limiting + admin prompt reload all in place.
 
 **Files changed:** `src/engine/cusip.ts`, `src/engine/holdings.ts`, `src/engine/types.ts`, `src/prompts/editorial-policy.md`, `client/src/pages/Help.tsx` (new), `client/src/App.tsx`, `client/src/components/AppShell.tsx`, `src/routes/routes.ts`, `BUGS.md`, `FUNDLENS_SPEC.md`
+
+## April 9, 2026 — Session 17: Final Feature Completion (MISSING-10, MISSING-15, MISSING-16)
+
+**Goal:** Resolve all remaining MISSING items and re-enable production hardening.
+
+1. **Brief client redesign — 4-section W layout (MISSING-10).** Rewrote `Briefs.tsx` with section-aware markdown parser (`parseBriefSections()`). `BriefSectionCard` component renders each section as a styled card with accent-colored left border (blue/green/amber/blue for the 4 W sections), numbered badge, and serif title. Parser splits on `## ` headers and maps to canonical W-structure titles. Falls back to flat markdown rendering for legacy briefs without section headers.
+
+2. **Fund-of-funds look-through wired (MISSING-15).** `resolveSubFundTicker()` in `holdings.ts` replaced stub with FMP `searchByName()` integration. Fund-name heuristic guard (`FUND_NAME_PATTERN`) prevents unnecessary API calls for non-fund holdings. Exchange-based filtering (`FUND_EXCHANGES` set) prioritizes mutual fund matches. Graceful null fallback on errors — pipeline keeps wrapper holding.
+
+3. **MISSING-16 marked resolved.** `fund-summaries.ts` was already added to §5.5 during Session 12 assessment. Entry in §9.3 updated to reflect resolution.
+
+4. **Pipeline rate limit re-enabled.** `pipelineRateLimit` (3/hour) restored on `POST /api/pipeline/run` in `routes.ts`. Had been commented out since Session 14 integration testing (commit f2b451f).
+
+5. **Roadmap updated.** Session 17 row in §9.5 updated to reflect MISSING-9 completion in Session 16. Session 18 row updated for this session's work.
+
+**Files changed:** `client/src/pages/Briefs.tsx`, `src/engine/holdings.ts`, `src/routes/routes.ts`, `FUNDLENS_SPEC.md`
+
+**Spec updates:** §9.1 (3 new entries), §9.3 (MISSING-10/15/16 all resolved), §9.5 (roadmap rows updated), §10 (this entry).
+
+**State at session end:** `tsc --noEmit` passes clean for both server and client. All MISSING items resolved (1–16). All 12 bugs resolved. Zero open issues. Remaining: verification runs (pipeline, Brief generation) recommended before production deployment.
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 

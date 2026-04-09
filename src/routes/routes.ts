@@ -510,7 +510,7 @@ router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Respon
  * This route creates the run record and calls the pipeline.
  */
 // SESSION 0 SECURITY: Admin-only + rate limited
-router.post('/api/pipeline/run', requireAuth, requireAdmin, /* pipelineRateLimit, — disabled during Session 14 integration testing */ async (req: Request, res: Response) => {
+router.post('/api/pipeline/run', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
   console.log(`[routes] POST /api/pipeline/run — user: ${(req as AuthenticatedRequest).userEmail}`);
   // Check if a pipeline is already running
   const { data: running } = await supaFetch<PipelineRunRow>('pipeline_runs', {
