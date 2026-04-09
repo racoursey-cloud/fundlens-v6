@@ -171,11 +171,12 @@ export function Briefs() {
     const { data, error } = await fetchBriefs();
     if (data && !error) {
       setBriefs(data.briefs);
-      // Auto-select the latest brief
+      // Auto-select the latest brief — fetch full content (list endpoint omits content_md)
       if (data.briefs.length > 0) {
         const latest = data.briefs[0];
         if (latest) {
-          setSelectedBrief(latest);
+          const { data: fullBrief } = await fetchBrief(latest.id);
+          setSelectedBrief(fullBrief?.brief ?? latest);
         }
       }
     }
@@ -265,7 +266,7 @@ export function Briefs() {
           Investment Brief
         </h1>
         <p style={{ fontSize: '14px', color: theme.colors.textMuted, margin: '0 0 24px' }}>
-          Your personalized research document, written by Claude Opus.
+          Your personalized investment brief.
         </p>
 
         <div style={{
@@ -286,7 +287,7 @@ export function Briefs() {
             Run Analysis to generate your first Investment Brief
           </p>
           <p style={{ color: theme.colors.textDim, margin: '0 0 24px', fontSize: '13px', maxWidth: '360px', marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
-            Your personalized research document, written by Claude Opus. Covers fund recommendations, market narrative, risks, and sector outlook.
+            Your personalized investment brief. Covers fund recommendations, market narrative, risks, and sector outlook.
           </p>
 
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
@@ -326,7 +327,7 @@ export function Briefs() {
             Investment Brief
           </h1>
           <p style={{ fontSize: '14px', color: theme.colors.textMuted, margin: 0 }}>
-            Your personalized research document, written by Claude Opus.
+            Your personalized investment brief.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
@@ -390,7 +391,7 @@ export function Briefs() {
             Generating your Investment Brief...
           </p>
           <p style={{ color: theme.colors.textDim, margin: 0, fontSize: '13px' }}>
-            Claude Opus is analyzing your portfolio. This may take 30–60 seconds.
+            Analyzing your portfolio. This may take 30–60 seconds.
           </p>
         </div>
       )}
@@ -502,9 +503,6 @@ export function Briefs() {
                   color: theme.colors.textDim,
                 }}>
                   <span>{fmtDateTime(selectedBrief.generated_at)}</span>
-                  <span style={{ fontFamily: theme.fonts.mono }}>
-                    {selectedBrief.model_used}
-                  </span>
                   <StatusBadge status={selectedBrief.status} />
                 </div>
               </div>

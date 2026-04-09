@@ -25,8 +25,8 @@ import { HelpChat } from './HelpChat';
 
 const TABS = [
   { path: '/',        label: 'Portfolio' },
-  { path: '/thesis',  label: 'Brief' },
-  { path: '/briefs',  label: 'History' },
+  { path: '/thesis',  label: 'Thesis' },
+  { path: '/briefs',  label: 'Briefs' },
   { path: '/settings', label: 'Settings' },
 ];
 

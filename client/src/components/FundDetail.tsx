@@ -16,6 +16,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { fetchFundScore, type FundScore, type Fund } from '../api';
 import { theme } from '../theme';
+import { computeHHI, hhiLabel } from '../utils/hhi';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -108,6 +109,18 @@ export function FundDetail({ ticker, onClose }: Props) {
   }, [holdings]);
 
   const totalWeight = sectorGroups.reduce((s, g) => s + g.weight, 0);
+
+  // HHI concentration index (§6.6) — computed from sector exposure
+  const hhi = useMemo(() => {
+    if (sectorGroups.length === 0) return null;
+    const sectorWeights: Record<string, number> = {};
+    for (const g of sectorGroups) {
+      sectorWeights[g.sector] = g.weight;
+    }
+    return computeHHI(sectorWeights);
+  }, [sectorGroups]);
+
+  const hhiInfo = hhi !== null ? hhiLabel(hhi) : null;
 
   // AI summary from factor_details
   const summary = useMemo(() => {
@@ -378,11 +391,34 @@ export function FundDetail({ ticker, onClose }: Props) {
           {activeTab === 'sectors' && (
             <div style={{ padding: '0 4px' }}>
               <div style={{
-                fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-                letterSpacing: '0.08em', color: theme.colors.textDim,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 marginBottom: 8,
               }}>
-                {sectorGroups.length} Sectors — {holdings.length} positions
+                <span style={{
+                  fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+                  letterSpacing: '0.08em', color: theme.colors.textDim,
+                }}>
+                  {sectorGroups.length} Sectors — {holdings.length} positions
+                </span>
+                {hhiInfo && hhi !== null ? (
+                  <span style={{
+                    fontSize: 11, fontFamily: theme.fonts.mono,
+                    color: theme.colors.textDim,
+                  }}>
+                    HHI{' '}
+                    <span style={{ color: theme.colors.text, fontWeight: 600 }}>
+                      {(hhi * 10_000).toFixed(0)}
+                    </span>
+                    {' — '}
+                    <span style={{ color: hhiInfo.color, fontWeight: 600 }}>
+                      {hhiInfo.label}
+                    </span>
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
+                    No sector data
+                  </span>
+                )}
               </div>
 
               {sectorGroups.map(group => {

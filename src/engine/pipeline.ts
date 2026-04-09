@@ -312,7 +312,26 @@ export async function runFullPipeline(
 
   const qualityResults = new Map<string, QualityFactorResult>();
 
-  for (const [fundTicker, holdings] of fundHoldings) {
+  // Score all scorable funds, not just those with EDGAR holdings.
+  // Funds that failed EDGAR get neutral quality (50) so they still receive composite scores.
+  for (const fund of scorableFunds) {
+    const holdings = fundHoldings.get(fund.ticker);
+    if (!holdings) {
+      // BUG-4 fix: provide neutral fallback instead of silently skipping
+      qualityResults.set(fund.ticker, {
+        score: 50,
+        holdingScores: [],
+        unscoredHoldings: [],
+        coveragePct: 0,
+        equityRatio: 0,
+        bondRatio: 0,
+        reasoning: 'Holdings data unavailable — using neutral quality score',
+      });
+      console.log(`[pipeline] ${fund.ticker}: no EDGAR holdings — quality defaults to 50`);
+      continue;
+    }
+
+    const fundTicker = fund.ticker;
     const holdingsWithFundamentals = holdings.map(h => ({
       ticker: h.ticker,
       name: h.name,
@@ -591,9 +610,22 @@ export async function runFullPipeline(
 
   const positioningResults = new Map<string, PositioningResult>();
 
-  for (const [fundTicker, holdings] of fundHoldings) {
+  // Score all scorable funds, not just those with EDGAR holdings.
+  // Funds that failed EDGAR get neutral positioning (50) so they still receive composite scores.
+  for (const fund of scorableFunds) {
+    const holdings = fundHoldings.get(fund.ticker);
+    if (!holdings) {
+      // BUG-4 fix: provide neutral fallback instead of silently skipping
+      positioningResults.set(fund.ticker, {
+        score: 50,
+        sectorBreakdown: [],
+        reasoning: 'Holdings data unavailable — using neutral positioning score',
+      });
+      console.log(`[pipeline] ${fund.ticker}: no EDGAR holdings — positioning defaults to 50`);
+      continue;
+    }
     const result = scorePositioning(holdings, thesis);
-    positioningResults.set(fundTicker, result);
+    positioningResults.set(fund.ticker, result);
   }
 
   // ── Step 13: Compute composite scores ──

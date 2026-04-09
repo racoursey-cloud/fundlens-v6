@@ -712,8 +712,10 @@ Each step wrapped in try/catch. Partial results flow forward. Non-fatal failures
 | context/AuthContext.tsx | Auth state management |
 | components/AppShell.tsx | Navigation shell (responsive) |
 | components/ProtectedRoute.tsx | Auth guard |
-| components/FundDetail.tsx | Fund detail sidebar |
+| components/FundDetail.tsx | Fund detail inline expansion (tabbed: Overview, Holdings, Sectors) |
 | components/ErrorBoundary.tsx | Error boundary |
+| engine/allocation.ts | Client-side allocation engine (pure-math port of server allocation.ts) |
+| utils/hhi.ts | HHI concentration index computation for FundDetail display |
 | pages/Login.tsx | Magic link login |
 | pages/SetupWizard.tsx | Onboarding wizard |
 | pages/AuthCallback.tsx | Auth redirect handler |
@@ -1107,9 +1109,8 @@ Status: ✅ `computeSectorPriors()` implemented. Deterministic rules: yield curv
 Files: `src/engine/pipeline.ts`, `src/engine/constants.ts`, `src/engine/allocation.ts`
 Status: ✅ MONEY_MARKET_TICKERS set (FDRXX, ADAXX) in constants.ts. pipeline.ts separates money market funds before scoring loops — they get fixed composite 50 with all factors at 50, skip holdings/fundamentals/classification/momentum/positioning. allocation.ts excludes MM funds from allocation (0% weight, MM tier badge).
 
-**MISSING-7: HHI Concentration Display (§6.6)**
-Spec: Herfindahl-Hirschman Index of sector exposure per fund in detail view. Informational only.
-Status: Not implemented anywhere. Low priority — informational UI, no scoring impact.
+**~~MISSING-7: HHI Concentration Display (§6.6)~~ — RESOLVED (Session 15)**
+Status: ✅ `computeHHI()` utility in `client/src/utils/hhi.ts`. Computes Herfindahl-Hirschman Index from sector exposure weights. `hhiLabel()` maps to plain-language labels (Diversified / Moderately Concentrated / Highly Concentrated) using DOJ thresholds. Displayed in FundDetail Sectors tab header. Informational only — not connected to scoring or allocation.
 
 **~~MISSING-8: Tiingo Integration (§4.1, §4.6)~~ — FULLY RESOLVED (Session 3 + Session 4 + Session 5)**
 Spec: Tiingo is primary source for fund NAV history (split-adjusted). Fee data (12b-1, loads) from Finnhub.
@@ -1188,7 +1189,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | Session | Focus | Gaps Addressed | Estimate |
 |---------|-------|----------------|----------|
 | 14 | ~~End-to-End Integration Testing~~ | **COMPLETED** — see above | — |
-| 15 | HHI + Documentation + Polish | MISSING-7 (HHI display), MISSING-16 (spec file inventory), final UI polish | 0.5–1 session |
+| 15 | ~~HHI + Bugfixes + Documentation~~ | **COMPLETED** — HHI display added, 4 bugs fixed (BUG-4/5/6/7), documentation updated | — |
 | 16 | Help Section (optional) | MISSING-9 (FAQs + Claude Haiku chat) | 1 session |
 | 17 | Fund-of-Funds Look-Through (optional) | MISSING-15 (wire resolveSubFundTicker) | 0.5–1 session |
 
@@ -1315,6 +1316,28 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 **Session 14 priority bugs for Session 15:** BUG-4 (7 missing fund scores), BUG-5 (Brief content not rendering), BUG-6 (tab labels swapped), BUG-7 (model name in UI).
 
 **Assignments completed:** 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7.
+
+## April 9, 2026 — Session 15: HHI Concentration Display + Bugfixes
+
+**Goal:** Add HHI concentration display (§6.6), fix 4 priority bugs from Session 14, update documentation.
+
+**Changes:**
+
+1. **HHI concentration display (§6.6, resolves MISSING-7).** Created `client/src/utils/hhi.ts` with `computeHHI()` and `hhiLabel()` utilities. HHI computed from sector exposure weights, displayed in FundDetail Sectors tab header with DOJ-scale value and plain-language label (Diversified / Moderately Concentrated / Highly Concentrated). Informational only — not connected to scoring or allocation.
+
+2. **BUG-4 fixed: 7 funds not scoring.** Pipeline silently skipped funds that failed EDGAR holdings fetch. Quality and positioning scoring loops iterated over `fundHoldings` map (only successful EDGAR fetches) instead of `scorableFunds` (all non-MM funds). Funds without EDGAR data had no quality/positioning scores and were dropped at composite validation. Fixed by iterating over `scorableFunds` in both loops and providing neutral fallback scores (quality=50, positioning=50) for funds without holdings data.
+
+3. **BUG-5 fixed: Brief content not rendering.** `loadBriefs()` auto-selected the latest brief from the list endpoint which excludes `content_md` for performance. Auto-selected brief had no content. Fixed by fetching the full brief via `GET /api/briefs/:id` when auto-selecting on page load.
+
+4. **BUG-6 fixed: Tab labels swapped.** AppShell.tsx TABS array had "Brief" → `/thesis` and "History" → `/briefs`. Updated to "Thesis" → `/thesis` and "Briefs" → `/briefs` per spec §6.7.
+
+5. **BUG-7 fixed: Model name exposed in UI.** Removed "written by Claude Opus" from 3 subtitle strings in Briefs.tsx. Removed `model_used` display from brief detail header. Removed "Claude Opus" from generating overlay. No model names visible in UI per §7.4.
+
+6. **Documentation updated.** Spec §5.5 file inventory updated with `engine/allocation.ts` and `utils/hhi.ts`. MISSING-7 resolved. Session 15 marked DONE in roadmap. BUGS.md updated: 4 bugs resolved, 5 remain (all MEDIUM or LOW).
+
+**Files changed:** `src/engine/pipeline.ts`, `client/src/pages/Briefs.tsx`, `client/src/components/AppShell.tsx`, `client/src/components/FundDetail.tsx`, `client/src/utils/hhi.ts` (new), `BUGS.md`, `FUNDLENS_SPEC.md`
+
+**Assignments completed:** 15.1, 15.2, 15.3, 15.4.
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 

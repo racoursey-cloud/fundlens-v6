@@ -34,46 +34,6 @@
 **Suggested fix:** For VFWAX, investigate whether OpenFIGI/FMP can resolve international CUSIPs (many large international companies have US ADRs). For WFPRX, confirm bond quality scoring from NPORT-P debt fields is firing. Low urgency — the z-score + CDF pipeline handles this gracefully by normalizing quality = 50 to a neutral position.
 **Files likely affected:** `src/engine/cusip.ts`, `src/engine/quality.ts`, `src/engine/holdings.ts`
 
-### BUG-4: Only 15 of 22 funds scored
-**Severity:** HIGH
-**Found in:** Task 14.3 (Scoring Validation), confirmed Task 14.6
-**Spec reference:** §5.4
-**Description:** Pipeline processes 22 funds but only 15 have scores in `fund_scores`. The 7 missing funds (QFVRX, MADFX, RNWGX, OIBIX, VWIGX, BPLBX, CFSTX) were activated in the database but never appear in the scored output. Pipeline log says "Holdings fetched for 18/20 funds" (2 EDGAR failures) and `fundsFailed: 2` consistently across all 8 runs.
-**Expected behavior:** All 22 funds should have scores. Funds that fail EDGAR should still get partial scores (with quality = 50 fallback).
-**Actual behavior:** 7 funds have no `fund_scores` rows at all. Z-scores show evidence of 22-fund computation (they don't match a 15-fund universe recomputation), suggesting the pipeline scores all 22 internally but fails to persist 7.
-**Suggested fix:** Check persist.ts for errors during score persistence. The 2 EDGAR failures are likely QFVRX and one other — investigate which fund CIKs are missing from EDGAR. The remaining 5 funds may fail during a different step (fundamentals? classification?). Needs Railway server logs for definitive diagnosis.
-**Files likely affected:** `src/engine/persist.ts`, `src/engine/pipeline.ts`, `src/engine/edgar.ts`
-
-### BUG-5: Briefs.tsx does not render Brief content
-**Severity:** HIGH
-**Found in:** Task 14.5 (Brief Generation Test)
-**Spec reference:** §6.7, §7.1
-**Description:** The Briefs archive page (HISTORY tab, `/briefs`) lists all Briefs correctly with title, date, model, and status. When a Brief is selected, the detail pane shows metadata but the body says "Brief content not available." The `content_md` field IS populated in the database (8,129 chars confirmed via API).
-**Expected behavior:** Selected Brief should render its full markdown content with all 4 sections.
-**Actual behavior:** "Brief content not available." Users cannot read any Brief in the app.
-**Suggested fix:** Briefs.tsx likely fetches only the list endpoint (`GET /api/briefs` which returns metadata only). When a Brief is selected, it should call `GET /api/briefs/:id` which returns full content including `content_md`. Alternatively, the list endpoint could be modified to include `content_md`.
-**Files likely affected:** `client/src/pages/Briefs.tsx`
-
-### BUG-6: BRIEF and HISTORY tab labels are swapped
-**Severity:** MEDIUM
-**Found in:** Task 14.1 (Preflight, as ISSUE-3), confirmed Task 14.5
-**Spec reference:** §6.7
-**Description:** Clicking "BRIEF" navigates to `/thesis` (the Thesis/Macro page). Clicking "HISTORY" navigates to `/briefs` (the Briefs archive). Per spec §6.7, the nav should be: Portfolio | Thesis | Briefs | Settings.
-**Expected behavior:** Tab labels match their destinations: "Thesis" → `/thesis`, "Briefs" → `/briefs`.
-**Actual behavior:** "BRIEF" → `/thesis`, "HISTORY" → `/briefs`. Labels are swapped.
-**Suggested fix:** Update tab labels in AppShell.tsx to match spec: rename "BRIEF" to "THESIS" and "HISTORY" to "BRIEFS" (or follow the exact spec labels).
-**Files likely affected:** `client/src/components/AppShell.tsx`
-
-### BUG-7: Brief subtitle exposes "Claude Opus" model name
-**Severity:** LOW
-**Found in:** Task 14.5 (Brief Generation Test)
-**Spec reference:** §7.4 (Behind the Curtain Rule)
-**Description:** The Briefs page header reads: "Your personalized research document, written by Claude Opus." This exposes the AI model name to users.
-**Expected behavior:** The reader should never think "a computer wrote this" (§7.4). No model names in the UI.
-**Actual behavior:** Model name displayed prominently in the page subtitle.
-**Suggested fix:** Change subtitle to "Your personalized investment brief" or similar. Remove model name reference.
-**Files likely affected:** `client/src/pages/Briefs.tsx`
-
 ### BUG-10: Editorial policy fallback says "research analyst"
 **Severity:** MEDIUM
 **Found in:** Task 14.5 (Brief Generation Test)
@@ -106,6 +66,34 @@
 
 ---
 
+## Resolved in Session 15
+
+### BUG-4: Only 15 of 22 funds scored (RESOLVED — Session 15)
+**Severity was:** HIGH
+**Found in:** Task 14.3 / 14.6
+**Fix:** Pipeline silently skipped funds that failed EDGAR holdings fetch — quality and positioning scoring only iterated over `fundHoldings` (successful EDGAR fetches), so funds without holdings had no quality/positioning scores and were dropped at composite validation (line 642). Fixed by iterating over `scorableFunds` instead of `fundHoldings` in both quality (step 6) and positioning (step 12) scoring loops, providing neutral fallback scores (quality=50, positioning=50) for funds without EDGAR data. These funds now flow through z-standardization and receive composite scores like all other funds.
+**Files changed:** `src/engine/pipeline.ts`
+
+### BUG-5: Briefs.tsx does not render Brief content (RESOLVED — Session 15)
+**Severity was:** HIGH
+**Found in:** Task 14.5
+**Fix:** `loadBriefs()` auto-selected the latest brief from the list endpoint (`GET /api/briefs`), which intentionally excludes `content_md` for performance. The auto-selected brief object had no content, so the renderer showed "Brief content not available." Fixed by fetching the full brief via `GET /api/briefs/:id` when auto-selecting on page load.
+**Files changed:** `client/src/pages/Briefs.tsx`
+
+### BUG-6: BRIEF and HISTORY tab labels are swapped (RESOLVED — Session 15)
+**Severity was:** MEDIUM
+**Found in:** Task 14.1 (ISSUE-3), confirmed Task 14.5
+**Fix:** Updated TABS array in AppShell.tsx: "Brief" → "Thesis" for `/thesis` path, "History" → "Briefs" for `/briefs` path. Now matches spec §6.7: Portfolio | Thesis | Briefs | Settings.
+**Files changed:** `client/src/components/AppShell.tsx`
+
+### BUG-7: Brief subtitle exposes "Claude Opus" model name (RESOLVED — Session 15)
+**Severity was:** LOW
+**Found in:** Task 14.5
+**Fix:** Removed all "written by Claude Opus" text from Briefs.tsx (3 occurrences). Changed subtitle to "Your personalized investment brief." Removed `model_used` display from brief detail header. Removed "Claude Opus" from the generating overlay. No model names visible in the UI.
+**Files changed:** `client/src/pages/Briefs.tsx`
+
+---
+
 ## Resolved in Session 14
 
 ### BUG-1: Quality raw scores >100 (RESOLVED — commit be49b1d)
@@ -133,9 +121,9 @@
 | Severity | Open | Resolved | Total |
 |----------|------|----------|-------|
 | CRITICAL | 0 | 1 | 1 |
-| HIGH | 2 | 1 | 3 |
-| MEDIUM | 5 | 1 | 6 |
-| LOW | 2 | 0 | 2 |
-| **Total** | **9** | **3** | **12** |
+| HIGH | 0 | 3 | 3 |
+| MEDIUM | 3 | 2 | 5 |
+| LOW | 2 | 1 | 3 |
+| **Total** | **5** | **7** | **12** |
 
-**Session 15 priority:** BUG-4 (15/22 funds) and BUG-5 (Brief content not rendering) are the highest-impact open bugs. BUG-6 (tab labels) and BUG-7 (Claude Opus subtitle) are quick fixes. BUG-11 (voice) and BUG-10 (fallback) are editorial improvements that benefit from deploying BUG-9's fix first and evaluating the improved Brief quality.
+**Remaining open bugs:** BUG-2 (MM composite ≠ 50), BUG-3 (0% coverage on intl/bond funds), BUG-10 (editorial policy fallback), BUG-11 (voice too Wall Street), BUG-12 (stalled pipeline run). All MEDIUM or LOW — no HIGH or CRITICAL issues remain.
