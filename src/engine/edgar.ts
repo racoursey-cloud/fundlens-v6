@@ -59,14 +59,19 @@ export async function fetchEdgarHoldings(
 
     await delay(PIPELINE.API_CALL_DELAY_MS);
 
-    // Step 2: Find the latest NPORT-P filing for this fund
-    const filing = await findLatestNportFiling(tickerEntry.cik.toString());
+    // Step 2: Find the latest NPORT-P filing for this specific fund series.
+    // A single CIK can have many fund series (e.g. TCW FUNDS INC has 11+).
+    // Each series files its own NPORT-P, so we must match by seriesId.
+    const filing = await findLatestNportFiling(
+      tickerEntry.cik.toString(),
+      tickerEntry.seriesId
+    );
     if (!filing) {
-      console.error(`[edgar] ${ticker}: no NPORT-P filing found for CIK ${tickerEntry.cik}`);
+      console.error(`[edgar] ${ticker}: no NPORT-P filing found for CIK ${tickerEntry.cik} series ${tickerEntry.seriesId}`);
       return {
         success: false,
         data: null,
-        error: `No NPORT-P filing found for CIK ${tickerEntry.cik} (${ticker})`,
+        error: `No NPORT-P filing found for CIK ${tickerEntry.cik} series ${tickerEntry.seriesId} (${ticker})`,
         durationMs: Date.now() - start,
       };
     }
@@ -115,6 +120,31 @@ export async function fetchEdgarHoldings(
 // ─── Step 1: Ticker → CIK Lookup ───────────────────────────────────────────
 
 /**
+ * Manual SEC registration overrides for fund tickers missing from the SEC's
+ * company_tickers_mf.json file. This happens when:
+ *   - A share class was added after the SEC compiled their file
+ *   - The fund reorganized into a different trust/CIK
+ *   - Institutional share classes (K, R6) weren't included
+ *
+ * All share classes within the same series have identical holdings, so using
+ * a sibling's series ID is correct for NPORT-P lookups.
+ *
+ * To add a new override:
+ *   1. Search EDGAR EFTS for the fund name + NPORT-P: the filing's CIK is correct
+ *   2. Check the first ~10KB of the NPORT-P XML for <seriesId> and <seriesName>
+ *   3. Add the entry here with the correct CIK, seriesId, and ticker
+ */
+const TICKER_OVERRIDES: ReadonlyMap<string, MutualFundTickerEntry> = new Map([
+  // BlackRock Inflation Protected Bond K — CIK 1738078 (BlackRock Funds V)
+  // K share class not in SEC file; sibling classes exist under same series.
+  ['BPLBX', { cik: 1738078, seriesId: 'S000062365', classId: '', symbol: 'BPLBX' }],
+
+  // Invesco International Bond R6 — CIK 826644 (AIM/Invesco Investment Funds)
+  // R6 share class not in SEC file; 11 series under this CIK.
+  ['OIBIX', { cik: 826644, seriesId: 'S000064709', classId: '', symbol: 'OIBIX' }],
+]);
+
+/**
  * Loads the SEC's mutual fund ticker-to-CIK mapping file and caches it.
  * This file contains every registered mutual fund with its CIK, series ID,
  * class ID, and ticker symbol.
@@ -156,16 +186,29 @@ async function loadTickerLookup(): Promise<Map<string, MutualFundTickerEntry>> {
     }
   }
 
+  // Merge manual overrides (these take precedence over SEC file entries)
+  for (const [ticker, entry] of TICKER_OVERRIDES) {
+    map.set(ticker, entry);
+  }
+
   tickerLookupCache = map;
   return map;
 }
 
 /**
  * Look up a single ticker's CIK and series info.
+ * Checks manual overrides first, then falls through to the SEC ticker file.
  */
 async function lookupTickerCik(
   ticker: string
 ): Promise<MutualFundTickerEntry | null> {
+  // Check manual overrides first (avoids full SEC file fetch for known tickers)
+  const override = TICKER_OVERRIDES.get(ticker.toUpperCase());
+  if (override) {
+    console.log(`[edgar] ${ticker}: using manual override (CIK ${override.cik}, series ${override.seriesId})`);
+    return override;
+  }
+
   const lookup = await loadTickerLookup();
   return lookup.get(ticker.toUpperCase()) || null;
 }
@@ -182,13 +225,23 @@ interface FilingIndexEntry {
 
 /**
  * Queries EDGAR's submissions API to find the most recent NPORT-P filing
- * for a given CIK. Uses the data.sec.gov JSON API (no rate-limited EFTS).
+ * for a given CIK and series ID. Uses the data.sec.gov JSON API.
  *
- * The submissions endpoint returns the fund's filing history as columnar
- * arrays (accessionNumber[], form[], filingDate[], primaryDocument[]).
+ * CRITICAL: A single CIK can represent a fund family with many series
+ * (e.g. TCW FUNDS INC has 11+ fund series, each filing separately).
+ * We MUST verify the series ID inside the XML to ensure we get the
+ * correct fund's filing, not a sibling fund in the same family.
+ *
+ * Strategy:
+ *   1. Collect all NPORT-P filing candidates (most recent first)
+ *   2. For each candidate, fetch just the first ~10KB of the XML
+ *      (genInfo with seriesId is always near the top)
+ *   3. Return the first candidate that matches our target series ID
+ *   4. If no series ID provided, fall back to first NPORT-P (legacy behavior)
  */
 async function findLatestNportFiling(
-  cik: string
+  cik: string,
+  targetSeriesId?: string
 ): Promise<FilingIndexEntry | null> {
   // Pad CIK to 10 digits with leading zeros (SEC requires this format)
   const paddedCik = cik.padStart(10, '0');
@@ -210,54 +263,162 @@ async function findLatestNportFiling(
     return null;
   }
 
-  // Walk the filings array to find the most recent NPORT-P or NPORT-P/A
-  // (NPORT-P/A is an amended filing — use it if it's newer than NPORT-P)
+  // Collect all NPORT-P candidates (most recent first — EDGAR returns chronological desc)
+  const candidates: FilingIndexEntry[] = [];
+
   for (let i = 0; i < recent.form.length; i++) {
     const form: string = recent.form[i];
     if (form === 'NPORT-P' || form === 'NPORT-P/A') {
-      return {
+      candidates.push({
         accessionNumber: recent.accessionNumber[i],
         filingDate: recent.filingDate[i],
         reportDate: recent.reportDate[i] || recent.filingDate[i],
         primaryDoc: recent.primaryDocument[i],
         form,
-      };
+      });
     }
   }
 
-  // If not found in recent, check the older filings files
-  // (EDGAR paginates large histories into separate JSON files)
-  const olderFiles = data.filings?.files;
-  if (olderFiles && olderFiles.length > 0) {
-    for (const file of olderFiles) {
-      const olderUrl = `https://data.sec.gov/submissions/${file.name}`;
+  // If not found in recent, check older filings files
+  if (candidates.length === 0) {
+    const olderFiles = data.filings?.files;
+    if (olderFiles && olderFiles.length > 0) {
+      for (const file of olderFiles) {
+        const olderUrl = `https://data.sec.gov/submissions/${file.name}`;
+        await delay(PIPELINE.API_CALL_DELAY_MS);
 
-      await delay(PIPELINE.API_CALL_DELAY_MS);
+        const olderResponse = await fetch(olderUrl, {
+          headers: { 'User-Agent': EDGAR.USER_AGENT },
+        });
+        if (!olderResponse.ok) continue;
 
-      const olderResponse = await fetch(olderUrl, {
-        headers: { 'User-Agent': EDGAR.USER_AGENT },
-      });
-
-      if (!olderResponse.ok) continue;
-
-      const olderData = await olderResponse.json();
-
-      for (let i = 0; i < (olderData.form?.length || 0); i++) {
-        const form: string = olderData.form[i];
-        if (form === 'NPORT-P' || form === 'NPORT-P/A') {
-          return {
-            accessionNumber: olderData.accessionNumber[i],
-            filingDate: olderData.filingDate[i],
-            reportDate: olderData.reportDate[i] || olderData.filingDate[i],
-            primaryDoc: olderData.primaryDocument[i],
-            form,
-          };
+        const olderData = await olderResponse.json();
+        for (let i = 0; i < (olderData.form?.length || 0); i++) {
+          const form: string = olderData.form[i];
+          if (form === 'NPORT-P' || form === 'NPORT-P/A') {
+            candidates.push({
+              accessionNumber: olderData.accessionNumber[i],
+              filingDate: olderData.filingDate[i],
+              reportDate: olderData.reportDate[i] || olderData.filingDate[i],
+              primaryDoc: olderData.primaryDocument[i],
+              form,
+            });
+          }
         }
+        // Once we have candidates from older files, stop looking
+        if (candidates.length > 0) break;
       }
     }
   }
 
+  if (candidates.length === 0) return null;
+
+  // If no target series ID, return the first NPORT-P (legacy single-series CIK behavior)
+  if (!targetSeriesId) {
+    return candidates[0];
+  }
+
+  // ── Series-aware matching ──
+  // Fund families (TCW, PIMCO, American Funds, etc.) file separate NPORT-P
+  // for each series under the same CIK. We need to check the XML header
+  // of each candidate to find the one matching our target series.
+  //
+  // Optimization: only check candidates from the most recent filing date.
+  // All series in a family typically file on the same day, so checking
+  // older dates means we missed it entirely.
+  const newestDate = candidates[0].filingDate;
+  const sameDateCandidates = candidates.filter(c => c.filingDate === newestDate);
+
+  // If only one NPORT-P on the newest date, it's the only option
+  if (sameDateCandidates.length === 1) {
+    return sameDateCandidates[0];
+  }
+
+  console.log(
+    `[edgar] CIK ${cik} has ${sameDateCandidates.length} NPORT-P filings on ${newestDate} — ` +
+    `checking XML headers for series ${targetSeriesId}`
+  );
+
+  // Check each candidate's XML header for the target series ID
+  for (const candidate of sameDateCandidates) {
+    await delay(PIPELINE.API_CALL_DELAY_MS);
+
+    const matchesSeries = await checkFilingSeriesId(
+      cik,
+      candidate.accessionNumber,
+      candidate.primaryDoc,
+      targetSeriesId
+    );
+
+    if (matchesSeries) {
+      console.log(
+        `[edgar] Matched series ${targetSeriesId} → accession ${candidate.accessionNumber}`
+      );
+      return candidate;
+    }
+  }
+
+  // If no match in the newest batch, try the next few filing dates as fallback
+  // (in case of staggered filing or amended filings)
+  const olderCandidates = candidates.filter(c => c.filingDate !== newestDate).slice(0, 10);
+  for (const candidate of olderCandidates) {
+    await delay(PIPELINE.API_CALL_DELAY_MS);
+    const matchesSeries = await checkFilingSeriesId(
+      cik,
+      candidate.accessionNumber,
+      candidate.primaryDoc,
+      targetSeriesId
+    );
+    if (matchesSeries) {
+      console.log(
+        `[edgar] Matched series ${targetSeriesId} → accession ${candidate.accessionNumber} (older filing)`
+      );
+      return candidate;
+    }
+  }
+
+  console.warn(
+    `[edgar] No NPORT-P filing matched series ${targetSeriesId} among ${candidates.length} candidates`
+  );
   return null;
+}
+
+/**
+ * Fetch just the first ~10KB of an NPORT-P XML to check if it matches
+ * a target series ID. The <genInfo> section with <seriesId> is always
+ * near the top of NPORT-P filings, so a partial fetch is sufficient.
+ *
+ * Uses HTTP Range header to minimize bandwidth. Falls back to full
+ * fetch if the server doesn't support range requests.
+ */
+async function checkFilingSeriesId(
+  cik: string,
+  accessionNumber: string,
+  primaryDoc: string,
+  targetSeriesId: string
+): Promise<boolean> {
+  const accessionPath = accessionNumber.replace(/-/g, '');
+  const xmlFilename = primaryDoc.includes('/') ? primaryDoc.split('/').pop()! : primaryDoc;
+  const url = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionPath}/${xmlFilename}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': EDGAR.USER_AGENT,
+        'Range': 'bytes=0-12000',
+      },
+    });
+
+    if (!response.ok && response.status !== 206) {
+      return false;
+    }
+
+    const partial = await response.text();
+    // Check if the target series ID appears in the header portion
+    return partial.includes(targetSeriesId);
+  } catch {
+    return false;
+  }
 }
 
 // ─── Step 3: Fetch Filing XML ───────────────────────────────────────────────
