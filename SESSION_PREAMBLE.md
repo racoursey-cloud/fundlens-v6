@@ -63,3 +63,9 @@ v5.1 is the reference implementation. It works. v6 is the rebuild that needs to 
 ## IF YOU FEEL THE URGE TO JUST START CODING
 
 Stop. Re-read this preamble. Ask Robert what he wants you to do next. Then do exactly that and nothing more.
+
+---
+
+## YOUR FIRST ACTION
+
+Read `SESSION_PROMPT.md` and follow every instruction in it.
