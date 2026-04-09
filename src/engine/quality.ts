@@ -230,9 +230,9 @@ function scoreROIC(val: number | null): number {
 function scoreCurrentRatio(val: number | null): number {
   if (val == null) return -1;
   if (val < 0.5) return 5;
-  if (val < 1.0) return linearScore(val, 0.5, 1.0) * 40;
-  if (val <= 3.0) return 40 + linearScore(val, 1.0, 2.0) * 60;
-  if (val <= 5.0) return 100 - linearScore(val, 3.0, 5.0) * 20;
+  if (val < 1.0) return clampScore(linearScore(val, 0.5, 1.0) * 0.40);
+  if (val <= 3.0) return clampScore(40 + linearScore(val, 1.0, 2.0) * 0.60);
+  if (val <= 5.0) return clampScore(100 - linearScore(val, 3.0, 5.0) * 0.20);
   return 70;
 }
 
@@ -255,8 +255,8 @@ function scoreDebtToAssets(val: number | null): number {
 
 function scoreQuickRatio(val: number | null): number {
   if (val == null) return -1;
-  if (val < 0.5) return linearScore(val, 0, 0.5) * 30;
-  if (val <= 2.0) return 30 + linearScore(val, 0.5, 1.5) * 70;
+  if (val < 0.5) return clampScore(linearScore(val, 0, 0.5) * 0.30);
+  if (val <= 2.0) return clampScore(30 + linearScore(val, 0.5, 1.5) * 0.70);
   return 90;
 }
 
@@ -289,8 +289,8 @@ function scoreCashPerShare(val: number | null): number {
 function scoreIncomeQuality(val: number | null): number {
   if (val == null) return -1;
   if (val < 0) return 10;
-  if (val <= 0.5) return linearScore(val, 0, 0.5) * 40;
-  if (val <= 1.5) return 40 + linearScore(val, 0.5, 1.2) * 60;
+  if (val <= 0.5) return clampScore(linearScore(val, 0, 0.5) * 0.40);
+  if (val <= 1.5) return clampScore(40 + linearScore(val, 0.5, 1.2) * 0.60);
   return 90;
 }
 
@@ -441,14 +441,14 @@ export function scoreHolding(
     valuation: aggregateDimension(valRatios),
   };
 
-  // Weighted composite across dimensions
-  const compositeScore = Math.round(
+  // Weighted composite across dimensions (clamped 0–100 as safety net)
+  const compositeScore = Math.max(0, Math.min(100, Math.round(
     dimensions.profitability.score * DIMENSION_WEIGHTS.profitability +
       dimensions.balanceSheet.score * DIMENSION_WEIGHTS.balanceSheet +
       dimensions.cashFlow.score * DIMENSION_WEIGHTS.cashFlow +
       dimensions.earningsQuality.score * DIMENSION_WEIGHTS.earningsQuality +
       dimensions.valuation.score * DIMENSION_WEIGHTS.valuation
-  );
+  )));
 
   return {
     ticker,
@@ -555,12 +555,12 @@ export function scoreQualityFactor(
   let fundScore: number;
 
   if (equityScore != null && bondScore != null) {
-    // Both paths have data — blend by portfolio share
-    fundScore = Math.round(equityScore * equityRatio + bondScore * bondRatio);
+    // Both paths have data — blend by portfolio share (clamped 0–100 as safety net)
+    fundScore = Math.max(0, Math.min(100, Math.round(equityScore * equityRatio + bondScore * bondRatio)));
   } else if (equityScore != null) {
-    fundScore = Math.round(equityScore);
+    fundScore = Math.max(0, Math.min(100, Math.round(equityScore)));
   } else if (bondScore != null) {
-    fundScore = Math.round(bondScore);
+    fundScore = Math.max(0, Math.min(100, Math.round(bondScore)));
   } else {
     fundScore = 50; // Neutral fallback with dataQuality flag
   }
@@ -620,7 +620,9 @@ function aggregateDimension(ratios: RatioScore[]): DimensionScore {
     }
   }
 
-  const score = totalWeight > 0 ? Math.round(weightedSum / totalWeight) : 50;
+  const score = totalWeight > 0
+    ? Math.max(0, Math.min(100, Math.round(weightedSum / totalWeight)))
+    : 50;
 
   return { score, ratios };
 }
