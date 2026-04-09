@@ -201,8 +201,53 @@ function renderMarkdown(md: string): string {
       .replace(/`(.+?)`/g, `<code style="font-family:${theme.fonts.mono};font-size:13px;background:${theme.colors.surface};padding:2px 6px;border-radius:4px">$1</code>`);
   };
 
+  let inTable = false;
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
+
+    // ── Markdown table support ──────────────────────────────────────
+    const isTableRow = /^\|(.+)\|$/.test(line.trim());
+    const isSeparator = /^\|[\s:|-]+\|$/.test(line.trim());
+
+    if (isTableRow || isSeparator) {
+      closeList();
+      if (isSeparator) continue; // skip |---|---| rows
+      const cells = line.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+
+      if (!inTable) {
+        // First row = header
+        inTable = true;
+        htmlParts.push(`<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;font-family:${theme.fonts.body}">`);
+        htmlParts.push('<thead>');
+        htmlParts.push(`<tr style="border-bottom:2px solid ${theme.colors.border}">`);
+        for (const cell of cells) {
+          htmlParts.push(`<th style="padding:10px 14px;text-align:left;font-weight:600;color:${theme.colors.textDim};font-size:11px;letter-spacing:0.05em;text-transform:uppercase">${inlineFormat(cell)}</th>`);
+        }
+        htmlParts.push('</tr></thead><tbody>');
+      } else {
+        // Data row
+        htmlParts.push(`<tr style="border-bottom:1px solid ${theme.colors.border}">`);
+        for (let c = 0; c < cells.length; c++) {
+          const isNumeric = /^\d+%?$/.test(cells[c]?.trim() ?? '');
+          const style = c === 0
+            ? `padding:10px 14px;color:${theme.colors.text};font-weight:500`
+            : isNumeric
+              ? `padding:10px 14px;text-align:right;font-family:${theme.fonts.mono};font-weight:700;color:${theme.colors.accentBlue}`
+              : `padding:10px 14px;color:${theme.colors.textMuted}`;
+          htmlParts.push(`<td style="${style}">${inlineFormat(cells[c] ?? '')}</td>`);
+        }
+        htmlParts.push('</tr>');
+      }
+      continue;
+    }
+
+    // Close table if we've left table rows
+    if (inTable) {
+      htmlParts.push('</tbody></table>');
+      inTable = false;
+    }
+
     if (/^---+$/.test(line.trim())) { closeList(); htmlParts.push(`<hr style="border:none;border-top:1px solid ${theme.colors.border};margin:24px 0" />`); continue; }
     const h3 = line.match(/^### (.+)/);
     if (h3) { closeList(); htmlParts.push(`<h3 style="font-family:${theme.fonts.serif};font-size:16px;font-weight:600;color:${theme.colors.text};margin:28px 0 12px;line-height:1.4">${inlineFormat(h3[1] ?? '')}</h3>`); continue; }
@@ -218,9 +263,10 @@ function renderMarkdown(md: string): string {
     closeList();
     htmlParts.push(`<p style="margin:0 0 16px;color:${theme.colors.textMuted};line-height:1.7;font-size:14px">${inlineFormat(line)}</p>`);
   }
+  if (inTable) htmlParts.push('</tbody></table>');
   closeList();
   return DOMPurify.sanitize(htmlParts.join('\n'), {
-    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'p', 'strong', 'em', 'code', 'ul', 'ol', 'li', 'hr'],
+    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'p', 'strong', 'em', 'code', 'ul', 'ol', 'li', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
     ALLOWED_ATTR: ['style'],
   });
 }

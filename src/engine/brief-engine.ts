@@ -715,9 +715,17 @@ function buildUserPrompt(dataPacket: BriefDataPacket): string {
 - ${user.profileSummary}
 
 ## Recommended Allocation
-These are the funds and percentages to recommend. Lead the Brief with this allocation in Section 1 ("Where the Numbers Point").
+These are the funds and percentages to recommend. Lead the Brief with this allocation in Section 1 ("Where the Numbers Point"). Present the allocation as a markdown table with columns: Fund | Ticker | Allocation. Follow the table with a brief rationale for each pick.
+
+| Fund | Ticker | Allocation |
+|------|--------|-----------|
 ${allocation.map(a =>
-  `- ${a.name} (${a.ticker}): ${a.percentage}% — ${a.reason}`
+  `| ${a.name} | ${a.ticker} | ${a.percentage}% |`
+).join('\n')}
+
+Fund rationale (weave naturally after the table):
+${allocation.map(a =>
+  `- ${a.ticker}: ${a.reason}`
 ).join('\n')}
 `;
 
