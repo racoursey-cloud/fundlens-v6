@@ -335,8 +335,15 @@ export async function runFullPipeline(
         continue;
       }
 
-      // Rule 2: Has any debt indicator that was missed (safety net)
-      if (h.isDebt || (h.issuerCategory && ['UST', 'USGA', 'CORP', 'MUN', 'SOV', 'ABS', 'AGEN', 'AGNCY'].includes(h.issuerCategory.toUpperCase()))) {
+      // Rule 2: Has debt indicators that somehow missed pre-classification (safety net)
+      // Note: CORP issuerCategory alone does NOT mean debt — it means "corporate issuer"
+      // and applies to both stocks and bonds. Only treat as FI if also flagged as debt.
+      if (h.isDebt) {
+        h.sector = 'Fixed Income';
+        finalPassClassified++;
+        continue;
+      }
+      if (h.issuerCategory && ['UST', 'USGA', 'MUN', 'SOV', 'ABS', 'AGEN', 'AGNCY'].includes(h.issuerCategory.toUpperCase())) {
         h.sector = 'Fixed Income';
         finalPassClassified++;
         continue;

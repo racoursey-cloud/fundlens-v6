@@ -47,18 +47,24 @@ const VALID_SECTORS = [
 // equity sectors.
 
 /**
- * NPORT-P issuerCategory codes that indicate debt/fixed-income securities.
- * These come directly from the EDGAR filing XML.
+ * NPORT-P issuerCategory codes that ALWAYS indicate debt/fixed-income.
+ * These issuers ONLY issue debt — if the issuerCategory is one of these,
+ * the holding is definitively Fixed Income regardless of other fields.
+ *
+ * CRITICAL: "CORP" is NOT in this set. In NPORT-P, issuerCategory=CORP
+ * means "corporate issuer" — it applies to both corporate BONDS (assetCat=DBT)
+ * and corporate EQUITIES (assetCat=EC). Treating all CORP as Fixed Income
+ * would misclassify stocks like NVIDIA, Meta, Palantir as bonds.
+ * CORP is handled separately in Rule 2b below.
  */
-const FIXED_INCOME_ISSUER_CATS = new Set([
-  'UST',   // U.S. Treasury
-  'USGA',  // U.S. Government Agency
-  'CORP',  // Corporate bonds
-  'MUN',   // Municipal bonds
-  'SOV',   // Sovereign
-  'ABS',   // Asset-backed securities
-  'AGEN',  // Agency
-  'AGNCY', // Agency (alternate code)
+const ALWAYS_DEBT_ISSUER_CATS = new Set([
+  'UST',   // U.S. Treasury — always debt
+  'USGA',  // U.S. Government Agency — always debt
+  'MUN',   // Municipal bonds — always debt
+  'SOV',   // Sovereign — always debt
+  'ABS',   // Asset-backed securities — always debt
+  'AGEN',  // Agency — always debt
+  'AGNCY', // Agency (alternate code) — always debt
 ]);
 
 /**
@@ -118,8 +124,22 @@ function preClassifyByMetadata(holdings: ResolvedHolding[]): number {
       continue;
     }
 
-    // Rule 2: Issuer category indicates fixed income
-    if (h.issuerCategory && FIXED_INCOME_ISSUER_CATS.has(h.issuerCategory.toUpperCase())) {
+    // Rule 2a: Issuer category is ALWAYS debt (UST, USGA, MUN, SOV, ABS, AGEN, AGNCY)
+    if (h.issuerCategory && ALWAYS_DEBT_ISSUER_CATS.has(h.issuerCategory.toUpperCase())) {
+      h.sector = 'Fixed Income';
+      preClassified++;
+      continue;
+    }
+
+    // Rule 2b: CORP issuerCategory — only Fixed Income if also flagged as debt.
+    // NPORT-P issuerCategory=CORP means "corporate issuer" and applies to BOTH
+    // stocks (assetCat=EC) and bonds (assetCat=DBT). We must cross-check.
+    // isDebt is already caught by Rule 1, so this catches CORP+DBT without isDebt flag.
+    if (
+      h.issuerCategory?.toUpperCase() === 'CORP' &&
+      h.assetCategory &&
+      DEBT_ASSET_CATEGORIES.has(h.assetCategory.toUpperCase())
+    ) {
       h.sector = 'Fixed Income';
       preClassified++;
       continue;
