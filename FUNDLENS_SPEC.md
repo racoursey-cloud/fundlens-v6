@@ -1,6 +1,6 @@
 # FundLens — Master Specification
 ## Version 7.0 — Single Source of Truth
-**Last updated:** April 8, 2026 (Session 12 — Full Assessment)
+**Last updated:** April 9, 2026 (Session 23 — N-MFP3, cash sweep monitoring, WATCH-1 resolved)
 **Owner:** Robert Coursey (racoursey@gmail.com)
 
 ---
@@ -132,7 +132,7 @@ Weights are user-adjustable via sliders. Defaults are 25/30/25/20. Changing weig
 
 **Enhanced expense analysis (from Tiingo fee data):** When Tiingo provides granular fee breakdowns (12b-1 marketing fees, load fees, distribution fees), these should be factored into the score. A fund with a 0.85% net expense ratio that includes a 0.25% 12b-1 fee should score lower than a fund at 0.85% with no 12b-1 fee, because the marketing fee is pure drag with zero benefit to the investor. Implementation: add a penalty modifier within the cost factor for 12b-1 fees > 0 (suggested: -5 points per 0.10% of 12b-1 fee, capped at -15).
 
-**Money market funds:** Score 50 (neutral). They are not penalized or rewarded on cost — they serve a capital preservation function.
+**Money market funds:** Scored normally on cost efficiency using MM category benchmarks (§2.7, Session 22). FDRXX at 0.015% vs ADAXX at 0.52% is a meaningful cost difference that affects composite score.
 
 ### 2.4 Factor 2: Holdings Quality (30%)
 
@@ -368,8 +368,8 @@ Sectors present in fund holdings but absent from thesis default to score 5.0 (ne
 
   **MM Factor Scoring:**
   - **Cost Efficiency (25%):** Score normally using existing money market category benchmarks (§2.3). FDRXX at 0.015% vs ADAXX at 0.52% is a meaningful difference.
-  - **Holdings Quality → Credit Quality (30%):** Repurposed as credit quality/safety proxy. Government-only MM funds (hold only UST/USG paper) score higher than prime MM funds (hold commercial paper). Prefer API data from Finnhub/FMP fund profiles; fall back to static classification with 90-day refresh cadence if API unavailable.
-  - **Momentum → 7-Day SEC Yield (25%):** Repurposed as yield comparison. The 7-day SEC yield is the MM equivalent of returns — the standardized measure of what the fund is currently earning. Prefer API data; fall back to static with 90-day refresh cadence.
+  - **Holdings Quality → Credit Quality (30%):** Repurposed as credit quality/safety proxy. Government-only MM funds (hold only UST/USG paper) score higher than prime MM funds (hold commercial paper). **Data source (Session 23):** SEC EDGAR N-MFP3 filings (`moneyMarketFundCategory` field). Falls back to static MM_FUND_DATA map if EDGAR fetch fails.
+  - **Momentum → 7-Day SEC Yield (25%):** Repurposed as yield comparison. The 7-day SEC yield is the MM equivalent of returns — the standardized measure of what the fund is currently earning. **Data source (Session 23):** SEC EDGAR N-MFP3 filings (`sevenDayNetYieldValue` field, most recent daily entry). Falls back to static MM_FUND_DATA map if EDGAR fetch fails. N-MFP3 also provides WAM/WAL (weighted average maturity/life) for future use.
   - **Positioning (20%):** Neutralized at 50. Macro sector positioning does not apply to cash instruments.
 
   **MM funds in the allocation engine:** MM funds are excluded from the Kelly exponential curve (they do not compete with equity/bond funds for position sizing). Instead, they receive allocation via the de minimis cash sweep (§3.5). Display as "MM" tier in UI.
@@ -997,7 +997,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 9, 2026 (after Session 17 — MISSING-10/15/16 resolved, all features complete)
+**Last updated:** April 9, 2026 (after Session 23 — WATCH-1 resolved, N-MFP3 live data, cash sweep monitoring)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1062,7 +1062,7 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Deterministic FRED sector priors | §2.6.2 | thesis.ts | `computeSectorPriors()`: yield curve, CPI, fed stance, employment rules — Session 6 |
 | FRED commodity series | §4.4 | fred.ts, constants.ts | WTI, Brent, Gold, Dollar Index in INDICATOR_META + fetchMacroSnapshot — Session 6 |
 | Allocation: MAD + Kelly exponential + de minimis | §3.1–3.6 | allocation.ts | MAD z-score, quality gate, e^(k×modZ), 5% de minimis floor, rounding absorption — Session 6 + Session 13 (Step 4 fixed: capture threshold → de minimis floor per §3.5). |
-| Money market global skip | §2.7 | pipeline.ts, constants.ts, allocation.ts | FDRXX/ADAXX fixed composite 50, skip all factor scoring, MM tier — Session 6 |
+| Money market fund scoring + cash sweep | §2.7, §3.5 | pipeline.ts, constants.ts, allocation.ts, edgar.ts, admin-alert.ts, brief-engine.ts | MM real factor scoring (Session 22), de minimis cash sweep with 15% hard cap (Session 22), N-MFP3 live data from EDGAR (Session 23), cash sweep yellow-zone admin alert 10-15% (Session 23). |
 | Portfolio: Invalid Date fix | §6 | Portfolio.tsx | Null/invalid timestamp guard for pipeline run display — Session 6 |
 | Tier badges: end-to-end wiring | §6.3 | scoring.ts, persist.ts, types.ts, api.ts, Portfolio.tsx, FundDetail.tsx | MAD z-score → tier computed in scoring engine, persisted to fund_scores, rendered in fund table + detail sidebar. Client-side recomputation on slider change. — Session 7 |
 | Continuous risk slider with interpolation | §3.4, §6.4 | allocation.ts, routes.ts, Portfolio.tsx, types.ts | `interpolateK()` linearly interpolates k between anchor points. Float risk_tolerance (1.0–7.0) throughout stack. — Session 9 |
@@ -1226,15 +1226,16 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 19 | UI Polish — Full-Width Brief, Dual Donuts | **DONE** — Full-width Brief layout, dual cross-linked donuts, removed floating help widget. |
 | 20 | Pipeline Stop Button, Narrative Overhaul | **DONE** — Pipeline stop button, narrative framing overhaul, Don Draper voice, markdown table rendering in briefs. |
 | 21 | EDGAR Series Fix, Fund Explorer, Admin Alerts, Tier Rename | **DONE** — Fixed EDGAR series mismatch (6 funds at risk of wrong holdings), ticker overrides for BPLBX/OIBIX, three-panel fund explorer, bar chart legends, "Breakaway" → "Top Pick" tier rename across 8 files, admin alert emails for pipeline/brief failures. |
-| 22 | MM Fund Scoring + Cash Allocation | **IN PROGRESS** — Score MM funds on real factors, route de minimis swept weight to top MM fund, data pipeline redundancy review. |
+| 22 | MM Fund Scoring + Cash Allocation | **DONE** — Real factor scoring for MM funds (cost normally, quality→credit quality, momentum→7-day yield, positioning→neutral 50). De minimis cash sweep routes swept weight to top-scoring MM fund with 15% hard cap. |
+| 23 | WATCH-1 Fix, N-MFP3, Cash Sweep Monitoring | **DONE** — Auto-regenerate Briefs on risk tolerance change (WATCH-1 resolved). Pipeline rate limiter set to 5 min. N-MFP3 EDGAR parser for live MM fund data (yield, fund type, WAM, WAL). Cash sweep yellow-zone admin alert (10-15%). FDRXX in TICKER_OVERRIDES. ADAXX not found in SEC N-MFP3; uses static fallback. |
 
-**Sessions 0–21 complete.** 16 MISSING items resolved, 12 bugs resolved, zero open issues.
+**Sessions 0–23 complete.** 16 MISSING items resolved, 12 bugs resolved, 1 WATCH item resolved, zero open issues.
 
 **Watch list:**
 
 | ID | Description | Severity | Notes |
 |----|-------------|----------|-------|
-| WATCH-1 | Risk tolerance change does not affect Brief allocation | MEDIUM-HIGH | Robert observed: changed risk, regenerated Brief, allocation unchanged. Investigate server-side risk reading path in brief-engine.ts. |
+| ~~WATCH-1~~ | ~~Risk tolerance change does not affect Brief allocation~~ | ~~MEDIUM-HIGH~~ | ✅ **RESOLVED (Session 23).** Root cause: pipeline completion did not auto-trigger Brief regeneration. Fix: `regenerateBriefsIfRiskChanged()` in brief-scheduler.ts compares current risk_tolerance against last allocation_history entry. Wired into both manual pipeline (routes.ts) and cron pipeline (cron.ts). |
 
 ---
 
@@ -1962,7 +1963,7 @@ v6 previously classified per-fund (same AAPL classified 5 times if it appeared i
 
 **Files changed:** `src/engine/edgar.ts`, `src/engine/admin-alert.ts` (new), `src/engine/cron.ts`, `src/engine/constants.ts`, `src/engine/allocation.ts`, `src/engine/pipeline.ts`, `src/engine/thesis.ts`, `src/engine/brief-engine.ts`, `src/engine/brief-scheduler.ts`, `src/engine/types.ts`, `src/prompts/editorial-policy.md`, `src/prompts/help-agent.md`, `client/src/components/DonutChart.tsx`, `client/src/pages/Research.tsx`, `client/src/pages/YourBrief.tsx`, `client/src/pages/Portfolio.tsx`
 
-## April 9, 2026 — Session 22: MM Fund Scoring + Cash Allocation (IN PROGRESS)
+## April 9, 2026 — Session 22: MM Fund Scoring + Cash Allocation (DONE)
 
 **Goal:** Score money market funds on real factors, route de minimis swept weight to top MM fund.
 
@@ -1975,6 +1976,22 @@ v6 previously classified per-fund (same AAPL classified 5 times if it appeared i
 - Cash allocation is emergent from the math: concentrated portfolios sweep less, dispersed portfolios sweep more
 - 15% cap limits annual drag to ~0.83% (Bogle estimates)
 - Monitoring: green ≤10%, yellow 10-15% (admin alert), red >15% (hard cap triggers)
+
+## April 9, 2026 — Session 23: WATCH-1 Fix, N-MFP3, Cash Sweep Monitoring (DONE)
+
+**Goal:** Resolve Session 22 pending items — WATCH-1, pipeline rate limiter, live MM data, cash sweep monitoring.
+
+**Commits:**
+
+1. **`73e624a` — Auto-regenerate Briefs on risk tolerance change (WATCH-1 fix).** `regenerateBriefsIfRiskChanged()` in brief-scheduler.ts compares current risk_tolerance (1 decimal) against last allocation_history entry. Wired into routes.ts (manual pipeline) and cron.ts (scheduled pipeline). Sequential with double CLAUDE.CALL_DELAY_MS between users. Pipeline rate limiter changed from 60s to 5 minutes for testing cadence.
+
+2. **`3880739` — N-MFP3 EDGAR parser for live MM fund data.** Replaces static MM_FUND_DATA lookups with SEC EDGAR N-MFP3 filings (monthly). `fetchMoneyMarketData()`, `findLatestNmfpFiling()`, `parseNmfpXml()` in edgar.ts. Extracts fund type, 7-day net SEC yield, WAM, WAL. Pipeline fetches N-MFP3 sequentially before MM scoring with graceful fallback to static data. FDRXX added to TICKER_OVERRIDES (CIK 278001, series S000007149). ADAXX not found in SEC N-MFP3 filings — retains static fallback.
+
+3. **`2cb7bae` — Cash sweep monitoring thresholds (§3.5).** `alertCashSweepYellow()` in admin-alert.ts fires when MM allocation lands in 10-15% yellow zone. Wired into brief-engine.ts after computeAllocations() — fire-and-forget, never blocks Brief generation. `ALLOCATION.CASH_ALERT_PCT = 0.10` threshold added to constants.ts.
+
+**Files changed:** `src/engine/edgar.ts`, `src/engine/pipeline.ts`, `src/engine/types.ts`, `src/engine/constants.ts`, `src/engine/admin-alert.ts`, `src/engine/brief-engine.ts`, `src/engine/brief-scheduler.ts`, `src/engine/cron.ts`, `src/routes/routes.ts`
+
+**Pending for next session:** Data pipeline redundancy review (deferred per Robert). ADAXX CIK resolution — ticker not found in SEC EDGAR N-MFP3 filings, needs investigation.
 
 ---
 
