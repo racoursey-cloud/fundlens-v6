@@ -766,7 +766,13 @@ ${macro.keyThemes.map(t => `- ${t}`).join('\n')}
     prompt += formatFundBlock(fund);
   }
 
-  prompt += `\nWrite the complete Investment Brief now. Use the 4-section structure from the editorial policy: "Where the Numbers Point" → "What Happened" → "What We're Watching" → "Where We Stand". Target 800-1200 words.`;
+  prompt += `\nWrite the complete Investment Brief now. Use this structure:
+1. "Where the Numbers Point" — Lead with the recommended allocation and why.
+2. "Macro Environment" — The economic landscape grounded in specific data.
+3. "Thematic Drivers" — The 2-3 forces shaping markets and connecting macro to sectors.
+4. "Asset Class & Sector Outlook" — Where tailwinds and headwinds are, and the mechanisms.
+5. "Portfolio Positioning" — How these views connect to the recommended holdings.
+Target 800-1200 words.`;
 
   return prompt;
 }

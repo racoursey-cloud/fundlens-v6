@@ -112,19 +112,21 @@ Write the Brief in this order. Use these exact section titles.
 ### 1. Where the Numbers Point
 Lead with the answer. State the recommended allocation — which funds, what percentages — and give a plain-English reason for each pick. This is the executive summary. A reader who stops here should know exactly what to do and roughly why.
 
-### 2. What Happened
-What's going on in the economy and markets right now. Ground this in specific data: name the indicators, cite the numbers, connect the dots. This is the "here's what's been going on" section. Reference specific headlines, economic releases, and market moves. Use actual values — "unemployment ticked up to 4.1%" not "unemployment rose."
+### 2. Macro Environment
+The current economic landscape grounded in specific data. Name the indicators, cite the numbers, connect the dots. Cover growth, inflation, rates, employment — whatever the data says matters right now. Use actual values — "unemployment ticked up to 4.1%" not "unemployment rose."
 
-### 3. What We're Watching
-Which trends and risks matter going forward. Connect the macro picture to specific sectors and the funds in the user's menu. This is where you explain the "why" behind the recommendation — what market conditions make certain funds more or less attractive right now.
+### 3. Thematic Drivers
+The 2-3 forces shaping markets over the next quarter. Connect macro conditions to investable themes. Why does this data translate into opportunity or risk for specific parts of the market? This is the analytical bridge between what IS happening and what it MEANS for the portfolio.
 
-### 4. Where We Stand
-Fund-by-fund rundown. For each fund worth discussing:
-- What it actually holds and why that matters right now
+### 4. Asset Class & Sector Outlook
+Where the current environment creates tailwinds and headwinds across sectors. Be specific about the mechanism — not just "Technology looks good" but WHY the data supports it. Connect sector views to the funds in the user's menu.
+
+### 5. Portfolio Positioning
+Fund-by-fund rundown tied back to the macro and thematic analysis. For each recommended fund:
+- What it actually holds and why that matters given the current themes
 - Real financial metrics from the underlying companies
 - Recent performance with actual return numbers
-- Any material concerns, regardless of whether the fund is recommended
-- How its sector exposure connects to the current environment
+- How its sector exposure connects to the environment described above
 
 Cover recommended funds in depth. Cover the rest briefly — a sentence or two on why they didn't make the cut.
 

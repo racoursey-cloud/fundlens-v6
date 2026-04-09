@@ -38,22 +38,31 @@ interface BriefSection {
  * The 4 canonical section headers from the editorial policy (§7.2).
  * Used for matching — case-insensitive, ignores leading "## ".
  */
-const W_SECTION_TITLES = [
+// Recognises both old W-structure and new industry-standard headers
+const SECTION_TITLES = [
   'Where the Numbers Point',
+  'Macro Environment',
+  'Thematic Drivers',
+  'Asset Class & Sector Outlook',
+  'Portfolio Positioning',
+  // Legacy fallbacks (pre-v6.2 briefs)
   'What Happened',
   "What We're Watching",
   'Where We Stand',
 ];
 
 /**
- * Accent colors for each section of the W structure.
- * Provides subtle visual differentiation without overwhelming the dark theme.
+ * Accent colors for each section — matches SECTION_TITLES order.
  */
 const SECTION_ACCENTS = [
-  theme.colors.accentBlue,  // Section 1: recommendation — blue
-  theme.colors.success,     // Section 2: narrative — green
-  theme.colors.warning,     // Section 3: risks — amber
-  theme.colors.accentBlue,  // Section 4: fund detail — blue
+  theme.colors.accentBlue,  // Where the Numbers Point
+  theme.colors.success,     // Macro Environment
+  theme.colors.warning,     // Thematic Drivers
+  theme.colors.accentBlue,  // Asset Class & Sector Outlook
+  '#8B5CF6',                // Portfolio Positioning — purple
+  theme.colors.success,     // Legacy: What Happened
+  theme.colors.warning,     // Legacy: What We're Watching
+  theme.colors.accentBlue,  // Legacy: Where We Stand
 ];
 
 /**
@@ -72,7 +81,7 @@ function parseBriefSections(md: string): { preamble: string; sections: BriefSect
   const flushSection = () => {
     if (currentTitle) {
       // Match against canonical W titles for index assignment
-      const canonicalIndex = W_SECTION_TITLES.findIndex(
+      const canonicalIndex = SECTION_TITLES.findIndex(
         (t) => currentTitle.toLowerCase().includes(t.toLowerCase())
       );
       sections.push({

@@ -333,15 +333,18 @@ Content rules:
 - If the data is mixed or unclear for a sector, score it in the 4.0–5.9 neutral range and say so.
 - When deterministic priors are provided, acknowledge them in your reasoning. You may adjust them but must explain any deviation.
 
-Narrative structure (use these EXACT section headers separated by double newlines):
+Narrative structure (use these EXACT section headers separated by double newlines).
+This follows the framing used by BlackRock, PIMCO, and T. Rowe Price in their quarterly outlooks:
 
-**What Happened** — What's going on in the economy and markets right now. Ground this in specific data: name indicators, cite numbers, connect the dots. Use actual values — "unemployment ticked up to 4.1%" not "unemployment rose."
+**Macro Environment** — The current economic landscape grounded in specific data. Name indicators, cite numbers, connect the dots. Use actual values — "unemployment ticked up to 4.1%" not "unemployment rose." Cover growth, inflation, rates, employment — whatever the data says matters right now.
 
-**What We're Watching** — Which trends and risks matter going forward. Connect the macro picture to specific sectors. This is where you explain what market conditions make certain sectors more or less attractive.
+**Thematic Drivers** — The 2-3 forces shaping markets over the next quarter. Connect macro conditions to investable themes. Why does this data point translate into opportunity or risk for specific parts of the market? This is the analytical bridge between what IS and what it MEANS for the portfolio.
 
-**Where We Stand** — Sector-level summary. Which sectors the current data favors, which face headwinds, and why. Keep it tight — 2-3 sentences per group.
+**Asset Class & Sector Outlook** — Where the current environment creates tailwinds and headwinds. Which sectors benefit from these themes, which face pressure, and why. Be specific about the mechanism — not just "Technology looks good" but WHY the data supports it. Keep it tight — 2-3 sentences per group.
 
-Keep paragraphs short (2-4 sentences). Separate each section with a double newline and its header on its own line. Total narrative: 3-5 paragraphs across the three sections.`;
+**Portfolio Positioning** — How these views translate to the recommended allocation. What the portfolio emphasizes, what it underweights, and the reasoning that ties back to the macro picture. This connects the analysis to action.
+
+Keep paragraphs short (2-4 sentences). Separate each section with a double newline and its header on its own line. Total narrative: 4-6 paragraphs across the four sections.`;
 }
 
 function buildUserPrompt(
@@ -394,7 +397,7 @@ You must include a score for each of these sectors: ${sectorList}
 Respond with ONLY valid JSON. No markdown, no backticks, no preamble.
 Exact structure required:
 {
-  "narrative": "3-5 paragraphs with section headers (What Happened, What We're Watching, Where We Stand) separated by double newlines. Use buddy voice — warm, specific, no jargon.",
+  "narrative": "4-6 paragraphs with section headers (Macro Environment, Thematic Drivers, Asset Class & Sector Outlook, Portfolio Positioning) separated by double newlines. Use buddy voice — warm, specific, no jargon.",
   "sectorPreferences": {
     "Technology": { "score": 7.3, "reason": "one-sentence explanation" },
     "Healthcare": { "score": 5.8, "reason": "..." },

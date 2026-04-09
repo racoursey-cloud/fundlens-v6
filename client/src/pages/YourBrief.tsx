@@ -118,18 +118,28 @@ interface BriefSection {
   index: number;
 }
 
-const W_SECTION_TITLES = [
+// Recognises both old W-structure and new industry-standard headers
+const SECTION_TITLES = [
   'Where the Numbers Point',
+  'Macro Environment',
+  'Thematic Drivers',
+  'Asset Class & Sector Outlook',
+  'Portfolio Positioning',
+  // Legacy fallbacks (pre-v6.2 briefs)
   'What Happened',
   "What We're Watching",
   'Where We Stand',
 ];
 
 const SECTION_ACCENTS = [
-  theme.colors.accentBlue,
-  theme.colors.success,
-  theme.colors.warning,
-  theme.colors.accentBlue,
+  theme.colors.accentBlue,   // Where the Numbers Point
+  theme.colors.success,      // Macro Environment
+  theme.colors.warning,      // Thematic Drivers
+  theme.colors.accentBlue,   // Asset Class & Sector Outlook
+  '#8B5CF6',                 // Portfolio Positioning — purple
+  theme.colors.success,      // Legacy: What Happened
+  theme.colors.warning,      // Legacy: What We're Watching
+  theme.colors.accentBlue,   // Legacy: Where We Stand
 ];
 
 function parseBriefSections(md: string): { preamble: string; sections: BriefSection[] } {
@@ -141,7 +151,7 @@ function parseBriefSections(md: string): { preamble: string; sections: BriefSect
 
   const flushSection = () => {
     if (currentTitle) {
-      const canonicalIndex = W_SECTION_TITLES.findIndex(
+      const canonicalIndex = SECTION_TITLES.findIndex(
         (t) => currentTitle.toLowerCase().includes(t.toLowerCase())
       );
       sections.push({

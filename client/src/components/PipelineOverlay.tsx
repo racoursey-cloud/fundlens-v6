@@ -43,6 +43,8 @@ interface Props {
   currentStep?: number | null;
   /** Step message from server */
   stepMessage?: string | null;
+  /** Called when user clicks Stop — parent should abort pipeline & reset state */
+  onStop?: () => void;
 }
 
 // ─── Step indicator ─────────────────────────────────────────────────────────
@@ -87,7 +89,7 @@ function StepDot({ status, index }: { status: 'done' | 'active' | 'pending'; ind
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export function PipelineOverlay({ isRunning, currentStep, stepMessage }: Props) {
+export function PipelineOverlay({ isRunning, currentStep, stepMessage, onStop }: Props) {
   // Use real step from server if available, otherwise simulate
   const [simulatedStep, setSimulatedStep] = useState(0);
 
@@ -206,6 +208,32 @@ export function PipelineOverlay({ isRunning, currentStep, stepMessage }: Props) 
               );
             })}
           </div>
+
+          {/* Stop button */}
+          {onStop && (
+            <button
+              onClick={onStop}
+              style={{
+                marginTop: 24, width: '100%', height: 40,
+                background: 'transparent',
+                border: `1px solid rgba(239,68,68,0.45)`,
+                borderRadius: 8, cursor: 'pointer',
+                color: '#ef4444', fontSize: 13, fontWeight: 600,
+                fontFamily: theme.fonts.body, letterSpacing: '0.01em',
+                transition: 'background 0.15s, border-color 0.15s',
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.12)';
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(239,68,68,0.65)';
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(239,68,68,0.45)';
+              }}
+            >
+              Stop Analysis
+            </button>
+          )}
         </div>
       </div>
     </>

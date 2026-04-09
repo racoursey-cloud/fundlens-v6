@@ -194,6 +194,18 @@ export function AppShell() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [activeRunId]);
 
+  const handleStopAnalysis = useCallback(async () => {
+    if (activeRunId) {
+      await abortPipeline(activeRunId).catch(() => {});
+    }
+    triggerConfirmedRef.current = false;
+    setIsRunning(false);
+    setSource('seed');
+    setCurrentStep(null);
+    setStepMessage(null);
+    setActiveRunId(null);
+  }, [activeRunId]);
+
   const handleRefreshAnalysis = async () => {
     triggerConfirmedRef.current = false; // reset guard — trigger in flight
     setIsRunning(true);
@@ -393,7 +405,7 @@ export function AppShell() {
       )}
 
       {/* ═══ PIPELINE OVERLAY (v5.1 pattern) ══════════════════════════ */}
-      <PipelineOverlay isRunning={isRunning} currentStep={currentStep} stepMessage={stepMessage} />
+      <PipelineOverlay isRunning={isRunning} currentStep={currentStep} stepMessage={stepMessage} onStop={handleStopAnalysis} />
 
       {/* ═══ HELP CHAT (floating widget) ═════════════════════════════ */}
       {/* HelpChat floating button removed — Help tab covers it */}
