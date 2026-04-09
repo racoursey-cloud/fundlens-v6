@@ -782,6 +782,20 @@ export async function runFullPipeline(
       }
     }
 
+    // F-2 fix: Build top holdings list from ALL holdings (equity + bonds)
+    // for the Your Brief page. holdingsQuality.holdingScores only contains
+    // equity holdings, so bond-heavy funds show "No holdings data".
+    const topHoldings = [...holdings]
+      .filter(h => h.pctOfNav > 0)
+      .sort((a, b) => b.pctOfNav - a.pctOfNav)
+      .slice(0, 10)
+      .map(h => ({
+        name: h.name,
+        ticker: h.ticker,
+        sector: h.sector || null,
+        weight: Math.round(h.pctOfNav * 10) / 10,
+      }));
+
     fundScoreInputs.push({
       ticker: fund.ticker,
       name: fund.name,
@@ -792,6 +806,7 @@ export async function runFullPipeline(
         positioning: { score: positioning.score, reasoning: positioning.reasoning },
         momentum,
         sectorExposure,
+        topHoldings,
       },
     });
 

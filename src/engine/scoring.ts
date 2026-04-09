@@ -85,6 +85,8 @@ export interface FundCompositeScore {
     momentum: MomentumScore;
     /** Sector exposure map for the UI donut chart (sector → weight as fraction of NAV) */
     sectorExposure?: Record<string, number>;
+    /** F-2 fix: Top holdings by weight (all holdings, not just equity) for the Brief page */
+    topHoldings?: Array<{ name: string; ticker: string | null; sector: string | null; weight: number }>;
   };
 }
 

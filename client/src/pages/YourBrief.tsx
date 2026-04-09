@@ -527,21 +527,34 @@ export function YourBrief() {
         sectors.sort((a, b) => b.weight - a.weight);
       }
 
-      // Top holdings — nested inside holdingsQuality.holdingScores
-      const qualityData = details?.holdingsQuality as {
-        holdingScores?: Array<{ name?: string; ticker?: string; weight?: number }>;
-      } | undefined;
-      const rawHoldings = qualityData?.holdingScores;
+      // Top holdings — F-2 fix: read from factorDetails.topHoldings (all holdings)
+      // instead of holdingsQuality.holdingScores (equity-only, empty for bond funds).
+      const topHoldingsData = details?.topHoldings as
+        Array<{ name?: string; ticker?: string; sector?: string | null; weight?: number }> | undefined;
       const holdings: FundExplorerData['holdings'] = [];
-      if (rawHoldings && rawHoldings.length > 0) {
-        // weight is pctOfNav in whole-percent units (e.g. 4.89 = 4.89%)
-        for (const h of rawHoldings) {
+      if (topHoldingsData && topHoldingsData.length > 0) {
+        for (const h of topHoldingsData) {
           const w = h.weight ?? 0;
           if (w > 0) {
             holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10 });
           }
         }
-        holdings.sort((a, b) => b.weight - a.weight);
+        // topHoldings already sorted by weight in pipeline.ts
+      } else {
+        // Fallback: try legacy holdingsQuality.holdingScores for older pipeline runs
+        const qualityData = details?.holdingsQuality as {
+          holdingScores?: Array<{ name?: string; ticker?: string; weight?: number }>;
+        } | undefined;
+        const rawHoldings = qualityData?.holdingScores;
+        if (rawHoldings && rawHoldings.length > 0) {
+          for (const h of rawHoldings) {
+            const w = h.weight ?? 0;
+            if (w > 0) {
+              holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10 });
+            }
+          }
+          holdings.sort((a, b) => b.weight - a.weight);
+        }
       }
 
       map.set(ticker, { sectors, holdings: holdings.slice(0, 10) });
