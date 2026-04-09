@@ -69,6 +69,14 @@ const briefRateLimit = rateLimit({
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
+const helpChatRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,                    // 20 help questions per hour
+  message: { error: 'Help chat rate limit exceeded. Max 20 per hour.' },
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
+  validate: { trustProxy: false, xForwardedForHeader: false },
+});
+
 // ─── SESSION 0 SECURITY: Admin-only middleware ────────────────────────────
 
 function requireAdmin(req: Request, res: Response, next: NextFunction): void {
@@ -988,7 +996,7 @@ router.get('/api/monitor/cron', requireAuth, async (req: Request, res: Response)
  * Body: { message: string, history?: Array<{ role, content }> }
  * Returns: { reply: string }
  */
-router.post('/api/help/chat', requireAuth, async (req: Request, res: Response) => {
+router.post('/api/help/chat', requireAuth, helpChatRateLimit, async (req: Request, res: Response) => {
   const { message, history } = req.body;
 
   if (!message || typeof message !== 'string' || message.trim().length === 0) {

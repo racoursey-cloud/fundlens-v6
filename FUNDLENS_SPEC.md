@@ -722,6 +722,8 @@ Each step wrapped in try/catch. Partial results flow forward. Non-fatal failures
 | pages/Portfolio.tsx | Main portfolio view |
 | pages/Briefs.tsx | Investment Brief page |
 | pages/Pipeline.tsx | Pipeline monitoring page |
+| pages/Help.tsx | Help page with FAQs and Claude Haiku Q&A |
+| components/HelpChat.tsx | Floating help chat widget (slide-up panel) |
 
 ### 5.6 Environment Variables (Railway)
 
@@ -808,6 +810,9 @@ HHI (Herfindahl-Hirschman Index) of sector exposure displayed per fund in the de
 - Investment Brief page (current + history)
 - Responsive: mobile bottom tab bar, tablet collapsed sidebar, desktop full sidebar
 - Error boundary wrapping entire app
+- Help page with static FAQs and Claude Haiku Q&A chat
+- Floating help chat widget (bottom-right "?" button, slide-up panel)
+- Navigation: Portfolio | Thesis | Briefs | Settings | Help
 
 ---
 
@@ -1053,6 +1058,9 @@ This section tells future sessions exactly what state the codebase is in relativ
 | ThesisData typed API client | §2.6.1 | api.ts | Typed ThesisData interface for /api/thesis/latest. — Session 11 |
 | Client-side allocation engine | §3.1–3.6, §5.2 | client/src/engine/allocation.ts | Pure-math port of server allocation.ts. Inlined constants, zero server imports. computeClientAllocations() for instant Portfolio recomputation. — Session 13 |
 | Portfolio: real Kelly allocation display | §6.4, §6.7 | Portfolio.tsx | Fund Allocation donut powered by real Kelly allocations. Alloc column in 8-column fund table. Both risk + weight sliders trigger instant recomputation via useMemo. — Session 13 |
+| Help page with FAQs | §6.7, MISSING-9 | Help.tsx, App.tsx, AppShell.tsx | 10-item FAQ accordion + Claude Haiku Q&A chat. /help route. 5-tab nav. — Session 16 |
+| Help chat endpoint with rate limiting | §5.3, MISSING-9 | routes.ts, help-agent.ts, help-agent.md | POST /api/help/chat, 20/hour rate limit, scoped system prompt. — Session 16 |
+| Help chat floating widget | MISSING-9 | HelpChat.tsx, AppShell.tsx | Slide-up "?" panel, message history, typing indicator. — Pre-existing (Session 12) |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -1117,9 +1125,9 @@ Status: ✅ `computeHHI()` utility in `client/src/utils/hhi.ts`. Computes Herfin
 Spec: Tiingo is primary source for fund NAV history (split-adjusted). Fee data (12b-1, loads) from Finnhub.
 Status: ✅ Tiingo prices working (fetchTiingoPrices, convertTiingoPricesToFmpFormat). Pipeline Step 8 uses Tiingo → FMP fallback for prices. ✅ Fee data (12b-1, frontLoad) now comes from **Finnhub** (`fetchFinnhubExpenseRatio` returns `fee12b1` + `frontLoad`). Dead Tiingo fee code removed in Session 5. Pipeline Step 7b constructs NormalizedFeeData from Finnhub for cost-efficiency scoring.
 
-**MISSING-9: Help Section — FAQs + Live Claude Chat (Robert's request)**
-Spec: Not yet in spec — feature idea from build planning session. Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
-Status: Planned for Session 9 of the build roadmap.
+**~~MISSING-9: Help Section — FAQs + Live Claude Chat (Robert's request)~~ — RESOLVED (Session 16)**
+Spec: Help section with static FAQs and Claude Haiku chat scoped strictly to FundLens questions.
+Status: ✅ Complete. `Help.tsx` page with 10 FAQ accordion items + Claude Haiku Q&A chat section. Route at `/help`. Help tab added to 5-tab navigation (Portfolio | Thesis | Briefs | Settings | Help). `HelpChat.tsx` floating widget (slide-up panel from "?" button) already existed from prior session. Server endpoint `POST /api/help/chat` with `helpChatRateLimit` (20/hour). `help-agent.ts` engine + `help-agent.md` system prompt. — Session 16.
 
 **MISSING-10: Investment Brief Redesign — 4-Section Structure + Advisor Voice (§7.2–7.9)**
 Spec: Complete rewrite of §7. 4-section brief ("Where the Numbers Point" → "What Happened" → "What We're Watching" → "Where We Stand"). New voice guidelines (knowledgeable buddy, not research analyst). "Behind the curtain" rule prohibiting model language. Raw data feed to Claude (not scores). Allocation persistence for "What Changed" delta.
@@ -1355,7 +1363,13 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 
 3. **Bug tracker cleared.** All 12 bugs from Sessions 14–15 now resolved. Zero open bugs.
 
-**Files changed:** `src/engine/cusip.ts`, `src/engine/holdings.ts`, `src/engine/types.ts`, `src/prompts/editorial-policy.md`, `BUGS.md`, `FUNDLENS_SPEC.md`
+4. **Help page with FAQs (MISSING-9, partial).** Created `Help.tsx` with 10-item FAQ accordion covering scoring, allocation, risk slider, Investment Brief, data freshness, and trust. Added `/help` route to `App.tsx`. Added "Help" tab to 5-tab navigation in `AppShell.tsx`. Claude Haiku Q&A chat section below FAQs.
+
+5. **Help chat rate limiting.** Added `helpChatRateLimit` (20 req/hour per user) to `POST /api/help/chat` endpoint. Follows existing rate limiter pattern from pipeline and brief endpoints.
+
+6. **MISSING-9 fully resolved.** Help page + floating chat widget + server endpoint + rate limiting + admin prompt reload all in place.
+
+**Files changed:** `src/engine/cusip.ts`, `src/engine/holdings.ts`, `src/engine/types.ts`, `src/prompts/editorial-policy.md`, `client/src/pages/Help.tsx` (new), `client/src/App.tsx`, `client/src/components/AppShell.tsx`, `src/routes/routes.ts`, `BUGS.md`, `FUNDLENS_SPEC.md`
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 

@@ -37,6 +37,7 @@ import { Thesis } from './pages/Thesis';
 import { Briefs } from './pages/Briefs';
 import { Settings } from './pages/Settings';
 import { Pipeline } from './pages/Pipeline';
+import { Help } from './pages/Help';
 
 export function App() {
   return (
@@ -65,6 +66,7 @@ export function App() {
               <Route path="/thesis" element={<Thesis />} />
               <Route path="/briefs" element={<Briefs />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/help" element={<Help />} />
               <Route path="/pipeline" element={<Pipeline />} />
             </Route>
 

@@ -28,6 +28,7 @@ const TABS = [
   { path: '/thesis',  label: 'Thesis' },
   { path: '/briefs',  label: 'Briefs' },
   { path: '/settings', label: 'Settings' },
+  { path: '/help',    label: 'Help' },
 ];
 
 // ─── Source badge (v5.1 pattern) ──────────────────────────────────────────────
