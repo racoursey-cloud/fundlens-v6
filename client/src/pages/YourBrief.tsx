@@ -515,24 +515,30 @@ export function YourBrief() {
       const rawSectors = (details?.sectorExposure || details?.sectors) as Record<string, number> | undefined;
       const sectors: FundExplorerData['sectors'] = [];
       if (rawSectors) {
+        // Detect if weights are 0–1 decimals or already percentages
+        const maxVal = Math.max(...Object.values(rawSectors));
+        const isDecimal = maxVal <= 1.0;
         for (const [sector, weight] of Object.entries(rawSectors)) {
           if (weight > 0) {
-            sectors.push({ sector, weight: Math.round(weight * 1000) / 10, color: SECTOR_COLORS[sector] ?? '#71717a' });
+            const pct = isDecimal ? Math.round(weight * 1000) / 10 : Math.round(weight * 10) / 10;
+            sectors.push({ sector, weight: pct, color: SECTOR_COLORS[sector] ?? '#71717a' });
           }
         }
         sectors.sort((a, b) => b.weight - a.weight);
       }
 
-      // Top holdings
-      const rawHoldings = (details?.holdings || details?.topHoldings) as Array<{
-        name?: string; ticker?: string; weight?: number; pct_of_nav?: number;
-      }> | undefined;
+      // Top holdings — nested inside holdingsQuality.holdingScores
+      const qualityData = details?.holdingsQuality as {
+        holdingScores?: Array<{ name?: string; ticker?: string; weight?: number }>;
+      } | undefined;
+      const rawHoldings = qualityData?.holdingScores;
       const holdings: FundExplorerData['holdings'] = [];
-      if (rawHoldings) {
+      if (rawHoldings && rawHoldings.length > 0) {
+        // weight is pctOfNav in whole-percent units (e.g. 4.89 = 4.89%)
         for (const h of rawHoldings) {
-          const w = h.weight ?? h.pct_of_nav ?? 0;
+          const w = h.weight ?? 0;
           if (w > 0) {
-            holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 1000) / 10 });
+            holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10 });
           }
         }
         holdings.sort((a, b) => b.weight - a.weight);
