@@ -14,55 +14,27 @@
 
 ## Open Bugs
 
-### BUG-2: Money market composite ≠ 50
-**Severity:** MEDIUM
-**Found in:** Task 14.3 (Scoring Validation)
-**Spec reference:** §2.7
-**Description:** Spec says money market funds get "fixed composite 50." FDRXX and ADAXX have correct raw factor scores (all 50), but their composite is 33, not 50.
-**Expected behavior:** Money market funds display composite score = 50.
-**Actual behavior:** Composite = 33. Raw 50s are fed through z-standardization with the rest of the universe, yielding negative z-scores (universe mean is pulled up by non-MM funds), which maps to composite 33 via CDF.
-**Suggested fix:** Exclude MM funds from z-standardization and set composite = 50 directly, OR override composite to 50 post-scoring in `scoreAndRankFunds()`.
-**Files likely affected:** `src/engine/scoring.ts`
-
 ### BUG-3: 0% holdings coverage on multiple funds
 **Severity:** MEDIUM
+**Status: DEFERRED — requires international CUSIP resolution improvements and bond quality scoring investigation**
 **Found in:** Task 14.3 (Scoring Validation)
 **Spec reference:** §2.4.1
 **Description:** VFWAX (international index, 50 holdings) and WFPRX (bond fund, 10 holdings) have 0% quality coverage — zero holdings scored. VFWAX: CUSIP resolver cannot resolve non-US holdings to FMP tickers. WFPRX: pure bond fund with no equity fundamentals.
 **Expected behavior:** International holdings should be resolved where possible. Bond funds should use bond quality scoring (§2.4.2).
 **Actual behavior:** Both funds default to quality = 50 (neutral). The quality factor is effectively inert for any fund with international or bond-heavy holdings.
-**Suggested fix:** For VFWAX, investigate whether OpenFIGI/FMP can resolve international CUSIPs (many large international companies have US ADRs). For WFPRX, confirm bond quality scoring from NPORT-P debt fields is firing. Low urgency — the z-score + CDF pipeline handles this gracefully by normalizing quality = 50 to a neutral position.
+**Why deferred:** Fixing this requires OpenFIGI/FMP international CUSIP resolution research (VFWAX) and NPORT-P bond field parsing improvements (WFPRX). The z-score + CDF pipeline handles this gracefully by normalizing quality = 50 to a neutral position — no user-visible incorrect behavior.
 **Files likely affected:** `src/engine/cusip.ts`, `src/engine/quality.ts`, `src/engine/holdings.ts`
-
-### BUG-10: Editorial policy fallback says "research analyst"
-**Severity:** MEDIUM
-**Found in:** Task 14.5 (Brief Generation Test)
-**Spec reference:** §7.3
-**Description:** If `editorial-policy.md` cannot be found on the filesystem, `brief-scheduler.ts` line 92 falls back to: "You are a research analyst writing an Investment Brief for a 401(k) participant." This is the opposite of the spec §7.3 voice ("buddy who's good at markets"). The fallback also has no 4-section structure guidance and no behind-the-curtain rule.
-**Expected behavior:** Fallback should use correct voice and include minimal structure guidance.
-**Actual behavior:** Fallback uses research analyst voice with no structural or editorial constraints.
-**Suggested fix:** Rewrite the fallback string to match the spec voice and include the 4 W section names at minimum. Also add a startup log warning if the editorial policy file is not found, so the issue is visible in Railway logs.
-**Files likely affected:** `src/engine/brief-scheduler.ts`
 
 ### BUG-11: Voice still too Wall Street
 **Severity:** MEDIUM
+**Status: DEFERRED — requires editorial prompt tuning + evaluation after BUG-9 deploy**
 **Found in:** Task 14.5 (Brief Generation Test)
 **Spec reference:** §7.3
-**Description:** The Brief voice, while improved from the Sonnet-era Briefs, still uses Wall Street jargon that the "buddy at the cookout" wouldn't: "dry powder," "negative real returns," "margin headwind," "rate-sensitive." Spec §7.3 says the voice should be "a knowledgeable friend who does well in the market" who "explains it over coffee without dumbing it down or showing off."
-**Expected behavior:** Plain English explanations accessible to someone who's smart but not a financial professional.
+**Description:** The Brief voice uses Wall Street jargon that the "buddy at the cookout" wouldn't: "dry powder," "negative real returns," "margin headwind," "rate-sensitive."
+**Expected behavior:** Plain English accessible to someone who's smart but not a financial professional.
 **Actual behavior:** Reads more like a polished financial advisor than a buddy at work.
-**Suggested fix:** Add explicit jargon avoidance list to editorial-policy.md with alternatives: "dry powder" → "cash on hand," "negative real returns" → "losing money after inflation," "margin headwind" → "pressure on profits," etc. Also add 2-3 more positive voice examples to anchor the tone. This may also improve naturally once BUG-9 is deployed and Claude has real financial data to cite instead of relying on abstract characterizations.
+**Why deferred:** BUG-9 (ratio name mismatch fix, commit ac1409c) was deployed in Session 14 and BUG-10 (editorial fallback fix) was just deployed. The next Brief generated should benefit from real financial data reaching Claude for the first time + correct voice in the fallback. Evaluate the next Brief's voice before adding jargon avoidance lists to editorial-policy.md. The fix may be unnecessary after the data improvements.
 **Files likely affected:** `src/prompts/editorial-policy.md`
-
-### BUG-12: Stalled pipeline run in database
-**Severity:** LOW
-**Found in:** Task 14.6 (Performance Measurement)
-**Spec reference:** §5.4
-**Description:** Pipeline run `e6f6b1e5` is stuck in "running" status with 0 funds processed. This blocks new pipeline runs from starting (the guard in `cron.ts` prevents overlapping runs).
-**Expected behavior:** Runs that crash or stall should be automatically detected and cleaned up.
-**Actual behavior:** Stalled run persists indefinitely, blocking the cron job.
-**Suggested fix:** Add a staleness check: if a run has been "running" for >15 minutes, automatically mark it as failed. This is the same issue Robert fixed manually earlier in the session. Immediate fix: `UPDATE pipeline_runs SET status = 'failed', completed_at = now() WHERE id = 'e6f6b1e5-...'`
-**Files likely affected:** `src/engine/cron.ts`, `src/engine/pipeline.ts`
 
 ---
 
@@ -91,6 +63,24 @@
 **Found in:** Task 14.5
 **Fix:** Removed all "written by Claude Opus" text from Briefs.tsx (3 occurrences). Changed subtitle to "Your personalized investment brief." Removed `model_used` display from brief detail header. Removed "Claude Opus" from the generating overlay. No model names visible in the UI.
 **Files changed:** `client/src/pages/Briefs.tsx`
+
+### BUG-2: Money market composite ≠ 50 (RESOLVED — Session 15)
+**Severity was:** MEDIUM
+**Found in:** Task 14.3
+**Fix:** MM funds (FDRXX, ADAXX) were included in z-standardization despite having fixed raw scores of 50. Universe mean pulled above 50 by high-scoring equity funds, giving MM funds negative z-scores and composite = 33. Fixed by overriding MM fund composites to exactly 50 with zeroed z-scores in `scoreAndRankFunds()`, bypassing z-standardization for these tickers.
+**Files changed:** `src/engine/scoring.ts`
+
+### BUG-10: Editorial policy fallback says "research analyst" (RESOLVED — Session 15)
+**Severity was:** MEDIUM
+**Found in:** Task 14.5
+**Fix:** Rewrote the fallback string in `brief-scheduler.ts` to match spec §7.3 voice ("buddy who's good at investing") with 4 W section structure, behind-the-curtain rule, and anti-jargon guidance. Added startup warning log when editorial-policy.md is not found. Previous fallback said "research analyst" — the opposite of the spec voice.
+**Files changed:** `src/engine/brief-scheduler.ts`
+
+### BUG-12: Stalled pipeline run blocks cron (RESOLVED — Session 15)
+**Severity was:** LOW
+**Found in:** Task 14.6
+**Fix:** Reduced stale run cleanup threshold from 2 hours to 15 minutes in `cleanupStaleRuns()`. Pipeline runs in ~70 seconds, so 15 minutes is generous but catches stalls much faster. The cleanup already ran every 30 minutes and at startup — only the threshold was too lenient.
+**Files changed:** `src/engine/cron.ts`
 
 ---
 
@@ -122,8 +112,8 @@
 |----------|------|----------|-------|
 | CRITICAL | 0 | 1 | 1 |
 | HIGH | 0 | 3 | 3 |
-| MEDIUM | 3 | 2 | 5 |
-| LOW | 2 | 1 | 3 |
-| **Total** | **5** | **7** | **12** |
+| MEDIUM | 2 (deferred) | 4 | 6 |
+| LOW | 0 | 2 | 2 |
+| **Total** | **2** | **10** | **12** |
 
-**Remaining open bugs:** BUG-2 (MM composite ≠ 50), BUG-3 (0% coverage on intl/bond funds), BUG-10 (editorial policy fallback), BUG-11 (voice too Wall Street), BUG-12 (stalled pipeline run). All MEDIUM or LOW — no HIGH or CRITICAL issues remain.
+**Remaining open bugs:** BUG-3 (0% coverage on intl/bond funds — deferred, requires CUSIP resolver work) and BUG-11 (voice too Wall Street — deferred, evaluate after BUG-9 + BUG-10 fixes deploy). Both MEDIUM with graceful degradation. No blocking issues.

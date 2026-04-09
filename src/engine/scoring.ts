@@ -340,6 +340,22 @@ export function scoreAndRankFunds(
   const useZSpace = zCost !== null && zQuality !== null && zMomentum !== null && zPositioning !== null;
 
   const withComposites = fundScores.map((f, i) => {
+    // BUG-2 fix (§2.7): Money market funds get fixed composite 50, skip z-standardization.
+    // They're included in the z-standardization arrays for index alignment but their
+    // composite is overridden here so z-score distortion from other funds can't shift them.
+    if (MONEY_MARKET_TICKERS.has(f.ticker)) {
+      return {
+        ...f,
+        composite: 50,
+        zScores: {
+          costEfficiency: 0,
+          holdingsQuality: 0,
+          positioning: 0,
+          momentum: 0,
+        } as FundZScores,
+      };
+    }
+
     let composite: number;
     let zScores: FundZScores;
 

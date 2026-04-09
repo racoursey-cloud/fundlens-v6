@@ -88,8 +88,10 @@ function loadEditorialPolicy(): string {
     throw new Error('editorial-policy.md not found in any expected location');
   } catch (err) {
     console.error(`[brief-scheduler] Failed to load editorial policy: ${err}`);
-    // Fallback: minimal policy so Briefs can still generate
-    return 'You are a research analyst writing an Investment Brief for a 401(k) participant. Be factual, cite specific metrics, never imply certainty about future performance. Target 800-1200 words.';
+    console.warn('[brief-scheduler] Using fallback editorial policy — editorial-policy.md not found');
+    // BUG-10 fix: Fallback matches spec §7.3 voice + 4 W sections.
+    // Previous fallback said "research analyst" — opposite of the spec voice.
+    return 'You are writing an Investment Brief for a FundLens user. Think of yourself as their buddy who happens to be really good at investing — the friend they call when they want to know what\'s going on with their 401(k). You know your stuff, you tell it straight, and you lead with what matters.\n\nStructure the Brief in exactly four sections:\n1. "Where the Numbers Point" — allocation table + per-fund rationale\n2. "What Happened" — macro narrative + what changed since last time\n3. "What We\'re Watching" — key risks and themes ahead\n4. "Where We Stand" — fund-by-fund analysis with specific financials\n\nRules: Be factual. Cite specific metrics (margins, P/E, returns). Never imply certainty about future performance. Never reveal model names, scores, z-scores, or internal methodology. Write like a knowledgeable friend explaining over coffee — no jargon, no Wall Street showboating. Target 800-1200 words.';
   }
 }
 

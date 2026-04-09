@@ -177,11 +177,13 @@ async function scheduledBriefDelivery(): Promise<void> {
  * the next scheduled run can proceed.
  */
 async function cleanupStaleRuns(): Promise<void> {
-  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  // BUG-12 fix: Pipeline runs in ~70s. 15 minutes is generous but catches stalls
+  // much faster than the previous 2-hour threshold.
+  const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
   const { data: staleRuns } = await supaSelect<PipelineRunRow[]>('pipeline_runs', {
     status: 'eq.running',
-    'started_at': `lt.${twoHoursAgo}`,
+    'started_at': `lt.${fifteenMinutesAgo}`,
   });
 
   if (staleRuns && staleRuns.length > 0) {
@@ -189,7 +191,7 @@ async function cleanupStaleRuns(): Promise<void> {
       console.warn(`[cron] Marking stale pipeline run ${stale.id} as failed (started ${stale.started_at})`);
       await supaUpdate('pipeline_runs', {
         status: 'failed',
-        error_message: 'Marked as failed by stale run cleanup — exceeded 2-hour timeout',
+        error_message: 'Marked as failed by stale run cleanup — exceeded 15-minute timeout',
         completed_at: new Date().toISOString(),
       }, { id: `eq.${stale.id}` });
     }
