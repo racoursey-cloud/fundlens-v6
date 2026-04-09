@@ -30,7 +30,7 @@ const RISK_MAX = 7;
 const DEFAULT_RISK = 4;
 
 const TIER_BADGES = [
-  { zMin: 2.0,       label: 'Breakaway', color: '#F59E0B' },
+  { zMin: 2.0,       label: 'Top Pick',  color: '#F59E0B' },
   { zMin: 1.2,       label: 'Strong',    color: '#10B981' },
   { zMin: 0.3,       label: 'Solid',     color: '#3B82F6' },
   { zMin: -0.5,      label: 'Neutral',   color: '#6B7280' },

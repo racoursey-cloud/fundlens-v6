@@ -54,7 +54,7 @@ function normalCDF(z: number): number {
 // ─── Tier Badge Computation (§6.3) ────────────────────────────────────────
 
 const TIER_BADGES = [
-  { tier: 'Breakaway', zMin: 2.0, color: '#F59E0B' },
+  { tier: 'Top Pick', zMin: 2.0, color: '#F59E0B' },
   { tier: 'Strong',    zMin: 1.2, color: '#10B981' },
   { tier: 'Solid',     zMin: 0.3, color: '#3B82F6' },
   { tier: 'Neutral',   zMin: -0.5, color: '#6B7280' },

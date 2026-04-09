@@ -15,6 +15,7 @@
  */
 
 import React, { useEffect, useState, useMemo } from 'react';
+import DOMPurify from 'dompurify';
 import {
   fetchThesis,
   fetchScores,
@@ -24,8 +25,21 @@ import {
   type PipelineRun,
 } from '../api';
 import { theme } from '../theme';
+
+/** Render inline markdown bold/italic within narrative text */
+function inlineMarkdown(text: string): string {
+  const escaped = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const html = escaped
+    .replace(/\*\*(.+?)\*\*/g, `<strong style="color:${theme.colors.text};font-weight:600">$1</strong>`)
+    .replace(/\*(.+?)\*/g, `<em>$1</em>`);
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['strong', 'em'],
+    ALLOWED_ATTR: ['style'],
+  });
+}
 import { SectorScorecard, type SectorScore } from '../components/SectorScorecard';
-import { DonutChart, DonutLegend, type DonutSlice, type DonutDrillItem } from '../components/DonutChart';
+import { DonutChart, BarBreakdown, type DonutSlice, type DonutDrillItem } from '../components/DonutChart';
 import { FundDetail } from '../components/FundDetail';
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
@@ -46,7 +60,7 @@ const MAD_CONSISTENCY = 0.6745;
 const MM_TICKERS = new Set(['FDRXX', 'ADAXX']);
 
 const TIER_BADGES = [
-  { tier: 'Breakaway', zMin: 2.0, color: '#F59E0B' },
+  { tier: 'Top Pick', zMin: 2.0, color: '#F59E0B' },
   { tier: 'Strong',    zMin: 1.2, color: '#10B981' },
   { tier: 'Solid',     zMin: 0.3, color: '#3B82F6' },
   { tier: 'Neutral',   zMin: -0.5, color: '#6B7280' },
@@ -313,7 +327,7 @@ export function Research() {
 
   // ── Loading state ─────────────────────────────────────────────────────
 
-  if (loadingThesis && loadingScores) {
+  if (loadingThesis || loadingScores) {
     return <div style={{ color: theme.colors.textMuted, padding: '32px' }}>Loading research...</div>;
   }
 
@@ -357,7 +371,7 @@ export function Research() {
                   title="Recommended Allocation"
                   drillData={fundDrillData}
                 />
-                <DonutLegend items={fundSlices} />
+                <BarBreakdown items={fundSlices} />
               </>
             ) : (
               <div style={{ color: theme.colors.textDim, fontSize: 13, padding: 40, textAlign: 'center' }}>
@@ -380,7 +394,7 @@ export function Research() {
                   title="Aggregate Sector Exposure"
                   drillData={sectorDrillData}
                 />
-                <DonutLegend items={sectorSlices} />
+                <BarBreakdown items={sectorSlices} />
               </>
             ) : (
               <div style={{ color: theme.colors.textDim, fontSize: 13, padding: 40, textAlign: 'center' }}>
@@ -437,7 +451,7 @@ export function Research() {
             </div>
 
             {/* Narrative — continuous prose with topic-based subheadings */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 720 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {thesis.narrative.split(/\n\s*\n/).map((para, i) => {
                 const trimmed = para.trim();
                 if (!trimmed) return null;
@@ -452,17 +466,20 @@ export function Research() {
                         fontFamily: theme.fonts.body,
                       }}>{headerMatch[1]}</h3>
                       {headerMatch[2] && (
-                        <p style={{ fontSize: 14, lineHeight: 1.75, color: '#d1d5db', margin: 0 }}>
-                          {headerMatch[2].trim()}
-                        </p>
+                        <p
+                          style={{ fontSize: 14, lineHeight: 1.75, color: '#d1d5db', margin: 0 }}
+                          dangerouslySetInnerHTML={{ __html: inlineMarkdown(headerMatch[2].trim()) }}
+                        />
                       )}
                     </div>
                   );
                 }
                 return (
-                  <p key={i} style={{ fontSize: 14, lineHeight: 1.75, color: '#d1d5db', margin: 0 }}>
-                    {trimmed}
-                  </p>
+                  <p
+                    key={i}
+                    style={{ fontSize: 14, lineHeight: 1.75, color: '#d1d5db', margin: 0 }}
+                    dangerouslySetInnerHTML={{ __html: inlineMarkdown(trimmed) }}
+                  />
                 );
               })}
             </div>
@@ -527,7 +544,7 @@ export function Research() {
                   <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
                     {['Fund', 'Alloc', 'Score', 'Tier', 'Cost', 'Quality', 'Momentum', 'Position'].map((h, idx) => (
                       <th key={h} style={{
-                        padding: '10px 16px', textAlign: idx === 0 ? 'left' : 'center',
+                        padding: '8px 10px', textAlign: idx === 0 ? 'left' : 'center',
                         fontWeight: 600, color: theme.colors.textDim, fontSize: 11,
                         letterSpacing: '0.05em', textTransform: 'uppercase',
                       }}>{h}</th>
@@ -552,7 +569,7 @@ export function Research() {
                           onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = theme.colors.surfaceHover; }}
                           onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
                         >
-                          <td style={{ padding: '10px 16px', textAlign: 'left' }}>
+                          <td style={{ padding: '8px 10px', textAlign: 'left' }}>
                             <span style={{
                               fontWeight: 700, color: theme.colors.accentBlue,
                               fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
@@ -564,21 +581,21 @@ export function Research() {
                               }}>{name}</span>
                             )}
                           </td>
-                          <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                             {(() => {
                               const alloc = allocMap.get(ticker);
                               if (!alloc) return <span style={{ color: theme.colors.textDim }}>—</span>;
                               return <span style={{ fontWeight: 700, fontFamily: theme.fonts.mono, color: theme.colors.text, fontSize: 14 }}>{alloc}%</span>;
                             })()}
                           </td>
-                          <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                             <span style={{
                               padding: '4px 10px', borderRadius: 6,
                               background: scoreBg(s.userComposite), color: scoreColor(s.userComposite),
                               fontWeight: 700, fontFamily: theme.fonts.mono, fontSize: 14,
                             }}>{s.userComposite}</span>
                           </td>
-                          <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                             <span style={{
                               padding: '3px 8px', borderRadius: 4, fontSize: 11,
                               fontWeight: 600, letterSpacing: '0.03em',
@@ -648,7 +665,7 @@ export function Research() {
 // ─── Styles ────────────────────────────────────────────────────────────────
 
 const tdFactorStyle: React.CSSProperties = {
-  padding: '10px 16px', textAlign: 'center',
+  padding: '8px 10px', textAlign: 'center',
   fontFamily: theme.fonts.mono, fontSize: 13,
   fontVariantNumeric: 'tabular-nums',
 };

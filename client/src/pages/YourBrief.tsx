@@ -25,7 +25,7 @@ import {
   type UserProfile,
 } from '../api';
 import { theme } from '../theme';
-import { DonutChart, DonutLegend, type DonutSlice } from '../components/DonutChart';
+import { DonutChart, type DonutSlice } from '../components/DonutChart';
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
 // ─── Shared Utilities ─────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ const MAD_CONSISTENCY = 0.6745;
 const MM_TICKERS = new Set(['FDRXX', 'ADAXX']);
 
 const TIER_BADGES = [
-  { tier: 'Breakaway', zMin: 2.0, color: '#F59E0B' },
+  { tier: 'Top Pick', zMin: 2.0, color: '#F59E0B' },
   { tier: 'Strong',    zMin: 1.2, color: '#10B981' },
   { tier: 'Solid',     zMin: 0.3, color: '#3B82F6' },
   { tier: 'Neutral',   zMin: -0.5, color: '#6B7280' },
@@ -83,6 +83,24 @@ const FUND_PALETTE = [
   '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#a78bfa',
   '#fb923c', '#84cc16',
 ];
+
+const SECTOR_COLORS: Record<string, string> = {
+  Technology:               '#3b82f6',
+  Healthcare:               '#06b6d4',
+  Financials:               '#8b5cf6',
+  'Consumer Discretionary': '#f59e0b',
+  'Consumer Staples':       '#22c55e',
+  Energy:                   '#ef4444',
+  Industrials:              '#f97316',
+  Materials:                '#14b8a6',
+  'Real Estate':            '#ec4899',
+  Utilities:                '#6366f1',
+  'Communication Services': '#a855f7',
+  'Precious Metals':        '#eab308',
+  'Fixed Income':           '#64748b',
+  'Cash & Equivalents':     '#94a3b8',
+  Other:                    '#71717a',
+};
 
 const RISK_ANCHORS: Array<{ level: number; label: string }> = [
   { level: 1, label: 'Very Conservative' },
@@ -353,6 +371,16 @@ export function YourBrief() {
   const [weights, setWeights] = useState({ cost: 0.25, quality: 0.30, positioning: 0.20, momentum: 0.25 });
   const [loadingScores, setLoadingScores] = useState(true);
 
+  // Fund explorer state
+  const [selectedFundTicker, setSelectedFundTicker] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // ── Data fetching ─────────────────────────────────────────────────────
 
   const loadBriefs = useCallback(async () => {
@@ -468,6 +496,68 @@ export function YourBrief() {
         color: FUND_PALETTE[i % FUND_PALETTE.length]!,
       }));
   }, [allocations]);
+
+  // ── Per-fund sector exposure + top holdings (for fund explorer panels) ──
+
+  interface FundExplorerData {
+    sectors: Array<{ sector: string; weight: number; color: string }>;
+    holdings: Array<{ name: string; ticker: string | null; weight: number }>;
+  }
+
+  const fundExplorerMap = useMemo(() => {
+    const map = new Map<string, FundExplorerData>();
+    for (const s of scores) {
+      const ticker = s.funds?.ticker || s.fund_id;
+      if (!allocMap.has(ticker)) continue;
+      const details = s.factor_details as Record<string, unknown> | undefined;
+
+      // Sector exposure
+      const rawSectors = (details?.sectorExposure || details?.sectors) as Record<string, number> | undefined;
+      const sectors: FundExplorerData['sectors'] = [];
+      if (rawSectors) {
+        for (const [sector, weight] of Object.entries(rawSectors)) {
+          if (weight > 0) {
+            sectors.push({ sector, weight: Math.round(weight * 1000) / 10, color: SECTOR_COLORS[sector] ?? '#71717a' });
+          }
+        }
+        sectors.sort((a, b) => b.weight - a.weight);
+      }
+
+      // Top holdings
+      const rawHoldings = (details?.holdings || details?.topHoldings) as Array<{
+        name?: string; ticker?: string; weight?: number; pct_of_nav?: number;
+      }> | undefined;
+      const holdings: FundExplorerData['holdings'] = [];
+      if (rawHoldings) {
+        for (const h of rawHoldings) {
+          const w = h.weight ?? h.pct_of_nav ?? 0;
+          if (w > 0) {
+            holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 1000) / 10 });
+          }
+        }
+        holdings.sort((a, b) => b.weight - a.weight);
+      }
+
+      map.set(ticker, { sectors, holdings: holdings.slice(0, 10) });
+    }
+    return map;
+  }, [scores, allocMap]);
+
+  // Auto-select the first allocated fund when allocations change
+  useEffect(() => {
+    if (fundSlices.length > 0 && !selectedFundTicker) {
+      setSelectedFundTicker(fundSlices[0]!.id);
+    }
+  }, [fundSlices, selectedFundTicker]);
+
+  const handleFundSelect = useCallback((ticker: string) => {
+    setSelectedFundTicker(prev => prev === ticker ? null : ticker);
+  }, []);
+
+  const selectedFundData = selectedFundTicker ? fundExplorerMap.get(selectedFundTicker) : null;
+  const selectedFundName = selectedFundTicker
+    ? scores.find(s => (s.funds?.ticker || s.fund_id) === selectedFundTicker)?.funds?.name || selectedFundTicker
+    : '';
 
   // ── Stale indicator (Option B) ────────────────────────────────────────
 
@@ -624,12 +714,13 @@ export function YourBrief() {
         </div>
       )}
 
-      {/* ═══ ALLOCATION CARD (donut + table + risk slider) — TOP ═══════════ */}
+      {/* ═══ ALLOCATION CARD — Fund Explorer ═══════════════════════════════ */}
       {!loadingScores && scores.length > 0 && (
         <div style={{
           background: theme.colors.surface, border: `1px solid ${theme.colors.border}`,
           borderRadius: theme.radii.lg, overflow: 'hidden',
         }}>
+          {/* Card header */}
           <div style={{
             padding: '16px 24px', borderBottom: `1px solid ${theme.colors.border}`,
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -643,83 +734,249 @@ export function YourBrief() {
             </span>
           </div>
 
-          <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+          <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-            {/* Donut + Fund highlights — side by side */}
-            <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              {/* Donut + legend */}
-              {fundSlices.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-                  <DonutChart slices={fundSlices} size={200} title="Recommended Allocation" />
-                  <DonutLegend items={fundSlices} />
-                </div>
-              )}
+            {/* ── Three-panel fund explorer (desktop) / stacked (mobile) ── */}
+            {fundSlices.length > 0 && (
+              <div style={isMobile ? {
+                display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center',
+              } : {
+                display: 'grid',
+                gridTemplateColumns: '1fr auto 1fr',
+                gap: 20,
+                alignItems: 'start',
+                minHeight: 260,
+              }}>
 
-              {/* Fund highlights table */}
-              <div style={{ flex: 1, minWidth: 300, overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
-                      {['Fund', 'Name', 'Allocation', 'Score', 'Tier'].map((h, idx) => (
-                        <th key={h} style={{
-                          padding: '8px 12px', textAlign: idx < 2 ? 'left' : 'center',
-                          fontWeight: 600, color: theme.colors.textDim, fontSize: 11,
-                          letterSpacing: '0.05em', textTransform: 'uppercase',
-                        }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rankedScores
-                      .filter(s => allocMap.has(s.funds?.ticker || s.fund_id))
-                      .map((s, i) => {
-                        const ticker = s.funds?.ticker || s.fund_id.slice(0, 8);
-                        const name = s.funds?.name || '';
-                        const alloc = allocMap.get(ticker);
-                        return (
-                          <tr key={s.id} style={{
-                            borderBottom: i < allocMap.size - 1 ? `1px solid ${theme.colors.border}` : 'none',
+                {/* LEFT PANEL — Sector Exposure */}
+                {!isMobile && (
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', gap: 8,
+                    opacity: selectedFundData ? 1 : 0.3,
+                    transition: 'opacity 0.2s',
+                    minWidth: 0,
+                  }}>
+                    {selectedFundTicker && (
+                      <div style={{
+                        fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
+                        textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4,
+                      }}>Sector Exposure</div>
+                    )}
+                    {selectedFundData && selectedFundData.sectors.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        {selectedFundData.sectors.slice(0, 8).map(s => (
+                          <div key={s.sector} style={{
+                            display: 'grid', gridTemplateColumns: '90px 1fr 40px',
+                            alignItems: 'center', gap: 6,
                           }}>
-                            <td style={{ padding: '10px 12px' }}>
+                            <span style={{
+                              fontSize: 11, color: theme.colors.textMuted,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>{s.sector}</span>
+                            <div style={{ height: 6, borderRadius: 3, background: theme.colors.surfaceAlt, overflow: 'hidden' }}>
+                              <div style={{
+                                height: '100%', borderRadius: 3, background: s.color,
+                                width: `${Math.min(100, (s.weight / Math.max(...selectedFundData.sectors.map(x => x.weight))) * 100)}%`,
+                              }} />
+                            </div>
+                            <span style={{
+                              fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
+                              color: theme.colors.text, textAlign: 'right',
+                            }}>{s.weight.toFixed(1)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : selectedFundTicker ? (
+                      <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
+                        No sector data
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* CENTER — Donut */}
+                <div style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                  flexShrink: 0,
+                }}>
+                  <DonutChart
+                    slices={fundSlices}
+                    size={200}
+                    title="Recommended Allocation"
+                    onSliceClick={(slice) => handleFundSelect(slice.id)}
+                  />
+                  {/* Selected fund label below donut */}
+                  {selectedFundTicker && (
+                    <div style={{ textAlign: 'center', lineHeight: 1.3 }}>
+                      <div style={{
+                        fontSize: 14, fontWeight: 700, color: theme.colors.text,
+                        fontFamily: theme.fonts.mono,
+                      }}>{selectedFundTicker}</div>
+                      <div style={{
+                        fontSize: 11, color: theme.colors.textMuted, maxWidth: 180,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>{selectedFundName}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* RIGHT PANEL — Top Holdings */}
+                {!isMobile && (
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', gap: 8,
+                    opacity: selectedFundData ? 1 : 0.3,
+                    transition: 'opacity 0.2s',
+                    minWidth: 0,
+                  }}>
+                    {selectedFundTicker && (
+                      <div style={{
+                        fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
+                        textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4,
+                      }}>Top Holdings</div>
+                    )}
+                    {selectedFundData && selectedFundData.holdings.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {selectedFundData.holdings.slice(0, 8).map((h, idx) => (
+                          <div key={idx} style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            padding: '2px 0', gap: 8,
+                          }}>
+                            <span style={{
+                              fontSize: 11, color: theme.colors.text,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              flex: 1,
+                            }}>{h.name}</span>
+                            {h.ticker && (
                               <span style={{
-                                fontWeight: 700, color: theme.colors.accentBlue,
-                                fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
-                              }}>{ticker}</span>
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <span style={{
-                                fontSize: 12, color: theme.colors.textMuted,
-                                maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap', display: 'inline-block',
-                              }}>{name}</span>
-                            </td>
-                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                              <span style={{
-                                fontWeight: 700, fontFamily: theme.fonts.mono,
-                                color: theme.colors.text, fontSize: 14,
-                              }}>{alloc}%</span>
-                            </td>
-                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                              <span style={{
-                                fontWeight: 600, fontFamily: theme.fonts.mono, fontSize: 13,
-                                color: theme.colors.text,
-                              }}>{s.userComposite}</span>
-                            </td>
-                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                              <span style={{
-                                padding: '3px 8px', borderRadius: 4, fontSize: 11,
-                                fontWeight: 600, letterSpacing: '0.03em',
-                                color: s.userTierColor,
-                                background: `${s.userTierColor}18`,
-                                border: `1px solid ${s.userTierColor}40`,
-                              }}>{s.userTier}</span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
+                                fontSize: 10, fontFamily: theme.fonts.mono,
+                                color: theme.colors.textDim, flexShrink: 0,
+                              }}>{h.ticker}</span>
+                            )}
+                            <span style={{
+                              fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
+                              color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36,
+                              textAlign: 'right',
+                            }}>{h.weight.toFixed(1)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : selectedFundTicker ? (
+                      <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
+                        No holdings data
+                      </span>
+                    ) : null}
+                  </div>
+                )}
               </div>
+            )}
+
+            {/* ── Mobile: stacked detail card (appears below donut on tap) ── */}
+            {isMobile && selectedFundTicker && selectedFundData && (
+              <div style={{
+                background: theme.colors.surfaceAlt,
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radii.md,
+                padding: 16, display: 'flex', flexDirection: 'column', gap: 16,
+                width: '100%',
+              }}>
+                {/* Sector exposure */}
+                {selectedFundData.sectors.length > 0 && (
+                  <div>
+                    <div style={{
+                      fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
+                      textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
+                    }}>Sector Exposure</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {selectedFundData.sectors.slice(0, 6).map(s => (
+                        <div key={s.sector} style={{
+                          display: 'grid', gridTemplateColumns: '80px 1fr 36px',
+                          alignItems: 'center', gap: 6,
+                        }}>
+                          <span style={{ fontSize: 11, color: theme.colors.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
+                          <div style={{ height: 6, borderRadius: 3, background: theme.colors.surface, overflow: 'hidden' }}>
+                            <div style={{
+                              height: '100%', borderRadius: 3, background: s.color,
+                              width: `${Math.min(100, (s.weight / Math.max(...selectedFundData.sectors.map(x => x.weight))) * 100)}%`,
+                            }} />
+                          </div>
+                          <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.text, textAlign: 'right' }}>{s.weight.toFixed(1)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* Top holdings */}
+                {selectedFundData.holdings.length > 0 && (
+                  <div>
+                    <div style={{
+                      fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
+                      textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
+                    }}>Top Holdings</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {selectedFundData.holdings.slice(0, 6).map((h, idx) => (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', gap: 8 }}>
+                          <span style={{ fontSize: 11, color: theme.colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{h.name}</span>
+                          {h.ticker && <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, color: theme.colors.textDim, flexShrink: 0 }}>{h.ticker}</span>}
+                          <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36, textAlign: 'right' }}>{h.weight.toFixed(1)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Fund selector row (clickable fund chips) ── */}
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: 6,
+              justifyContent: 'center',
+              borderTop: `1px solid ${theme.colors.border}`,
+              paddingTop: 16,
+            }}>
+              {rankedScores
+                .filter(s => allocMap.has(s.funds?.ticker || s.fund_id))
+                .map((s) => {
+                  const ticker = s.funds?.ticker || s.fund_id.slice(0, 8);
+                  const alloc = allocMap.get(ticker);
+                  const isSelected = ticker === selectedFundTicker;
+                  const sliceColor = fundSlices.find(fs => fs.id === ticker)?.color ?? theme.colors.accentBlue;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => handleFundSelect(ticker)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '6px 12px', borderRadius: 6,
+                        border: `1px solid ${isSelected ? sliceColor : theme.colors.border}`,
+                        background: isSelected ? `${sliceColor}15` : 'transparent',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s',
+                        fontFamily: theme.fonts.body,
+                      }}
+                    >
+                      <span style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: sliceColor, flexShrink: 0,
+                      }} />
+                      <span style={{
+                        fontSize: 12, fontWeight: 700,
+                        color: isSelected ? theme.colors.text : theme.colors.textMuted,
+                        fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
+                      }}>{ticker}</span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 600,
+                        color: isSelected ? sliceColor : theme.colors.textDim,
+                        fontFamily: theme.fonts.mono,
+                      }}>{alloc}%</span>
+                      <span style={{
+                        padding: '1px 5px', borderRadius: 3, fontSize: 9,
+                        fontWeight: 600, letterSpacing: '0.03em',
+                        color: s.userTierColor,
+                        background: `${s.userTierColor}18`,
+                      }}>{s.userTier}</span>
+                    </button>
+                  );
+                })}
             </div>
 
             {/* Compact risk slider */}

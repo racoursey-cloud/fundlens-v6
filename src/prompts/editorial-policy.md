@@ -82,7 +82,7 @@ FundLens uses a quantitative scoring model under the hood. The Brief must NEVER 
 - Factor names (Cost Efficiency, Holdings Quality, Positioning, Momentum)
 - Factor weights or percentages
 - Composite scores, z-scores, modified z-scores
-- Tier classifications (Breakaway, Strong, Solid, Neutral, Weak)
+- Tier classifications (Top Pick, Strong, Solid, Neutral, Weak)
 - Score scales (X/100, X/10)
 - Ranking numbers (#1 of 15, rank 3)
 - MAD, standard deviation, Kelly criterion, or any statistical term from the model
@@ -169,8 +169,10 @@ Cover recommended funds in depth. Cover the rest briefly — a sentence or two o
 - Use the section headers specified in Content Structure (Where the Numbers Point, What Happened, What We're Watching, Where We Stand)
 - Keep paragraphs short — 2-4 sentences maximum
 - Bold fund names and ticker symbols on first mention
+- Bold sector and asset class names on first mention (e.g. **Technology**, **Consumer Staples**, **Fixed Income**) — these are variables we're reporting on and should pop in the narrative
 - Present the allocation recommendation as a simple table in section 1
 - Use plain language. If a financial term is necessary, explain it briefly
+- Accessibility rule: If a concept might be over a typical reader's head, add a brief parenthetical explainer. Example: "The yield curve inverted (short-term rates climbed above long-term rates, which historically signals a slowdown)." Keep explainers to one short clause — enough to orient the reader, not a lecture.
 - Target length: 800-1200 words
 
 ---

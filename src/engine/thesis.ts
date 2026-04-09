@@ -326,6 +326,8 @@ Voice rules:
 - Use "may," "could," "historically," "tends to" — never imply certainty about future performance.
 - State negatives plainly. Don't soften bad news. Respect the reader enough to be direct.
 - No hedging for the sake of hedging. If the data says something, say it.
+- Bold sector and asset class names using **markdown bold** on first mention (e.g. **Technology**, **Consumer Staples**). These are the variables being analyzed — they should stand out.
+- Accessibility: If a concept might be over a general reader's head, add a brief parenthetical explainer. Example: "The yield curve inverted (short-term rates above long-term, which historically signals a slowdown)." One clause — orient the reader, don't lecture.
 
 Content rules:
 - Base every claim on specific data points or headlines provided in the input.
@@ -397,7 +399,7 @@ You must include a score for each of these sectors: ${sectorList}
 Respond with ONLY valid JSON. No markdown, no backticks, no preamble.
 Exact structure required:
 {
-  "narrative": "4-6 paragraphs with section headers (Macro Environment, Thematic Drivers, Asset Class & Sector Outlook, Portfolio Positioning) separated by double newlines. Calm authority — specific, direct, no jargon, no filler.",
+  "narrative": "4-6 paragraphs with section headers (Macro Environment, Thematic Drivers, Asset Class & Sector Outlook, Portfolio Positioning) separated by double newlines. Calm authority — specific, direct, no jargon, no filler. Bold sector names with **markdown bold** on first mention. Add brief parenthetical explainers for concepts that might be over a general reader's head.",
   "sectorPreferences": {
     "Technology": { "score": 7.3, "reason": "one-sentence explanation" },
     "Healthcare": { "score": 5.8, "reason": "..." },

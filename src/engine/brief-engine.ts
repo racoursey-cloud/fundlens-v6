@@ -780,6 +780,11 @@ ${macro.keyThemes.map(t => `- ${t}`).join('\n')}
 3. "Thematic Drivers" — The 2-3 forces shaping markets and connecting macro to sectors.
 4. "Asset Class & Sector Outlook" — Where tailwinds and headwinds are, and the mechanisms.
 5. "Portfolio Positioning" — How these views connect to the recommended holdings.
+
+Formatting reminders:
+- Bold fund names and tickers on first mention: **Fidelity 500 Index (FXAIX)**
+- Bold sector and asset class names on first mention: **Technology**, **Consumer Staples**, **Fixed Income**
+- If a concept might be over a general reader's head, add a brief parenthetical explainer (one clause, not a lecture)
 Target 800-1200 words.`;
 
   return prompt;

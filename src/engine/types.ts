@@ -303,7 +303,7 @@ export interface FundScoresRow {
   z_momentum: number;
   /** Composite score using default weights (25/30/25/20) */
   composite_default: number;
-  /** Tier label from MAD-based modified z-score (§6.3): Breakaway, Strong, Solid, Neutral, Weak, MM, Low Data */
+  /** Tier label from MAD-based modified z-score (§6.3): Top Pick, Strong, Solid, Neutral, Weak, MM, Low Data */
   tier: string;
   /** Tier badge color hex (§6.3) */
   tier_color: string;

@@ -275,7 +275,7 @@ function DrillInPanel({ items, sliceLabel, sliceColor, onClose }: {
   );
 }
 
-// ─── Legend ──────────────────────────────────────────────────────────────────
+// ─── Legend (legacy — kept for backward compat) ─────────────────────────────
 
 export function DonutLegend({ items, onItemClick }: {
   items: DonutSlice[];
@@ -302,6 +302,69 @@ export function DonutLegend({ items, onItemClick }: {
           <span style={{
             color: theme.colors.text, fontWeight: 600,
             fontFamily: theme.fonts.mono,
+          }}>
+            {item.pct.toFixed(1)}%
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Horizontal Bar Breakdown ───────────────────────────────────────────────
+// Replaces the wrapped-label legend with a sorted horizontal bar chart.
+// Items are sorted descending by percentage, label on left, bar + pct on right.
+
+export function BarBreakdown({ items, onItemClick }: {
+  items: DonutSlice[];
+  onItemClick?: (item: DonutSlice) => void;
+}) {
+  const sorted = [...items].sort((a, b) => b.pct - a.pct);
+  const maxPct = Math.max(...sorted.map(s => s.pct), 1);
+
+  return (
+    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {sorted.map(item => (
+        <div
+          key={item.id}
+          onClick={() => onItemClick?.(item)}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '110px 1fr 48px',
+            alignItems: 'center',
+            gap: 8,
+            cursor: onItemClick ? 'pointer' : 'default',
+            padding: '3px 0',
+          }}
+        >
+          {/* Label */}
+          <span style={{
+            fontSize: 11, color: theme.colors.textMuted,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            fontFamily: theme.fonts.body,
+          }}>
+            {item.label}
+          </span>
+
+          {/* Bar */}
+          <div style={{
+            height: 8, borderRadius: 4,
+            background: theme.colors.surfaceAlt, overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%', borderRadius: 4,
+              background: item.color,
+              width: `${(item.pct / maxPct) * 100}%`,
+              transition: 'width 0.3s ease',
+            }} />
+          </div>
+
+          {/* Percentage */}
+          <span style={{
+            fontSize: 11, fontWeight: 600,
+            fontFamily: theme.fonts.mono,
+            color: theme.colors.text,
+            textAlign: 'right',
           }}>
             {item.pct.toFixed(1)}%
           </span>

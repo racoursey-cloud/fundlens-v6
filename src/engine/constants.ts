@@ -64,7 +64,7 @@ export type RiskLevel = typeof RISK_LEVELS[keyof typeof RISK_LEVELS];
 // ─── Tier Badges (Spec §6.3) ────────────────────────────────────────────────
 // Derived from MAD-based modified z-score in allocation engine.
 export const TIER_BADGES = [
-  { tier: 'BREAKAWAY',    zMin: 2.0,   color: '#F59E0B', label: 'Breakaway' },
+  { tier: 'TOP_PICK',     zMin: 2.0,   color: '#F59E0B', label: 'Top Pick' },
   { tier: 'STRONG',       zMin: 1.2,   color: '#10B981', label: 'Strong' },
   { tier: 'SOLID',        zMin: 0.3,   color: '#3B82F6', label: 'Solid' },
   { tier: 'NEUTRAL',      zMin: -0.5,  color: '#6B7280', label: 'Neutral' },

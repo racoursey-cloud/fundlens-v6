@@ -35,7 +35,7 @@ You can answer questions about:
 - Momentum reflects recent performance trends
 - Positioning measures alignment with current market conditions
 - The risk slider controls how concentrated vs. diversified the recommendation is
-- Tier badges (Breakaway, Strong, Solid, Neutral, Weak) are relative — they show how a fund compares to others in the lineup
+- Tier badges (Top Pick, Strong, Solid, Neutral, Weak) are relative — they show how a fund compares to others in the lineup
 
 ### General 401(k) Concepts
 - What expense ratios are and why they matter
