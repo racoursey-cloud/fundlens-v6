@@ -965,7 +965,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 8, 2026 (after Session 13, Task 13.2)
+**Last updated:** April 8, 2026 (after Session 13, Task 13.3)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1262,6 +1262,18 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 **State at session end:** `tsc --noEmit` passes clean. CRITICAL-6 fully resolved. Next assignment: **13.3** (port computeAllocations to client-side module).
 
 **Assignments completed:** 13.1, 13.2. **Remaining:** 13.3, 13.4, 13.5.
+
+## April 8, 2026 — Session 13 (continued): Client-Side Allocation Engine
+
+**Goal:** Port allocation engine to client for instant slider-driven recomputation.
+
+**Changes:**
+
+1. **Created `client/src/engine/allocation.ts` (289 lines).** Self-contained client-side port of server `computeAllocations()`. All constants inlined (KELLY_K_TABLE, DE_MINIMIS_PCT, MAD_CONSISTENCY, QUALITY_GATE_MAX_FALLBACKS, TIER_BADGES, SPECIAL_TIERS, MM_TICKERS). Zero server imports. Exports `computeClientAllocations()` with identical 5-step algorithm: MAD z-scores → quality gate → exponential curve with interpolated k → de minimis floor (§3.5) → rounding with error absorption.
+
+**State at session end:** `tsc --noEmit` passes clean. Next assignment: **13.4** (wire allocation display into Portfolio.tsx).
+
+**Assignments completed:** 13.1, 13.2, 13.3. **Remaining:** 13.4, 13.5.
 
 ## April 8, 2026 — Session 12: Full Project Assessment (READ-ONLY)
 
