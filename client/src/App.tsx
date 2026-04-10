@@ -37,6 +37,7 @@ import { Research } from './pages/Research';
 import { Settings } from './pages/Settings';
 import { Pipeline } from './pages/Pipeline';
 import { Help } from './pages/Help';
+import { FundLens } from './pages/FundLens';
 
 export function App() {
   return (
@@ -62,6 +63,7 @@ export function App() {
               </ProtectedRoute>
             }>
               <Route index element={<YourBrief />} />
+              <Route path="/fundlens" element={<FundLens />} />
               <Route path="/research" element={<Research />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/help" element={<Help />} />

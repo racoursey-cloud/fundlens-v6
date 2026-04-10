@@ -14,7 +14,7 @@
  * References: Spec §2.6, §6.1–§6.7
  */
 
-import React, { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import DOMPurify from 'dompurify';
 import {
   fetchThesis,
@@ -22,7 +22,6 @@ import {
   fetchProfile,
   type ThesisData,
   type FundScore,
-  type PipelineRun,
 } from '../api';
 import { theme } from '../theme';
 
@@ -40,7 +39,7 @@ function inlineMarkdown(text: string): string {
 }
 import { SectorScorecard, type SectorScore } from '../components/SectorScorecard';
 import { DonutChart, BarBreakdown, type DonutSlice, type DonutDrillItem } from '../components/DonutChart';
-import { FundDetail } from '../components/FundDetail';
+// FundDetail moved to FundLens tab
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
 // ─── Shared Utilities ─────────────────────────────────────────────────────
@@ -117,18 +116,7 @@ const FUND_PALETTE = [
   '#fb923c', '#84cc16',
 ];
 
-function scoreBg(score: number): string {
-  if (score >= 75) return '#22c55e22';
-  if (score >= 50) return '#3b82f622';
-  if (score >= 25) return '#f59e0b22';
-  return '#ef444422';
-}
-function scoreColor(score: number): string {
-  if (score >= 75) return theme.colors.success;
-  if (score >= 50) return theme.colors.accentBlue;
-  if (score >= 25) return theme.colors.warning;
-  return theme.colors.error;
-}
+// scoreBg/scoreColor removed — fund table moved to FundLens tab
 
 // ─── Stance Configuration ──────────────────────────────────────────────────
 
@@ -164,9 +152,7 @@ export function Research() {
 
   // Scores + profile state
   const [scores, setScores] = useState<FundScore[]>([]);
-  const [pipelineRun, setPipelineRun] = useState<PipelineRun | null>(null);
   const [loadingScores, setLoadingScores] = useState(true);
-  const [selectedFund, setSelectedFund] = useState<string | null>(null);
 
   // Weights + risk for client-side rescore
   const [weights, setWeights] = useState({ cost: 0.25, quality: 0.30, positioning: 0.20, momentum: 0.25 });
@@ -184,7 +170,6 @@ export function Research() {
   useEffect(() => {
     Promise.all([fetchScores(), fetchProfile()]).then(([scoresRes, profileRes]) => {
       if (scoresRes.data?.scores) setScores(scoresRes.data.scores);
-      if (scoresRes.data?.pipelineRun) setPipelineRun(scoresRes.data.pipelineRun as unknown as PipelineRun);
       if (profileRes.data?.profile) {
         const p = profileRes.data.profile;
         setWeights({
@@ -525,122 +510,7 @@ export function Research() {
         </div>
       )}
 
-      {/* ═══ SECTION 4: Fund Analysis ════════════════════════════════════ */}
-      {!loadingScores && scores.length > 0 && (
-        <>
-          <div style={{
-            background: theme.colors.surface, borderRadius: theme.radii.lg,
-            border: `1px solid ${theme.colors.border}`, overflow: 'hidden',
-          }}>
-            <div style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.colors.border}` }}>
-              <span style={{
-                fontSize: 13, fontWeight: 600, color: theme.colors.textMuted,
-                letterSpacing: '0.04em', textTransform: 'uppercase',
-              }}>Fund Scores</span>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
-                    {['Fund', 'Alloc', 'Score', 'Tier', 'Cost', 'Quality', 'Momentum', 'Position'].map((h, idx) => (
-                      <th key={h} style={{
-                        padding: '8px 10px', textAlign: idx === 0 ? 'left' : 'center',
-                        fontWeight: 600, color: theme.colors.textDim, fontSize: 11,
-                        letterSpacing: '0.05em', textTransform: 'uppercase',
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rankedScores.map((s, i) => {
-                    const ticker = s.funds?.ticker || s.fund_id.slice(0, 8);
-                    const name = s.funds?.name || '';
-                    const isSelected = selectedFund === ticker;
-                    return (
-                      <React.Fragment key={s.id}>
-                        <tr
-                          onClick={() => setSelectedFund(isSelected ? null : ticker)}
-                          style={{
-                            borderBottom: (!isSelected && i < rankedScores.length - 1) ? `1px solid ${theme.colors.border}` : 'none',
-                            cursor: 'pointer',
-                            background: isSelected ? theme.colors.surfaceHover : 'transparent',
-                            transition: 'background 0.15s',
-                          }}
-                          onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = theme.colors.surfaceHover; }}
-                          onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
-                        >
-                          <td style={{ padding: '8px 10px', textAlign: 'left' }}>
-                            <span style={{
-                              fontWeight: 700, color: theme.colors.accentBlue,
-                              fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
-                            }}>{ticker}</span>
-                            {name && (
-                              <span style={{
-                                marginLeft: 8, fontSize: 12, color: theme.colors.textDim,
-                                maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                              }}>{name}</span>
-                            )}
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            {(() => {
-                              const alloc = allocMap.get(ticker);
-                              if (!alloc) return <span style={{ color: theme.colors.textDim }}>—</span>;
-                              return <span style={{ fontWeight: 700, fontFamily: theme.fonts.mono, color: theme.colors.text, fontSize: 14 }}>{alloc}%</span>;
-                            })()}
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            <span style={{
-                              padding: '4px 10px', borderRadius: 6,
-                              background: scoreBg(s.userComposite), color: scoreColor(s.userComposite),
-                              fontWeight: 700, fontFamily: theme.fonts.mono, fontSize: 14,
-                            }}>{s.userComposite}</span>
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            <span style={{
-                              padding: '3px 8px', borderRadius: 4, fontSize: 11,
-                              fontWeight: 600, letterSpacing: '0.03em',
-                              color: s.userTierColor,
-                              background: `${s.userTierColor}18`,
-                              border: `1px solid ${s.userTierColor}40`,
-                            }}>{s.userTier}</span>
-                          </td>
-                          <td style={tdFactorStyle}>
-                            {(() => { const v = Math.round(100 * normalCDF(s.z_cost_efficiency ?? 0)); return <span style={{ color: scoreColor(v) }}>{v}</span>; })()}
-                          </td>
-                          <td style={tdFactorStyle}>
-                            {(() => { const v = Math.round(100 * normalCDF(s.z_holdings_quality ?? 0)); return <span style={{ color: scoreColor(v) }}>{v}</span>; })()}
-                          </td>
-                          <td style={tdFactorStyle}>
-                            {(() => { const v = Math.round(100 * normalCDF(s.z_momentum ?? 0)); return <span style={{ color: scoreColor(v) }}>{v}</span>; })()}
-                          </td>
-                          <td style={tdFactorStyle}>
-                            {(() => { const v = Math.round(100 * normalCDF(s.z_positioning ?? 0)); return <span style={{ color: scoreColor(v) }}>{v}</span>; })()}
-                          </td>
-                        </tr>
-                        {isSelected && (
-                          <FundDetail ticker={ticker} onClose={() => setSelectedFund(null)} />
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Pipeline timestamp */}
-          {pipelineRun && (
-            <div style={{ fontSize: 12, color: theme.colors.textDim }}>
-              Scores from {(() => {
-                const ts = pipelineRun.completed_at || pipelineRun.started_at;
-                if (!ts) return 'pending pipeline run';
-                const d = new Date(ts);
-                return isNaN(d.getTime()) ? 'unknown date' : d.toLocaleString();
-              })()}
-            </div>
-          )}
-        </>
-      )}
+      {/* Section 4 (Fund Analysis table) moved to FundLens tab */}
 
       {/* Empty state */}
       {!loadingScores && scores.length === 0 && !thesis && (
@@ -662,10 +532,4 @@ export function Research() {
   );
 }
 
-// ─── Styles ────────────────────────────────────────────────────────────────
-
-const tdFactorStyle: React.CSSProperties = {
-  padding: '8px 10px', textAlign: 'center',
-  fontFamily: theme.fonts.mono, fontSize: 13,
-  fontVariantNumeric: 'tabular-nums',
-};
+// (tdFactorStyle removed — fund table moved to FundLens tab)

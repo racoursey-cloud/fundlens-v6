@@ -24,10 +24,11 @@ import { PipelineOverlay } from './PipelineOverlay';
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
 const TABS = [
-  { path: '/',         label: 'Your Brief' },
-  { path: '/research', label: 'Research' },
-  { path: '/settings', label: 'Settings' },
-  { path: '/help',     label: 'Help' },
+  { path: '/',          label: 'Your Brief' },
+  { path: '/fundlens',  label: 'FundLens' },
+  { path: '/research',  label: 'Research' },
+  { path: '/settings',  label: 'Settings' },
+  { path: '/help',      label: 'Help' },
 ];
 
 // ─── Source badge (v5.1 pattern) ──────────────────────────────────────────────
