@@ -885,10 +885,11 @@ export async function runFullPipeline(
     // F-2 fix: Build top holdings list from ALL holdings (equity + bonds)
     // for the Your Brief page. holdingsQuality.holdingScores only contains
     // equity holdings, so bond-heavy funds show "No holdings data".
+    // Session 25: Removed .slice(0,10) cap — persist ALL holdings so the
+    // FundLens UI can show a scrollable full list.
     const topHoldings = [...holdings]
       .filter(h => h.pctOfNav > 0)
       .sort((a, b) => b.pctOfNav - a.pctOfNav)
-      .slice(0, 10)
       .map(h => ({
         name: h.name,
         ticker: h.ticker,

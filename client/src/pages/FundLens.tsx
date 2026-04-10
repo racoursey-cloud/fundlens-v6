@@ -174,7 +174,7 @@ function extractExplorerData(score: FundScore): FundExplorerData {
     }
   }
 
-  return { sectors, holdings: holdings.slice(0, 10) };
+  return { sectors, holdings };
 }
 
 // ─── Spinner ─────────────────────────────────────────────────────────────────
@@ -429,7 +429,7 @@ export function FundLens() {
                             textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
                           }}>Sector Exposure</div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            {explorerData.sectors.slice(0, 8).map(sec => (
+                            {explorerData.sectors.map(sec => (
                               <div key={sec.sector} style={{
                                 display: 'grid', gridTemplateColumns: '90px 1fr 40px',
                                 alignItems: 'center', gap: 6,
@@ -455,8 +455,8 @@ export function FundLens() {
                             fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
                             textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
                           }}>Top Holdings</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            {explorerData.holdings.slice(0, 8).map((h, idx) => (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
+                            {explorerData.holdings.map((h, idx) => (
                               <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', gap: 8 }}>
                                 <span style={{ fontSize: 11, color: theme.colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{h.name}</span>
                                 {h.ticker && <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, color: theme.colors.textDim, flexShrink: 0 }}>{h.ticker}</span>}
@@ -484,7 +484,7 @@ export function FundLens() {
                         }}>Sector Exposure</div>
                         {explorerData.sectors.length > 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            {explorerData.sectors.slice(0, 8).map(sec => (
+                            {explorerData.sectors.map(sec => (
                               <div key={sec.sector} style={{
                                 display: 'grid', gridTemplateColumns: '90px 1fr 40px',
                                 alignItems: 'center', gap: 6,
@@ -542,8 +542,8 @@ export function FundLens() {
                           textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4,
                         }}>Top Holdings</div>
                         {explorerData.holdings.length > 0 ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            {explorerData.holdings.slice(0, 8).map((h, idx) => (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
+                            {explorerData.holdings.map((h, idx) => (
                               <div key={idx} style={{
                                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                                 padding: '2px 0', gap: 8,
