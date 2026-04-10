@@ -333,7 +333,9 @@ export function FundLens() {
                   if (!isExpanded) (e.currentTarget as HTMLDivElement).style.background = 'transparent';
                 }}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
+                  display: 'grid',
+                  gridTemplateColumns: '16px 60px 1fr 52px 64px',
+                  alignItems: 'center', gap: 10,
                   padding: '12px 20px',
                   cursor: 'pointer',
                   background: isExpanded ? theme.colors.surfaceHover : 'transparent',
@@ -346,38 +348,38 @@ export function FundLens() {
                   fontSize: 10, color: theme.colors.textDim,
                   transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
                   transition: 'transform 0.2s',
-                  flexShrink: 0, width: 12, textAlign: 'center',
+                  textAlign: 'center',
                 }}>▶</span>
 
                 {/* Ticker */}
                 <span style={{
                   fontWeight: 700, color: theme.colors.accentBlue,
                   fontFamily: theme.fonts.mono, letterSpacing: '0.02em',
-                  fontSize: 14, flexShrink: 0, width: 60,
+                  fontSize: 14,
                 }}>{ticker}</span>
 
                 {/* Fund name */}
                 <span style={{
-                  fontSize: 13, color: theme.colors.textMuted, flex: 1,
+                  fontSize: 13, color: theme.colors.textMuted,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>{name}</span>
 
                 {/* Score badge */}
                 <span style={{
-                  padding: '4px 10px', borderRadius: 6,
+                  padding: '4px 0', borderRadius: 6,
                   background: scoreBg(s.userComposite), color: scoreColor(s.userComposite),
                   fontWeight: 700, fontFamily: theme.fonts.mono, fontSize: 13,
-                  flexShrink: 0,
+                  textAlign: 'center',
                 }}>{s.userComposite}</span>
 
                 {/* Tier badge */}
                 <span style={{
-                  padding: '3px 8px', borderRadius: 4, fontSize: 10,
+                  padding: '3px 0', borderRadius: 4, fontSize: 10,
                   fontWeight: 600, letterSpacing: '0.03em',
                   color: s.userTierColor,
                   background: `${s.userTierColor}18`,
                   border: `1px solid ${s.userTierColor}40`,
-                  flexShrink: 0,
+                  textAlign: 'center',
                 }}>{s.userTier}</span>
               </div>
 
