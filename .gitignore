@@ -6,3 +6,4 @@ client-upload/
 client-src-upload/
 .env
 *.log
+*.tsbuildinfo

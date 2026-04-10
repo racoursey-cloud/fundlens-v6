@@ -2,9 +2,9 @@
  * FundLens v6 — Admin Alert Emails
  *
  * Sends operational alert emails to admins when something goes wrong:
- *   - Pipeline run failures
+ *   - Pipeline run failures (full or partial)
  *   - Brief delivery failures
- *   - Stale pipeline runs detected
+ *   - Stale pipeline runs detected and cleaned up
  *
  * Uses the same Resend integration as brief-email.ts.
  * Alerts are fire-and-forget — failures to SEND the alert are logged
@@ -140,29 +140,6 @@ export async function alertStaleRun(
     `Pipeline run <strong>${runId}</strong> was stuck in "running" status ` +
     `since ${startedAt} and has been marked as failed.\n\n` +
     `This usually means the server restarted mid-pipeline or the process crashed.`
-  );
-}
-
-/**
- * Alert: cash sweep allocation in yellow zone (§3.5 monitoring)
- * NOTE (v6.1): Forced cash sweep has been removed. This function is retained
- * for backward compatibility but should no longer fire in normal operation.
- * MM funds can only receive allocation if they survive the Kelly curve on merit.
- */
-export async function alertCashSweepYellow(
-  userId: string,
-  mmTicker: string,
-  cashPct: number,
-  riskTolerance: number
-): Promise<void> {
-  await sendAdminAlert(
-    `Unexpected MM allocation: ${cashPct.toFixed(0)}% to ${mmTicker}`,
-    `User <strong>${userId.slice(0, 8)}...</strong> (risk ${riskTolerance.toFixed(1)}) ` +
-    `has <strong>${cashPct.toFixed(1)}%</strong> allocated to money market fund ` +
-    `<strong>${mmTicker}</strong>.\n\n` +
-    `<strong>Note:</strong> v6.1 removed the forced cash sweep. MM funds should only ` +
-    `appear in allocations if they survive the Kelly curve on merit. If this alert ` +
-    `fires, investigate whether the fund universe has unusual score compression.`
   );
 }
 

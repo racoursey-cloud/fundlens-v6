@@ -101,15 +101,6 @@ export const DEFAULT_RISK_LEVEL = 4;
 export const RISK_MIN = 1;
 export const RISK_MAX = 7;
 
-// Legacy compatibility — kept for any code referencing the old shape
-export const RISK_LEVELS = {
-  CONSERVATIVE: 'conservative',
-  MODERATE: 'moderate',
-  AGGRESSIVE: 'aggressive',
-} as const;
-
-export type RiskLevel = typeof RISK_LEVELS[keyof typeof RISK_LEVELS];
-
 // ─── Tier Badges (Spec §6.3) ────────────────────────────────────────────────
 // Derived from MAD-based modified z-score in allocation engine.
 export const TIER_BADGES = [

@@ -34,8 +34,6 @@ import type { MacroThesis, SectorPreference } from './thesis.js';
 import { computeAllocations } from './allocation.js';
 import type { AllocationInput } from './allocation.js';
 import { supaFetch, supaSelect, supaInsert } from './supabase.js';
-import { alertCashSweepYellow } from './admin-alert.js';
-
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 /** Human-readable label for risk tolerance 1.0–7.0 (spec §3.4, §6.4).
@@ -647,21 +645,6 @@ export async function assembleDataPacket(
     })),
     profile.risk_tolerance
   );
-
-  // ── MM allocation monitoring (§3.5, v6.1) ──────────────────────────────
-  // v6.1: Forced cash sweep removed. MM funds only appear if they survive
-  // the Kelly curve on merit. Any MM allocation above 5% is unusual and
-  // warrants investigation (likely score compression in the fund universe).
-  for (const pos of allocation) {
-    if (MONEY_MARKET_TICKERS.has(pos.ticker) && pos.percentage > 5) {
-      console.warn(
-        `[brief-engine] Unexpected MM allocation: ${pos.ticker} at ${pos.percentage}% for user ${userId.slice(0, 8)}...`
-      );
-      // Fire-and-forget — never blocks Brief generation
-      alertCashSweepYellow(userId, pos.ticker, pos.percentage, profile.risk_tolerance)
-        .catch(err => console.error(`[brief-engine] MM alert failed: ${err}`));
-    }
-  }
 
   // Fetch previous allocation for "What Changed" delta (§7.7)
   const previousAllocation = await fetchPreviousAllocation(userId);

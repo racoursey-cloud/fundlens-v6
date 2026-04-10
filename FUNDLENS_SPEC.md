@@ -2062,6 +2062,46 @@ v6 previously classified per-fund (same AAPL classified 5 times if it appeared i
 
 **Spec updates:** §9.1 (4 new entries), §9.5 (Session 25 row), §10 (this entry).
 
+## April 10, 2026 — Session 26: Codebase Cleanup
+
+**Goal:** Comprehensive audit of every source file in the repository. Remove all dead code, stale comments, unused imports, and obsolete files to bring the codebase to production-clean state.
+
+**Audit methodology:** Read every `.ts` and `.tsx` file across `src/engine/`, `src/routes/`, `src/server.ts`, `client/src/` (components, pages, context, utils, engine). Checked for commented-out code blocks, stale TODO/FIXME/HACK comments, unused imports, dead/unreachable code, and overly verbose or redundant comments.
+
+**Changes made:**
+
+1. **Deleted `client/src/pages/BriefsPlaceholder.tsx`.** Dead code — not imported in `App.tsx`. The full `Briefs.tsx` page replaced it. Listed in `DEPLOY_CHECKLIST.md` as pending deletion.
+
+2. **Deleted `client/src/pages/PipelinePlaceholder.tsx`.** Dead code — not imported in `App.tsx`. The full `Pipeline.tsx` page replaced it. Listed in `DEPLOY_CHECKLIST.md` as pending deletion.
+
+3. **Deleted `v6_holdings_schema.sql`.** Superseded by `v6_full_schema.sql`, which was itself already applied to Supabase. Listed in `DEPLOY_CHECKLIST.md` as pending deletion.
+
+4. **Deleted `v6_full_schema.sql`.** Already applied to Supabase. No source code references it. Listed in `DEPLOY_CHECKLIST.md` as pending deletion.
+
+5. **Removed `RISK_LEVELS` and `RiskLevel` from `src/engine/constants.ts`.** Legacy 3-value enum (`conservative`, `moderate`, `aggressive`) replaced by the 7-point `KELLY_RISK_TABLE` in Session 4. Exported but never imported anywhere in `src/` or `client/`. Dead code.
+
+6. **Removed `alertCashSweepYellow()` from `src/engine/admin-alert.ts`.** v6.1 removed the forced cash sweep; this alert function was documented as "should no longer fire in normal operation." Also removed the corresponding import and monitoring block from `src/engine/brief-engine.ts` (lines 649–662).
+
+7. **Removed stale HelpChat comments from `client/src/components/AppShell.tsx`.** Two comments referencing the removed HelpChat floating button (lines 22, 412) — the Help tab replacement has been in place since Session 16. Comments served no purpose.
+
+8. **Added `*.tsbuildinfo` to `.gitignore`.** Build artifact (`client/tsconfig.tsbuildinfo`) was being tracked. Removed the file and added the glob pattern to `.gitignore`.
+
+9. **Updated `DEPLOY_CHECKLIST.md`.** Marked the four file-deletion items as completed.
+
+**Audit results — no action needed:**
+
+The following were audited and found clean (no dead code, no stale comments, no unused imports):
+
+- **Engine files (27 files):** `types.ts`, `constants.ts`, `supabase.ts`, `auth.ts`, `scoring.ts`, `allocation.ts`, `pipeline.ts`, `holdings.ts`, `edgar.ts`, `cusip.ts`, `fmp.ts`, `cost-efficiency.ts`, `quality.ts`, `momentum.ts`, `positioning.ts`, `classify.ts`, `fred.ts`, `rss.ts`, `thesis.ts`, `brief-engine.ts`, `brief-email.ts`, `brief-scheduler.ts`, `persist.ts`, `monitor.ts`, `cron.ts`, `cache.ts`, `finnhub.ts`, `tiingo.ts`, `fund-summaries.ts`, `help-agent.ts`
+- **Server files:** `server.ts`, `routes/routes.ts`
+- **Client files (25 files):** `App.tsx`, `api.ts`, `auth.ts`, `main.tsx`, `theme.ts`, `engine/allocation.ts`, `utils/hhi.ts`, `context/AuthContext.tsx`, all components (`AppShell`, `DonutChart`, `ErrorBoundary`, `FundDetail`, `HelpChat`, `PipelineOverlay`, `ProtectedRoute`, `SectorScorecard`), all pages (`AuthCallback`, `Briefs`, `FundLens`, `Help`, `Login`, `Pipeline`, `Portfolio`, `Research`, `Settings`, `SetupWizard`, `Thesis`, `YourBrief`)
+
+**Files deleted:** `client/src/pages/BriefsPlaceholder.tsx`, `client/src/pages/PipelinePlaceholder.tsx`, `v6_holdings_schema.sql`, `v6_full_schema.sql`, `client/tsconfig.tsbuildinfo`
+
+**Files changed:** `src/engine/constants.ts`, `src/engine/admin-alert.ts`, `src/engine/brief-engine.ts`, `client/src/components/AppShell.tsx`, `.gitignore`, `DEPLOY_CHECKLIST.md`
+
+**Spec updates:** §10 (this entry).
+
 ---
 
 *This document is the single source of truth for FundLens development. If you are reading this in a coding session, you have read your instructions. Now cite this document for every decision you make.*

@@ -8,10 +8,10 @@ Personal reference for Robert. NOT uploaded to GitHub.
 
 - [ ] All Session 11 files uploaded to GitHub
 - [ ] Railway build passes (check deploy logs)
-- [ ] Delete `client/src/pages/BriefsPlaceholder.tsx` from repo
-- [ ] Delete `client/src/pages/PipelinePlaceholder.tsx` from repo
-- [ ] Delete `v6_holdings_schema.sql` from repo (superseded by v6_full_schema.sql)
-- [ ] Delete `v6_full_schema.sql` from repo (already run in Supabase)
+- [x] Delete `client/src/pages/BriefsPlaceholder.tsx` from repo (done — Session 26 cleanup)
+- [x] Delete `client/src/pages/PipelinePlaceholder.tsx` from repo (done — Session 26 cleanup)
+- [x] Delete `v6_holdings_schema.sql` from repo (done — Session 26 cleanup)
+- [x] Delete `v6_full_schema.sql` from repo (done — Session 26 cleanup)
 
 ---
 
