@@ -324,28 +324,27 @@ async function findLatestNportFiling(
   }
 
   // ── Series-aware matching ──
-  // Fund families (TCW, PIMCO, American Funds, etc.) file separate NPORT-P
-  // for each series under the same CIK. We need to check the XML header
+  // Fund families (Vanguard, BlackRock, TCW, etc.) file separate NPORT-P
+  // for each series under the same CIK. We MUST check the XML header
   // of each candidate to find the one matching our target series.
   //
-  // Optimization: only check candidates from the most recent filing date.
-  // All series in a family typically file on the same day, so checking
-  // older dates means we missed it entirely.
-  const newestDate = candidates[0].filingDate;
-  const sameDateCandidates = candidates.filter(c => c.filingDate === newestDate);
-
-  // If only one NPORT-P on the newest date, it's the only option
-  if (sameDateCandidates.length === 1) {
-    return sameDateCandidates[0];
-  }
+  // CRITICAL: Do NOT skip series checking even if there's only one filing
+  // on the newest date. A CIK like Vanguard World Fund (52848) has 23+
+  // series that file on different dates. The newest filing could be ANY
+  // series — not necessarily our target. We must always verify.
+  //
+  // Strategy: Check candidates from most recent filing date first, then
+  // fall back to older dates. Most fund families file all series on the
+  // same day, but staggered filing is common for large families.
 
   console.log(
-    `[edgar] CIK ${cik} has ${sameDateCandidates.length} NPORT-P filings on ${newestDate} — ` +
+    `[edgar] CIK ${cik} has ${candidates.length} NPORT-P filings — ` +
     `checking XML headers for series ${targetSeriesId}`
   );
 
-  // Check each candidate's XML header for the target series ID
-  for (const candidate of sameDateCandidates) {
+  // Check ALL candidates, most recent first, until we find our series.
+  // Limit to 30 to avoid excessive API calls.
+  for (const candidate of candidates.slice(0, 30)) {
     await delay(PIPELINE.API_CALL_DELAY_MS);
 
     const matchesSeries = await checkFilingSeriesId(
@@ -363,27 +362,8 @@ async function findLatestNportFiling(
     }
   }
 
-  // If no match in the newest batch, try the next few filing dates as fallback
-  // (in case of staggered filing or amended filings)
-  const olderCandidates = candidates.filter(c => c.filingDate !== newestDate).slice(0, 10);
-  for (const candidate of olderCandidates) {
-    await delay(PIPELINE.API_CALL_DELAY_MS);
-    const matchesSeries = await checkFilingSeriesId(
-      cik,
-      candidate.accessionNumber,
-      candidate.primaryDoc,
-      targetSeriesId
-    );
-    if (matchesSeries) {
-      console.log(
-        `[edgar] Matched series ${targetSeriesId} → accession ${candidate.accessionNumber} (older filing)`
-      );
-      return candidate;
-    }
-  }
-
   console.warn(
-    `[edgar] No NPORT-P filing matched series ${targetSeriesId} among ${candidates.length} candidates`
+    `[edgar] No NPORT-P filing matched series ${targetSeriesId} among ${candidates.length} candidates (checked up to 30)`
   );
   return null;
 }
