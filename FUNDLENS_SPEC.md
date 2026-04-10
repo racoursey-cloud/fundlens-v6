@@ -997,7 +997,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 9, 2026 (after Session 24 — FundLens tab, classification hardening, Brief auto-trigger)
+**Last updated:** April 9, 2026 (after Session 25 — allocation table decoupling, sector-filtered holdings, data verification)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1093,6 +1093,10 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Seed fund name corrections | — | seed_funds.sql | 13 fund names corrected to SEC-verified names (e.g., CFSTX "Cornerstone" → "Commerce Short Term Government Fund"). ON CONFLICT clause includes `name = EXCLUDED.name`. — Session 24 |
 | Fund-of-funds look-through | §2.4.4, MISSING-15 | holdings.ts, fmp.ts | `resolveSubFundTicker()` wired to FMP `searchByName()`. Fund-name heuristic guard + exchange filtering. Depth-1 recursion with graceful null fallback. — Session 17 |
 | Pipeline rate limit re-enabled | §5.3 | routes.ts | `pipelineRateLimit` (3/hour) restored on POST /api/pipeline/run. Was disabled during Session 14 integration testing. — Session 17 |
+| Live allocation table in Brief | §7 | YourBrief.tsx, brief-engine.ts | Allocation table decoupled from Claude-generated markdown. `stripAllocationTable()` strips static table; `LiveAllocationTable` renders from client-side `allocations` state. Prompt updated to suppress markdown table. — Session 25 |
+| Sector-filtered holdings (FundLens) | §6.6 | FundLens.tsx | Clicking sector donut slice or sector bar filters holdings to that sector. Dynamic header, close button to reset. Desktop + mobile. — Session 25 |
+| Sector-filtered holdings (YourBrief) | §6.6 | YourBrief.tsx | Same sector-filtering interaction on Brief page fund explorer. Sector bars clickable with highlight/dim, holdings filter by sector. Desktop + mobile. — Session 25 |
+| Coverage cutoff 95%/400 | §4.3 | constants.ts | TARGET_WEIGHT_PCT raised to 95, MAX_HOLDINGS raised to 400. FSPGX series matching fix. — Session 25 |
 
 ### 9.2 What's BROKEN (Code Exists But Doesn't Match Spec)
 
@@ -1234,8 +1238,9 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 23 | WATCH-1 Fix, N-MFP3, Cash Sweep Monitoring | **DONE** — Auto-regenerate Briefs on risk tolerance change (WATCH-1 resolved). Pipeline rate limiter set to 5 min. N-MFP3 EDGAR parser for live MM fund data (yield, fund type, WAM, WAL). Cash sweep yellow-zone admin alert (10-15%). FDRXX in TICKER_OVERRIDES. ADAXX not found in SEC N-MFP3; uses static fallback. |
 
 | 24 | FundLens Tab, Classification Hardening, Brief Auto-Trigger | **DONE** — EDGAR series matching fix verified. Classification pre-gate expanded (derivatives→Other, internal funds→Cash, LON/ABS-* debt categories). seed_funds.sql 13 names corrected. Briefs regenerate on every pipeline run (not just risk changes). FundLens tab: ranked fund explorer with expandable three-panel drill-in (sectors/donut/holdings). CSS grid alignment fix. "Not Classified" donut slice for unclassified remainder. Research tab: removed Section 4 (fund list moved to FundLens). |
+| 25 | Allocation Table Decoupling, Data Verification, Sector-Filtered Holdings | **DONE** — Decoupled allocation table from Claude-generated Brief markdown; table now renders dynamically from client-side `allocations` state (reacts to risk slider). Verified pipeline data ingestion: FSPGX sector coverage restored (56.6% Technology), VFWAX holdings cached, 1788 holdings total. Sector-filtered holdings interaction across FundLens.tsx and YourBrief.tsx: clicking sector bars filters holdings list to that sector, dynamic header, close button to reset. Desktop and mobile layouts. Coverage cutoff raised to 95%/400. |
 
-**Sessions 0–24 complete.** 16 MISSING items resolved, 12 bugs resolved, 1 WATCH item resolved, zero open issues.
+**Sessions 0–25 complete.** 16 MISSING items resolved, 12 bugs resolved, 1 WATCH item resolved, zero open issues.
 
 **Watch list:**
 
@@ -2028,6 +2033,24 @@ v6 previously classified per-fund (same AAPL classified 5 times if it appeared i
 **Spec updates:** §6.7 (navigation updated), §9.1 (4 new entries), §9.5 (Session 24 row), §10 (this entry).
 
 **Pending for next session:** Maximize fund classification coverage — reduce "Not Classified" donut slices by improving sector classification rules for derivatives, internal funds, and edge-case holdings. See HANDOFF_SESSION_24.md for detailed objectives.
+
+## April 9, 2026 — Session 25: Allocation Table Decoupling, Data Verification, Sector-Filtered Holdings
+
+**Goal:** Decouple the allocation table from Claude-generated brief markdown so it reacts to the risk slider. Verify data ingestion after coverage cutoff and series matching changes. Add sector-filtered holdings interaction to fund explorer panels.
+
+**Commits (all pushed to main):**
+
+1. **`e3f55d3` — Coverage cutoff 95%/400 and FSPGX series matching fix.** TARGET_WEIGHT_PCT raised from 65 to 95, MAX_HOLDINGS from 50 to 400. FSPGX series matching corrected. Pipeline run verified: FSPGX sector coverage restored (Technology 56.6%), VFWAX holdings cached, 1788 holdings total with only 7 needing fresh FMP data.
+
+2. **`31feab0` — Show all holdings in scrollable list on FundLens tab.** Holdings panel expanded from top 8 to full scrollable list.
+
+3. **`3b803ec` — Decouple allocation table from brief narrative for live risk-slider sync.** `stripAllocationTable()` regex strips markdown tables matching `| Fund | Ticker | Allocation |` pattern from Claude-generated briefs. `LiveAllocationTable` React component renders allocation data from client-side `allocations` useMemo (which reacts to risk slider). `BriefSectionCard` accepts optional `preContent` prop. `brief-engine.ts` prompt updated to suppress markdown table generation, using qualitative language instead.
+
+4. **`c592d47` — Sector-filtered holdings interaction across both pages.** Clicking a sector bar (or donut slice in FundLens) filters the holdings list to show only that sector's holdings. Dynamic header ("Technology Holdings" vs "Top Holdings"), close button to reset. Non-selected sector bars dim to 0.35 opacity; active bars get background highlight and bold text. Applied consistently across FundLens.tsx (desktop + mobile) and YourBrief.tsx (desktop + mobile).
+
+**Files changed:** `src/engine/constants.ts`, `src/engine/brief-engine.ts`, `client/src/pages/FundLens.tsx`, `client/src/pages/YourBrief.tsx`
+
+**Spec updates:** §9.1 (4 new entries), §9.5 (Session 25 row), §10 (this entry).
 
 ---
 
