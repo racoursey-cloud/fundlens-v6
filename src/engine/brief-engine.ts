@@ -648,17 +648,18 @@ export async function assembleDataPacket(
     profile.risk_tolerance
   );
 
-  // ── Cash sweep monitoring (§3.5, Session 23) ──────────────────────────
-  // green ≤10% → silent, yellow 10-15% → admin alert, red >15% → hard cap
-  const cashAlertPct = ALLOCATION.CASH_ALERT_PCT * 100; // 10
+  // ── MM allocation monitoring (§3.5, v6.1) ──────────────────────────────
+  // v6.1: Forced cash sweep removed. MM funds only appear if they survive
+  // the Kelly curve on merit. Any MM allocation above 5% is unusual and
+  // warrants investigation (likely score compression in the fund universe).
   for (const pos of allocation) {
-    if (MONEY_MARKET_TICKERS.has(pos.ticker) && pos.percentage > cashAlertPct) {
+    if (MONEY_MARKET_TICKERS.has(pos.ticker) && pos.percentage > 5) {
       console.warn(
-        `[brief-engine] Cash sweep yellow: ${pos.ticker} at ${pos.percentage}% for user ${userId.slice(0, 8)}...`
+        `[brief-engine] Unexpected MM allocation: ${pos.ticker} at ${pos.percentage}% for user ${userId.slice(0, 8)}...`
       );
       // Fire-and-forget — never blocks Brief generation
       alertCashSweepYellow(userId, pos.ticker, pos.percentage, profile.risk_tolerance)
-        .catch(err => console.error(`[brief-engine] Cash sweep alert failed: ${err}`));
+        .catch(err => console.error(`[brief-engine] MM alert failed: ${err}`));
     }
   }
 

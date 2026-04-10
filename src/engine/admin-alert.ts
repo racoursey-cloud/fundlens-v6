@@ -143,7 +143,12 @@ export async function alertStaleRun(
   );
 }
 
-/** Alert: cash sweep allocation in yellow zone (§3.5 monitoring) */
+/**
+ * Alert: cash sweep allocation in yellow zone (§3.5 monitoring)
+ * NOTE (v6.1): Forced cash sweep has been removed. This function is retained
+ * for backward compatibility but should no longer fire in normal operation.
+ * MM funds can only receive allocation if they survive the Kelly curve on merit.
+ */
 export async function alertCashSweepYellow(
   userId: string,
   mmTicker: string,
@@ -151,17 +156,13 @@ export async function alertCashSweepYellow(
   riskTolerance: number
 ): Promise<void> {
   await sendAdminAlert(
-    `Cash sweep elevated: ${cashPct.toFixed(0)}% to ${mmTicker}`,
+    `Unexpected MM allocation: ${cashPct.toFixed(0)}% to ${mmTicker}`,
     `User <strong>${userId.slice(0, 8)}...</strong> (risk ${riskTolerance.toFixed(1)}) ` +
     `has <strong>${cashPct.toFixed(1)}%</strong> allocated to money market fund ` +
     `<strong>${mmTicker}</strong>.\n\n` +
-    `This is in the <span style="color:#d97706;font-weight:bold">yellow zone</span> ` +
-    `(10–15%). The 15% hard cap was not triggered.\n\n` +
-    `<strong>Possible causes:</strong>\n` +
-    `• Many funds fell below the 5% de minimis floor\n` +
-    `• Low risk tolerance producing a dispersed allocation\n` +
-    `• Few funds in the 401(k) menu\n\n` +
-    `Check the user's allocation in the <code>allocation_history</code> table.`
+    `<strong>Note:</strong> v6.1 removed the forced cash sweep. MM funds should only ` +
+    `appear in allocations if they survive the Kelly curve on merit. If this alert ` +
+    `fires, investigate whether the fund universe has unusual score compression.`
   );
 }
 

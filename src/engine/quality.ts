@@ -4,7 +4,7 @@
  * Evaluates the financial health of the companies/issuers inside a fund.
  *
  * Three scoring paths by holding type (ported from v5.1 quality.js):
- *   Equity → 25+ financial ratios across 5 dimensions (v6 model, richer than v5.1 Piotroski-lite)
+ *   Equity → 18 financial ratios across 5 dimensions (v6.1 model, trimmed from 26 to remove multicollinear metrics)
  *   Bond   → Issuer category quality map + distressed adjustments (§2.4.2, ported from v5.1)
  *   Blended → Weighted average by equity/bond portfolio share (§2.4.3)
  *
@@ -389,50 +389,42 @@ export function scoreHolding(
     return score;
   }
 
-  // ── Profitability dimension ──
+  // ── Profitability dimension (5 ratios — ROA removed, correlated with ROE) ──
   const profRatios: RatioScore[] = [
-    { name: 'Gross Profit Margin', value: ratios?.grossProfitMargin ?? null, score: track(scoreGrossProfitMargin(ratios?.grossProfitMargin ?? null)), weight: 0.15 },
-    { name: 'Operating Margin', value: ratios?.operatingProfitMargin ?? null, score: track(scoreOperatingMargin(ratios?.operatingProfitMargin ?? null)), weight: 0.20 },
+    { name: 'Gross Profit Margin', value: ratios?.grossProfitMargin ?? null, score: track(scoreGrossProfitMargin(ratios?.grossProfitMargin ?? null)), weight: 0.20 },
+    { name: 'Operating Margin', value: ratios?.operatingProfitMargin ?? null, score: track(scoreOperatingMargin(ratios?.operatingProfitMargin ?? null)), weight: 0.25 },
     { name: 'Net Profit Margin', value: ratios?.netProfitMargin ?? null, score: track(scoreNetProfitMargin(ratios?.netProfitMargin ?? null)), weight: 0.15 },
-    { name: 'Return on Equity', value: ratios?.returnOnEquity ?? null, score: track(scoreROE(ratios?.returnOnEquity ?? null)), weight: 0.20 },
-    { name: 'Return on Assets', value: ratios?.returnOnAssets ?? null, score: track(scoreROA(ratios?.returnOnAssets ?? null)), weight: 0.15 },
+    { name: 'Return on Equity', value: ratios?.returnOnEquity ?? null, score: track(scoreROE(ratios?.returnOnEquity ?? null)), weight: 0.25 },
     { name: 'Return on Invested Capital', value: keyMetrics?.roic ?? null, score: track(scoreROIC(keyMetrics?.roic ?? null)), weight: 0.15 },
   ];
 
-  // ── Balance Sheet dimension ──
+  // ── Balance Sheet dimension (3 ratios — Quick Ratio and Debt-to-Assets removed, correlated with Current Ratio and D/E) ──
   const bsRatios: RatioScore[] = [
-    { name: 'Current Ratio', value: ratios?.currentRatio ?? null, score: track(scoreCurrentRatio(ratios?.currentRatio ?? null)), weight: 0.20 },
-    { name: 'Quick Ratio', value: ratios?.quickRatio ?? null, score: track(scoreQuickRatio(ratios?.quickRatio ?? null)), weight: 0.15 },
-    { name: 'Debt to Equity', value: ratios?.debtEquityRatio ?? null, score: track(scoreDebtToEquity(ratios?.debtEquityRatio ?? null)), weight: 0.25 },
-    { name: 'Debt to Assets', value: keyMetrics?.debtToAssets ?? null, score: track(scoreDebtToAssets(keyMetrics?.debtToAssets ?? null)), weight: 0.20 },
-    { name: 'Interest Coverage', value: ratios?.interestCoverage ?? null, score: track(scoreInterestCoverage(ratios?.interestCoverage ?? null)), weight: 0.20 },
+    { name: 'Current Ratio', value: ratios?.currentRatio ?? null, score: track(scoreCurrentRatio(ratios?.currentRatio ?? null)), weight: 0.30 },
+    { name: 'Debt to Equity', value: ratios?.debtEquityRatio ?? null, score: track(scoreDebtToEquity(ratios?.debtEquityRatio ?? null)), weight: 0.35 },
+    { name: 'Interest Coverage', value: ratios?.interestCoverage ?? null, score: track(scoreInterestCoverage(ratios?.interestCoverage ?? null)), weight: 0.35 },
   ];
 
-  // ── Cash Flow dimension ──
+  // ── Cash Flow dimension (3 ratios — Free CF/Share and Cash/Share removed, correlated with FCF Yield or weak signal) ──
   const cfRatios: RatioScore[] = [
-    { name: 'Free Cash Flow Yield', value: keyMetrics?.freeCashFlowYield ?? null, score: track(scoreFreeCashFlowYield(keyMetrics?.freeCashFlowYield ?? null)), weight: 0.25 },
-    { name: 'Operating CF per Share', value: keyMetrics?.operatingCashFlowPerShare ?? null, score: track(scoreOperatingCFPerShare(keyMetrics?.operatingCashFlowPerShare ?? null)), weight: 0.20 },
-    { name: 'Free CF per Share', value: keyMetrics?.freeCashFlowPerShare ?? null, score: track(scoreFreeCashFlowPerShare(keyMetrics?.freeCashFlowPerShare ?? null)), weight: 0.20 },
-    { name: 'Cash per Share', value: keyMetrics?.cashPerShare ?? null, score: track(scoreCashPerShare(keyMetrics?.cashPerShare ?? null)), weight: 0.15 },
-    { name: 'Income Quality', value: keyMetrics?.incomeQuality ?? null, score: track(scoreIncomeQuality(keyMetrics?.incomeQuality ?? null)), weight: 0.20 },
+    { name: 'Free Cash Flow Yield', value: keyMetrics?.freeCashFlowYield ?? null, score: track(scoreFreeCashFlowYield(keyMetrics?.freeCashFlowYield ?? null)), weight: 0.35 },
+    { name: 'Operating CF per Share', value: keyMetrics?.operatingCashFlowPerShare ?? null, score: track(scoreOperatingCFPerShare(keyMetrics?.operatingCashFlowPerShare ?? null)), weight: 0.30 },
+    { name: 'Income Quality', value: keyMetrics?.incomeQuality ?? null, score: track(scoreIncomeQuality(keyMetrics?.incomeQuality ?? null)), weight: 0.35 },
   ];
 
-  // ── Earnings Quality dimension ──
+  // ── Earnings Quality dimension (3 ratios — Revenue/Share and Book Value/Share removed, scale metrics better captured by valuation ratios) ──
   const eqRatios: RatioScore[] = [
-    { name: 'Earnings Yield', value: keyMetrics?.earningsYield ?? null, score: track(scoreEarningsYield(keyMetrics?.earningsYield ?? null)), weight: 0.25 },
-    { name: 'Dividend Yield', value: ratios?.dividendYield ?? null, score: track(scoreDividendYield(ratios?.dividendYield ?? null)), weight: 0.20 },
-    { name: 'Payout Ratio', value: ratios?.payoutRatio ?? null, score: track(scorePayoutRatio(ratios?.payoutRatio ?? null)), weight: 0.20 },
-    { name: 'Revenue per Share', value: keyMetrics?.revenuePerShare ?? null, score: track(scoreRevenuePerShare(keyMetrics?.revenuePerShare ?? null)), weight: 0.15 },
-    { name: 'Book Value per Share', value: keyMetrics?.bookValuePerShare ?? null, score: track(scoreBookValuePerShare(keyMetrics?.bookValuePerShare ?? null)), weight: 0.20 },
+    { name: 'Earnings Yield', value: keyMetrics?.earningsYield ?? null, score: track(scoreEarningsYield(keyMetrics?.earningsYield ?? null)), weight: 0.35 },
+    { name: 'Dividend Yield', value: ratios?.dividendYield ?? null, score: track(scoreDividendYield(ratios?.dividendYield ?? null)), weight: 0.30 },
+    { name: 'Payout Ratio', value: ratios?.payoutRatio ?? null, score: track(scorePayoutRatio(ratios?.payoutRatio ?? null)), weight: 0.35 },
   ];
 
-  // ── Valuation dimension ──
+  // ── Valuation dimension (4 ratios — Price-to-Cash-Flow removed, correlated with FCF Yield and EV/EBITDA) ──
   const valRatios: RatioScore[] = [
-    { name: 'P/E Ratio', value: ratios?.priceEarningsRatio ?? null, score: track(scorePE(ratios?.priceEarningsRatio ?? null)), weight: 0.25 },
+    { name: 'P/E Ratio', value: ratios?.priceEarningsRatio ?? null, score: track(scorePE(ratios?.priceEarningsRatio ?? null)), weight: 0.30 },
     { name: 'P/B Ratio', value: ratios?.priceToBookRatio ?? null, score: track(scorePB(ratios?.priceToBookRatio ?? null)), weight: 0.20 },
-    { name: 'Price to Sales', value: ratios?.priceToSalesRatio ?? null, score: track(scorePriceToSales(ratios?.priceToSalesRatio ?? null)), weight: 0.20 },
-    { name: 'EV/EBITDA', value: ratios?.enterpriseValueMultiple ?? null, score: track(scoreEVtoEBITDA(ratios?.enterpriseValueMultiple ?? null)), weight: 0.20 },
-    { name: 'Price to Cash Flow', value: ratios?.priceCashFlowRatio ?? null, score: track(scorePriceToCashFlow(ratios?.priceCashFlowRatio ?? null)), weight: 0.15 },
+    { name: 'Price to Sales', value: ratios?.priceToSalesRatio ?? null, score: track(scorePriceToSales(ratios?.priceToSalesRatio ?? null)), weight: 0.25 },
+    { name: 'EV/EBITDA', value: ratios?.enterpriseValueMultiple ?? null, score: track(scoreEVtoEBITDA(ratios?.enterpriseValueMultiple ?? null)), weight: 0.25 },
   ];
 
   const dimensions = {

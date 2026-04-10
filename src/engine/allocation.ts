@@ -1,27 +1,37 @@
 /**
- * FundLens v6 — Allocation Engine (§3)
+ * FundLens v6.1 — Allocation Engine (§3)
  *
  * Converts universal fund scores into personalized position sizing
  * based on the user's risk tolerance. Scores are universal; allocations
  * are personal.
  *
- * Ported from v5.1 outlier.js with spec §3 updates:
- *   - 7-point Kelly risk scale (was 1–9)
- *   - 5% de minimis floor (was 0.5% or capture-threshold)
+ * Architecture:
+ *   - 7-point Kelly-inspired risk scale with recalibrated k parameters
+ *   - 4% de minimis floor (lowered from 5% to preserve diversification)
  *   - MAD-based modified z-scores with 0.6745 consistency constant
- *   - Exponential curve e^(k × mod_z) using KELLY_RISK_TABLE k-parameters
+ *   - Exponential curve e^(k × mod_z) (softmax/Boltzmann allocation)
  *   - Quality gate: 4+ fallback funds excluded
+ *   - No forced cash sweep — swept weight redistributed to survivors
+ *   - MM funds scored on real factors, displayed with tiers, but excluded
+ *     from Kelly curve. Cash enters portfolio only if MM survives on merit.
  *   - Rounding with error absorption into largest position
  *
- * Theoretical basis: Fractional Kelly Criterion (Kelly 1956), Grinold & Kahn's
- * Fundamental Law of Active Management.
+ * Theoretical basis: Kelly-inspired exponential allocation curve (Kelly 1956),
+ * softmax/Boltzmann discrete choice (McFadden 1974), Grinold & Kahn's
+ * Fundamental Law of Active Management. DeMiguel et al. (2009) informs the
+ * concentration rationale — optimization must concentrate enough to beat 1/N.
  *
  * No Claude calls. No external API calls. Pure math.
  *
  * Session 6: Extracted from brief-engine.ts, rewritten to match spec §3.1–3.6.
  * Session 13: Replaced capture threshold (Step 4) with de minimis floor per §3.5.
  * Session 22: De minimis swept weight routes to top-scoring MM fund (§3.5 cash sweep).
- *             MM funds scored on real factors but excluded from Kelly curve.
+ * v6.1: Removed forced cash sweep — swept weight redistributed to survivors.
+ *       k values recalibrated upward for tighter concentration. De minimis
+ *       lowered from 5% to 4%. Produces 4–11 fund allocations (was 5–8 + 15% cash).
+ *       Rationale: 15% forced cash created 20.6% terminal wealth drag over 30 years
+ *       with no theoretical justification in a 401(k) (no liquidity need, automatic
+ *       DCA contributions serve as dry powder). See §3.5 spec notes.
  */
 
 import {
@@ -216,12 +226,17 @@ export function computeAllocations(
     allocMap.set(ticker, (rawWeight / totalRaw) * 100);
   }
 
-  // ── STEP 4 — De Minimis Floor + Cash Sweep (§3.5, Session 22) ────────
-  // Drop any fund with allocation below 5% (DE_MINIMIS_PCT).
-  // Route swept weight to top-scoring MM fund (capped at MM_CASH_CAP).
-  // Excess above cap reverts to proportional redistribution among survivors.
-  const deMinimisThreshold = ALLOCATION.DE_MINIMIS_PCT * 100; // 5 (percentage points)
-  const mmCashCap = ALLOCATION.MM_CASH_CAP * 100;             // 15 (percentage points)
+  // ── STEP 4 — De Minimis Floor + Redistribute (§3.5, v6.1) ───────────
+  // Drop any fund with allocation below DE_MINIMIS_PCT (4%).
+  // Swept weight redistributed proportionally to survivors (no forced cash).
+  // MM funds only enter the portfolio if they survive the Kelly curve on merit.
+  //
+  // Rationale (v6.1): Forced cash sweep to MM created 15% cash at nearly every
+  // risk level, producing 20.6% terminal wealth drag over 30 years in a 401(k)
+  // where there is no liquidity need. Academic consensus (Bogle, Vanguard, Morningstar)
+  // recommends 0-3% cash for long-term retirement portfolios. Automatic biweekly
+  // contributions serve as the participant's "dry powder" via dollar-cost averaging.
+  const deMinimisThreshold = ALLOCATION.DE_MINIMIS_PCT * 100; // 4 (percentage points)
 
   // Calculate total swept weight before removing
   let sweptPct = 0;
@@ -238,38 +253,17 @@ export function computeAllocations(
     }
   }
 
-  // Find top-scoring MM fund for cash sweep
-  const mmFunds = funds
-    .filter(f => f.isMoneyMarket)
-    .sort((a, b) => b.compositeScore - a.compositeScore);
-  const topMM = mmFunds.length > 0 ? mmFunds[0] : null;
+  // Renormalize survivors to 100% (swept weight redistributed proportionally)
+  const survivorSum = Array.from(allocMap.values()).reduce((a, b) => a + b, 0) || 1;
+  for (const [ticker, pct] of allocMap) {
+    allocMap.set(ticker, (pct / survivorSum) * 100);
+  }
 
-  // Route swept weight to MM fund, capped at MM_CASH_CAP
-  let cashPct = 0;
-  if (sweptPct > 0 && topMM) {
-    cashPct = Math.min(sweptPct, mmCashCap);
-    const survivorTarget = 100 - cashPct;
-
-    // Renormalize survivors to (100 - cashPct)%
-    const survivorSum = Array.from(allocMap.values()).reduce((a, b) => a + b, 0) || 1;
-    for (const [ticker, pct] of allocMap) {
-      allocMap.set(ticker, (pct / survivorSum) * survivorTarget);
-    }
-
-    // Assign cash allocation to top MM fund
-    allocMap.set(topMM.ticker, cashPct);
-
+  if (sweptPct > 0) {
     console.log(
-      `[allocation] Cash sweep: ${sweptPct.toFixed(1)}% swept → ` +
-      `${cashPct.toFixed(1)}% to ${topMM.ticker} (score ${topMM.compositeScore})` +
-      (sweptPct > mmCashCap ? ` [CAPPED — ${(sweptPct - cashPct).toFixed(1)}% redistributed]` : '')
+      `[allocation] De minimis: ${sweptPct.toFixed(1)}% swept from sub-${deMinimisThreshold}% positions → ` +
+      `redistributed to ${allocMap.size} survivors`
     );
-  } else {
-    // No MM funds available or nothing swept — renormalize to 100%
-    const survivorSum = Array.from(allocMap.values()).reduce((a, b) => a + b, 0) || 1;
-    for (const [ticker, pct] of allocMap) {
-      allocMap.set(ticker, (pct / survivorSum) * 100);
-    }
   }
 
   // ── STEP 5 — Rounding and Error Absorption (§3.6) ─────────────────────
@@ -298,8 +292,9 @@ export function computeAllocations(
   }
 
   // ── Assemble Results ──────────────────────────────────────────────────
-  // MM funds may have received allocation via cash sweep even though they
-  // are excluded from the Kelly curve. Check allocMap for all funds.
+  // MM funds are excluded from the Kelly curve and will have 0% allocation
+  // unless they somehow survived (extremely unlikely with typical MM scores).
+  // All funds appear in the results for UI display with their tier badges.
   const results: AllocationResult[] = withZ.map(fund => ({
     ticker: fund.ticker,
     allocationPct: allocMap.get(fund.ticker) ?? 0,

@@ -11,7 +11,7 @@
 // Scored on real factors adapted to MM characteristics.
 // Cost Efficiency: scored normally. Quality: credit quality proxy.
 // Momentum: 7-day SEC yield proxy. Positioning: neutral 50.
-// Allocation comes from de minimis cash sweep (§3.5), not Kelly curve.
+// Excluded from Kelly curve; only enters allocation if score survives on merit (§3.5).
 export const MONEY_MARKET_TICKERS = new Set(['FDRXX', 'ADAXX']);
 
 /**
@@ -82,17 +82,17 @@ export const HOLDINGS_COVERAGE = {
   MAX_HOLDINGS: 400,
 } as const;
 
-// ─── Risk Tolerance (7-Point Kelly Scale, Spec §3.4, §6.4) ─────────────────
+// ─── Risk Tolerance (7-Point Kelly-Inspired Scale, Spec §3.4, §6.4) ────────
 // Affects allocation sizing only, NOT scoring. Same scores, different position sizes.
 // The k values are non-linearly spaced — tighter at conservative end, wider at aggressive.
 export const KELLY_RISK_TABLE = [
-  { level: 1, label: 'Very Conservative',     kellyFraction: 0.15, k: 0.30 },
-  { level: 2, label: 'Conservative',          kellyFraction: 0.22, k: 0.50 },
-  { level: 3, label: 'Moderate-Conservative',  kellyFraction: 0.30, k: 0.70 },
-  { level: 4, label: 'Moderate',               kellyFraction: 0.40, k: 0.95 },
-  { level: 5, label: 'Moderate-Aggressive',    kellyFraction: 0.50, k: 1.20 },
-  { level: 6, label: 'Aggressive',             kellyFraction: 0.65, k: 1.50 },
-  { level: 7, label: 'Very Aggressive',        kellyFraction: 0.80, k: 1.85 },
+  { level: 1, label: 'Very Conservative',     kellyFraction: 0.20, k: 0.42 },
+  { level: 2, label: 'Conservative',          kellyFraction: 0.30, k: 0.65 },
+  { level: 3, label: 'Moderate-Conservative',  kellyFraction: 0.40, k: 0.90 },
+  { level: 4, label: 'Moderate',               kellyFraction: 0.50, k: 1.20 },
+  { level: 5, label: 'Moderate-Aggressive',    kellyFraction: 0.60, k: 1.50 },
+  { level: 6, label: 'Aggressive',             kellyFraction: 0.72, k: 1.85 },
+  { level: 7, label: 'Very Aggressive',        kellyFraction: 0.85, k: 2.25 },
 ] as const;
 
 /** Default risk level (Moderate = 4) */
@@ -142,17 +142,10 @@ export const ALLOCATION = {
   QUALITY_GATE_MAX_FALLBACKS: 4,
   /** De minimis floor (§3.5). Funds with allocation below this threshold are
    *  dropped and survivors renormalized. Industry-standard minimum position size.
-   *  Single-pass: removing sub-threshold funds only increases survivor allocations. */
-  DE_MINIMIS_PCT: 0.05,
-  /** Maximum cash allocation from de minimis sweep (§3.5, Session 22).
-   *  Swept weight above this cap reverts to proportional redistribution.
-   *  15% ≈ 0.83% annual drag at ~5.5% equity-MM spread. */
-  MM_CASH_CAP: 0.15,
-  /** Cash sweep monitoring thresholds (§3.5, Session 22/23).
-   *  green  ≤ CASH_ALERT_PCT  → no action
-   *  yellow   CASH_ALERT_PCT to MM_CASH_CAP  → admin alert email
-   *  red    > MM_CASH_CAP     → hard cap triggers (handled above) */
-  CASH_ALERT_PCT: 0.10,
+   *  Single-pass: removing sub-threshold funds only increases survivor allocations.
+   *  v6.1: Lowered from 5% to 4% to allow broader diversification at conservative
+   *  risk levels while still eliminating negligible positions. */
+  DE_MINIMIS_PCT: 0.04,
 } as const;
 
 // ─── FRED Commodity Series (Spec §4.4) ──────────────────────────────────────

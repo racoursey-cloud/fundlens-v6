@@ -52,7 +52,7 @@ FundLens is a 401(k) fund scoring and allocation platform for ~200 coworkers at 
 
 **Scoring philosophy:** Every fund receives one universal score. The score describes how attractive the fund is right now, based on its costs, the financial health of its holdings, its recent price performance, and how well its sector exposure aligns with current macro conditions. The score does not change based on who is viewing it. Risk tolerance affects allocation sizing only, never scoring.
 
-**Theoretical foundation:** The scoring model follows the Black-Litterman framework (1992): three objective factors (Cost Efficiency, Holdings Quality, Momentum) represent the "market equilibrium" view, and one AI-informed factor (Positioning) represents the "views overlay." The 80/20 split between objective factors and the views overlay is conservative by design — forecast errors in the positioning factor cannot overwhelm the fundamentals.
+**Theoretical foundation:** The scoring model draws on the Black-Litterman insight (1992) that objective market data should anchor the portfolio, with forward-looking views as a bounded overlay. Three objective factors (Cost Efficiency, Holdings Quality, Momentum) represent the data-driven anchor, and one AI-informed factor (Positioning) represents the views overlay. The fixed 80/20 split between objective factors and the views overlay is conservative by design — forecast errors in the positioning factor cannot overwhelm the fundamentals. (Note: this is a fixed-weight convex combination inspired by BL's architecture, not a full Bayesian posterior update. The fixed cap is intentional — it bounds the AI signal's influence regardless of confidence calibration.)
 
 ---
 
@@ -92,7 +92,7 @@ Where Φ is the standard normal CDF (Abramowitz & Stegun approximation, max erro
 | Cost Efficiency | 25% | Most proven predictor of future fund returns (Morningstar, Sharpe 1966, Carhart 1997, French 2008) |
 | Holdings Quality | 30% | Richest data signal; profitability predicts returns (Novy-Marx 2013, Piotroski 2000, Asness et al. 2019) |
 | Momentum | 25% | Strongest academic factor evidence (Jegadeesh & Titman 1993, Carhart 1997); vol-adjusted |
-| Positioning | 20% | Black-Litterman "views overlay"; FundLens differentiator; lowest weight = conservative sizing for forecast signal |
+| Positioning | 20% | Black-Litterman-inspired "views overlay"; FundLens differentiator; lowest weight = conservative sizing for forecast signal |
 
 Weights are user-adjustable via sliders. Defaults are 25/30/25/20. Changing weights triggers an instant client-side rescore (pure math, no API calls). Raw factor scores are the same for everyone.
 
@@ -144,13 +144,15 @@ Weights are user-adjustable via sliders. Defaults are 25/30/25/20. Changing weig
 
 Five dimensions, weighted by predictive importance:
 
-| Dimension | Weight | Key Ratios |
+| Dimension | Weight | Key Ratios (18 total) |
 |-----------|--------|------------|
-| Profitability | 0.25 | Gross Profit Margin, Operating Margin, Net Profit Margin, ROE, ROA, ROIC |
-| Balance Sheet | 0.20 | Current Ratio, Quick Ratio, Debt-to-Equity, Debt-to-Assets, Interest Coverage |
-| Cash Flow | 0.20 | FCF Yield, Operating CF/Share, Free CF/Share, Income Quality (OCF/Net Income) |
-| Earnings Quality | 0.15 | Earnings Yield, Dividend Yield, Payout Ratio, Revenue/Share, Book Value/Share |
-| Valuation | 0.20 | P/E, P/B, Price-to-Sales, EV/EBITDA, Price-to-Cash Flow |
+| Profitability | 0.25 | Gross Profit Margin, Operating Margin, Net Profit Margin, ROE, ROIC |
+| Balance Sheet | 0.20 | Current Ratio, Debt-to-Equity, Interest Coverage |
+| Cash Flow | 0.20 | FCF Yield, Operating CF/Share, Income Quality (OCF/Net Income) |
+| Earnings Quality | 0.15 | Earnings Yield, Dividend Yield, Payout Ratio |
+| Valuation | 0.20 | P/E, P/B, Price-to-Sales, EV/EBITDA |
+
+**Ratio trimming (v6.1):** Reduced from 26 to 18 ratios by removing highly correlated or redundant metrics: ROA (r≈0.85 with ROE), Quick Ratio (r≈0.92 with Current Ratio), Debt-to-Assets (r≈0.88 with D/E), Free CF/Share (scale metric, captured by FCF Yield), Cash/Share (weak signal), Revenue/Share (scale metric), Book Value/Share (captured by P/B), Price-to-Cash Flow (r≈0.80 with FCF Yield and EV/EBITDA). Scoring functions for removed ratios are retained in quality.ts for future use. Within-dimension weights were redistributed proportionally so each dimension still sums to 1.0.
 
 **Per-ratio scoring:** Each ratio is scored 0–100 using piecewise thresholds appropriate to the metric (see v6 quality.ts for the full threshold table — those thresholds are carried forward).
 
@@ -176,6 +178,8 @@ If coverage_pct < 0.40:
   Renormalize all weights to sum to 1.0
 ```
 This reduces quality's influence when data is sparse and redistributes to the factor with the most reliable data (momentum — price data is almost always available).
+
+**Implementation note on the 40% threshold:** The citation to Grinold (1989) — *The Fundamental Law of Active Management* — provides the theoretical motivation: forecast quality degrades as the breadth of independent information shrinks. However, the specific 40% cutoff is a practical heuristic chosen for this model, not a value derived directly from Grinold's formula (IC × √BR). In FundLens's context, 40% represents the coverage level below which the quality signal becomes unreliable enough that redistributing weight to momentum (which has near-100% data availability) improves composite robustness. The linear scaling from 40% down to a 10%-of-base-weight floor was calibrated against the TerrAscend fund universe, where international and bond-heavy funds routinely fall below 40% equity fundamentals coverage.
 
 #### 2.4.2 Bond Holdings — Issuer Category Quality Map
 
@@ -425,7 +429,7 @@ Note: Funds B and C have nearly identical composites despite very different fact
 
 The allocation engine converts universal fund scores into personalized position sizing based on the user's risk tolerance. Scores are universal; allocations are personal. The same fund scoring 85 will receive a larger allocation for an aggressive investor (concentrated bets on high-conviction picks) than for a conservative investor (spread across more funds).
 
-**Theoretical basis:** Fractional Kelly Criterion (Kelly 1956, applied by Thorp, formalized by Boyd et al. at Stanford as Risk-Constrained Kelly). Grinold & Kahn's Fundamental Law of Active Management governs the relationship between skill signal (scores) and position sizing (transfer coefficient).
+**Theoretical basis:** Kelly-inspired exponential allocation curve (drawing on Kelly 1956, applied by Thorp, and the risk-constrained Kelly formulation by Boyd et al. at Stanford). The exponential e^(k × mod_z) preserves the core Kelly property — higher-conviction positions receive exponentially more capital — without requiring the win-probability estimates that classical Kelly demands and that are unknowable for mutual fund allocations. Grinold & Kahn's Fundamental Law of Active Management informs the relationship between skill signal (scores) and position sizing (transfer coefficient).
 
 ### 3.2 Step 1: Modified Z-Score (MAD-Based)
 
@@ -462,13 +466,15 @@ normalized_weight[i] = raw_weight[i] / Σ(raw_weight)
 
 | Risk Level | Label | Kelly Fraction | k Parameter | Capture Character |
 |------------|-------|---------------|-------------|-------------------|
-| 1 | Very Conservative | ~0.15 | 0.30 | Very spread out |
-| 2 | Conservative | ~0.22 | 0.50 | Diversified with mild tilt |
-| 3 | Moderate-Conservative | ~0.30 | 0.70 | Balanced diversification |
-| 4 | Moderate | ~0.40 | 0.95 | Moderate concentration |
-| 5 | Moderate-Aggressive | ~0.50 | 1.20 | Concentrated |
-| 6 | Aggressive | ~0.65 | 1.50 | High conviction |
-| 7 | Very Aggressive | ~0.80 | 1.85 | Maximum conviction |
+| 1 | Very Conservative | ~0.20 | 0.42 | Broad diversification (~11 funds) |
+| 2 | Conservative | ~0.30 | 0.65 | Diversified with mild tilt (~8 funds) |
+| 3 | Moderate-Conservative | ~0.40 | 0.90 | Balanced diversification (~7 funds) |
+| 4 | Moderate | ~0.50 | 1.20 | Moderate concentration (~6 funds) |
+| 5 | Moderate-Aggressive | ~0.60 | 1.50 | Concentrated (~5 funds) |
+| 6 | Aggressive | ~0.72 | 1.85 | High conviction (~4 funds) |
+| 7 | Very Aggressive | ~0.85 | 2.25 | Maximum conviction (~4 funds) |
+
+**v6.1 k-value recalibration (approved by Robert, April 10, 2026):** k values increased ~40% across the board to produce tighter concentration. The previous values (0.30–1.85) produced near-equal-weight allocations at conservative settings, with 52% of portfolio weight being swept into cash — worse than naive 1/N diversification (DeMiguel et al. 2009). New values (0.42–2.25) produce 4–11 fund allocations that meaningfully differentiate between high and low conviction picks. Fund counts in the "Capture Character" column are approximate and emergent from the curve + de minimis interaction with typical score distributions.
 
 **Continuous interpolation (Session 7 decision):** The risk slider accepts any value from 1.0 to 7.0 (continuous, not integer-only). The k parameter is linearly interpolated between the two nearest anchor points:
 
@@ -483,7 +489,7 @@ Else:
   k = k_table[floor_level] + (k_table[ceil_level] - k_table[floor_level]) × fraction
 ```
 
-Example: risk_tolerance = 5.3 → k = 1.20 + (1.50 - 1.20) × 0.3 = 1.29. This produces a meaningfully different allocation than either 5.0 (k=1.20) or 6.0 (k=1.50).
+Example: risk_tolerance = 5.3 → k = 1.50 + (1.85 - 1.50) × 0.3 = 1.605. This produces a meaningfully different allocation than either 5.0 (k=1.50) or 6.0 (k=1.85).
 
 The 7 named anchor points provide orientation ("I'm somewhere between Moderate and Moderately Aggressive"). The math between them is smooth. Fund count and concentration are emergent properties — no hard-coded fund counts, no stair-step mapping from slider value to fund count, no inverse mapping tables. The number of funds in the allocation is a mathematical consequence of the curve steepness and the de minimis floor.
 
@@ -491,31 +497,27 @@ The 7 named anchor points provide orientation ("I'm somewhere between Moderate a
 
 **Are three non-linear transforms too many? (Session 9 discussion with Robert):** Robert asked whether stacking z-standardization → CDF → MAD z-scoring → exponential corrupts the signal. Answer: no, because each layer answers a different question and none are redundant. Layer 1 (z-standardization + CDF, §2.1) makes factors *comparable* — removes scale differences so a cost score clustering 60–90 doesn't dominate a momentum score spreading 20–80. Standard portfolio analytics (Grinold & Kahn). Layer 2 (MAD z-scoring, §3.2) measures fund *separation* — how far each fund stands from the pack. Uses MAD instead of stdev so a single outlier fund (e.g. FXAIX at 92 when everything else is 40–65) doesn't distort the spread measurement for all other funds. Layer 3 (exponential, §3.4) converts separation into *position sizing* — the Kelly criterion application where risk appetite (k) scales how aggressively the portfolio concentrates on high-conviction picks. Each layer preserves fund ordering and relative distances while progressively removing sensitivity to distributional quirks (outliers, skewed factors, fat tails). Corruption would manifest as: meaningfully different funds getting near-identical allocations, or tiny score differences producing wildly different allocations. The §3.7 worked example shows neither pathology. The key insight: Layer 1 z-scores per-factor raw scores (for comparability), Layer 2 z-scores the final composites (for robust separation) — same technique applied to different inputs for different purposes, with MAD in Layer 2 specifically chosen for its outlier robustness, which would be wrong in Layer 1 where you need Gaussian properties for CDF mapping.
 
-### 3.5 Step 4: De Minimis Floor (5%) + Cash Sweep
+### 3.5 Step 4: De Minimis Floor (4%) + Redistribute
 
 ```
 After normalization:
-  Drop any fund with allocation < 5%
+  Drop any fund with allocation < 4%       // DE_MINIMIS_PCT
   swept_pct = sum of removed fund allocations
-  cash_pct = min(swept_pct, 15%)          // MM_CASH_CAP
-  If cash_pct > 0 and MM funds exist:
-    top_mm = highest-scoring money market fund
-    Renormalize survivors to sum to (100 - cash_pct)%
-    Assign cash_pct to top_mm
-  Else:
-    Renormalize survivors to sum to 100%   // fallback (no MM funds)
+  Renormalize survivors to sum to 100%      // no forced cash — full redistribution
 ```
 
-**De minimis research basis:** Industry-standard de minimis threshold. Positions below 5% contribute negligibly to portfolio outcomes (Journal of Financial Economics, 2025 — active fund managers cluster positions asymmetrically below 5%). A 401(k) participant would not realistically set a fund to 3% in their plan interface.
+**De minimis research basis:** Positions below 4% contribute negligibly to portfolio outcomes in a 401(k) context — active fund managers cluster positions asymmetrically below 5% (Cremers & Petajisto, "How Active Is Your Fund Manager?", *Review of Financial Studies*, 2009; Wermers, "Mutual Fund Performance", *Journal of Finance*, 2000). Lowered from 5% to 4% in v6.1 to preserve broader diversification at conservative risk levels while still eliminating negligible positions. At 4%, a conservative investor (k=0.42) holds ~11 funds; at 5%, only ~8 survived, pushing too much weight into the cash sweep.
 
-**Cash sweep research basis (Session 22, approved by Robert April 9, 2026 14:43 EDT):** Routing de minimis swept weight to the top-scoring money market fund is consistent with fractional Kelly theory (un-allocated capital is inherent to the framework), Modern Portfolio Theory (cash is the risk-free leg of the CML), and risk parity practice (~5-6% cash sleeve standard). The cash allocation is emergent — concentrated portfolios (aggressive risk) sweep less, dispersed portfolios (conservative risk) sweep more — naturally mirroring risk tolerance.
+**v6.1: Forced cash sweep removed (approved by Robert, April 10, 2026).** The previous mechanism routed swept weight to the top-scoring money market fund (capped at 15%). Scenario modeling revealed this produced 15% cash at nearly every risk level (RT 1–6), creating **20.6% terminal wealth destruction over 30 years** at a 5.5% equity-cash spread. The forced cash had no theoretical justification in a 401(k):
 
-**15% cap rationale:** At ~5.5% annual opportunity cost of cash (equity returns minus MM yield), 15% cash = ~0.83% annual drag — the upper bound of acceptable for a managed 401(k) portfolio. Beyond 15%, excess reverts to proportional redistribution among survivors. Research: Bogle cash drag estimates, CME Group cash equitization studies.
+1. **No liquidity need.** 401(k) participants cannot withdraw funds before retirement (barring hardship). Cash reserves serve no purpose.
+2. **DCA is the dry powder.** Automatic biweekly contributions already provide continuous dollar-cost averaging into the portfolio — this IS the participant's mechanism for buying dips.
+3. **Cash didn't vary with risk.** A theoretically sound cash allocation would be higher for conservative and lower for aggressive investors. The old model gave everyone 15% regardless, because the MM cap (not the math) was the binding constraint.
+4. **Academic consensus.** Vanguard and Morningstar recommend 0–3% cash for long-term diversified portfolios. Bogle's research consistently identified cash drag as one of the largest silent destroyers of retirement wealth.
 
-**Monitoring thresholds:**
-- **Green (≤10%):** Normal operating range. Brief mentions cash position naturally.
-- **Yellow (10–15%):** Admin alert email. Investigate score compression or fund universe changes.
-- **Red (>15%):** Hard cap triggers. Excess redistributed to survivors. Admin alert explains why.
+**New policy:** Swept weight is redistributed proportionally to surviving funds. Money market funds are scored on real factors, tiered, and displayed in the UI, but excluded from the Kelly curve. Cash enters the portfolio only if an MM fund's composite score is high enough to survive the exponential curve and de minimis floor on its own merit (unlikely given typical MM composite scores of 55–65 vs equity composites of 65–85). The Investment Brief can still reference MM options in its narrative for participants who want to understand their cash options.
+
+**Previous cash sweep rationale (Session 22, superseded):** ~~Routing de minimis swept weight to the top-scoring money market fund was justified via fractional Kelly theory (unallocated capital), MPT (risk-free CML leg), and risk parity (~5-6% cash sleeve).~~ These arguments apply to open-market portfolios with liquidity needs, not to closed 401(k) menus with automatic contributions. Retained here for historical context.
 
 ### 3.6 Step 5: Rounding and Error Absorption
 
@@ -527,19 +529,19 @@ Final allocation sums to exactly 100%
 
 ### 3.7 Worked Example
 
-Using the composite scores from Section 2.8 (Fund A: 85, B: 40, C: 40, D: 30) at Risk Level 4 (k = 0.95):
+Using the composite scores from Section 2.8 (Fund A: 85, B: 40, C: 40, D: 30) at Risk Level 4 (k = 1.20):
 
 **Step 1 — Modified Z-Scores:**
 Median = (40 + 40) / 2 = 40, MAD = median(|85-40|, |40-40|, |40-40|, |30-40|) = median(45, 0, 0, 10) = 5
 mod_z: A = 0.6745 × 45/5 = +6.07, B = 0.0, C = 0.0, D = 0.6745 × (-10)/5 = -1.35
 
-**Step 3 — Exponential (k = 0.95):**
-A: e^(0.95 × 6.07) = e^5.77 = 320.5, B: e^0 = 1.0, C: e^0 = 1.0, D: e^(-1.28) = 0.28
-Normalized: A = 99.3%, B = 0.3%, C = 0.3%, D = 0.1%
+**Step 3 — Exponential (k = 1.20):**
+A: e^(1.20 × 6.07) = e^7.28 = 1453.1, B: e^0 = 1.0, C: e^0 = 1.0, D: e^(-1.62) = 0.20
+Normalized: A = 99.8%, B = 0.07%, C = 0.07%, D = 0.01%
 
-**Step 4 — De minimis 5% floor:** Only Fund A survives → 100% allocation to Fund A.
+**Step 4 — De minimis 4% floor + redistribute:** Only Fund A survives → 100% allocation to Fund A.
 
-*This example illustrates an extreme case where one fund dominates. With real TerrAscend data (~18 funds with less extreme score separation), the exponential curve produces more balanced distributions.*
+*This example illustrates an extreme case where one fund dominates. With real TerrAscend data (~20 non-MM funds with less extreme score separation), the exponential curve produces more balanced distributions. Typical moderate allocation: 6 funds ranging from 38% (top pick) to 6% (lowest survivor).*
 
 ---
 
@@ -956,6 +958,14 @@ created_at:      TIMESTAMPTZ
 - **History:** All past Briefs archived and viewable
 - **Target length:** 600-1000 words. Substantive enough to feel valuable, short enough to read in one sitting. Research shows >40% of advisory clients prefer under 2 pages.
 
+### 7.8.1 Legal Disclaimer (Required)
+
+Every Investment Brief — whether delivered by email or displayed in-app — must include the following disclaimer as a footer, visually separated from the body content:
+
+> *FundLens is an educational tool that analyzes publicly available fund data using quantitative models. It does not provide personalized investment advice and is not a registered investment advisor. The analysis and allocation suggestions are based on mathematical models applied to historical data and should not be construed as a recommendation to buy, sell, or hold any security. Past performance does not guarantee future results. You should consult a qualified financial advisor before making investment decisions. FundLens, its creators, and its operators assume no liability for investment outcomes.*
+
+**Rationale:** FundLens is being shared with ~200 coworkers at a single company. Even in an informal, educational context, presenting specific fund allocation percentages creates an implied advisory relationship. This disclaimer clarifies that FundLens is a quantitative analysis tool, not a fiduciary advisor, and protects both the creator and the users.
+
 ### 7.9 Negative Examples (Anti-Patterns for Prompt)
 
 These examples are included in the Claude Opus system prompt to anchor what bad Brief writing looks like:
@@ -1009,7 +1019,7 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Category benchmarks for cost scoring | §2.3 | cost-efficiency.ts | All 6 categories, piecewise linear interpolation |
 | Holdings cutoff 65%/50 | §4.3 | constants.ts, holdings.ts | TARGET_WEIGHT_PCT=65, MAX_HOLDINGS=50 |
 | Quality 5 dimensions at correct weights | §2.4.1 | quality.ts | 0.25/0.20/0.20/0.15/0.20 |
-| 25+ financial ratios scored | §2.4.1 | quality.ts | All ratios from spec present |
+| 18 financial ratios scored (v6.1 trim) | §2.4.1 | quality.ts | 5 profitability + 3 balance sheet + 3 cash flow + 3 earnings quality + 4 valuation |
 | Position-weighted fund quality aggregation | §2.4.1 | quality.ts | Σ(score×weight)/Σ(weight) |
 | Multi-window momentum blend | §2.5.1 | momentum.ts | 3/6/9/12-month at 10/30/30/30, renormalize missing |
 | 14 standard sectors | §2.6.1 | thesis.ts | Exact list from spec |
@@ -1258,7 +1268,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 
 1. **Universal scores, risk in allocation only.** Scores describe the fund objectively. Risk tolerance (7-point scale) affects the allocation engine's exponential curve steepness via Kelly-fraction mapping. Concentration penalty removed from scoring. (Rationale: Grinold & Kahn — information coefficient is independent of transfer coefficient.)
 
-2. **4-factor model at 25/30/25/20.** Cost Efficiency promoted from ±0.5 modifier (v5.1) to full 25% factor (supported by Morningstar, Sharpe, Carhart, French). Holdings Quality at 30% (Novy-Marx, Piotroski, Asness). Momentum at 25% with vol-adjustment (Jegadeesh & Titman). Positioning at 20% as Black-Litterman views overlay.
+2. **4-factor model at 25/30/25/20.** Cost Efficiency promoted from ±0.5 modifier (v5.1) to full 25% factor (supported by Morningstar, Sharpe, Carhart, French). Holdings Quality at 30% (Novy-Marx, Piotroski, Asness). Momentum at 25% with vol-adjustment (Jegadeesh & Titman). Positioning at 20% as Black-Litterman-inspired views overlay.
 
 3. **Z-space standardization carried forward from v5.1 code.** Raw scores standardized to z-scores before weighting. Prevents any single factor's raw distribution from dominating. Maps back to 0–100 via normal CDF.
 
@@ -1276,7 +1286,7 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 
 10. **EIA data on weekly cadence.** Fetched weekly, stored in Supabase, used as supplemental energy/materials context. Not blocking — failure doesn't affect pipeline.
 
-11. **Allocation engine: v5.1's MAD Z-score + exponential curve, with 7-point Kelly-fraction risk scale and 5% de minimis floor.** Replaces v5.1's 1–9 slider and arbitrary 65% capture threshold. k parameter derived from fractional Kelly fractions. 5% minimum allocation floor based on industry-standard de minimis threshold (JFE 2025). Fund count and concentration emerge naturally from the math.
+11. **Allocation engine: v5.1's MAD Z-score + exponential curve, with 7-point Kelly-fraction risk scale and 4% de minimis floor.** Replaces v5.1's 1–9 slider and arbitrary 65% capture threshold. k parameter derived from fractional Kelly fractions. 4% minimum allocation floor (v6.1, lowered from 5%). Fund count and concentration emerge naturally from the math. **v6.1:** Forced cash sweep to MM removed — swept weight redistributed to survivors. k values recalibrated upward (0.42–2.25, was 0.30–1.85) for tighter concentration. See §3.5 for full rationale.
 
 12. **Scoring scale: 0–100, displayed as whole numbers.** Provides intuitive anchoring (school grades, percentages) without false precision. Internal computation uses full floating point; rounding only at presentation layer.
 
