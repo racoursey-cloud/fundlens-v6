@@ -462,6 +462,7 @@ export function YourBrief() {
 
   // Fund explorer state
   const [selectedFundTicker, setSelectedFundTicker] = useState<string | null>(null);
+  const [selectedSectorBrief, setSelectedSectorBrief] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -590,7 +591,7 @@ export function YourBrief() {
 
   interface FundExplorerData {
     sectors: Array<{ sector: string; weight: number; color: string }>;
-    holdings: Array<{ name: string; ticker: string | null; weight: number }>;
+    holdings: Array<{ name: string; ticker: string | null; weight: number; sector: string | null }>;
   }
 
   const fundExplorerMap = useMemo(() => {
@@ -625,7 +626,7 @@ export function YourBrief() {
         for (const h of topHoldingsData) {
           const w = h.weight ?? 0;
           if (w > 0) {
-            holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10 });
+            holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10, sector: h.sector || null });
           }
         }
         // topHoldings already sorted by weight in pipeline.ts
@@ -639,7 +640,7 @@ export function YourBrief() {
           for (const h of rawHoldings) {
             const w = h.weight ?? 0;
             if (w > 0) {
-              holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10 });
+              holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10, sector: null });
             }
           }
           holdings.sort((a, b) => b.weight - a.weight);
@@ -659,7 +660,10 @@ export function YourBrief() {
   }, [fundSlices, selectedFundTicker]);
 
   const handleFundSelect = useCallback((ticker: string) => {
-    setSelectedFundTicker(prev => prev === ticker ? null : ticker);
+    setSelectedFundTicker(prev => {
+      setSelectedSectorBrief(null);
+      return prev === ticker ? null : ticker;
+    });
   }, []);
 
   const selectedFundData = selectedFundTicker ? fundExplorerMap.get(selectedFundTicker) : null;
@@ -872,27 +876,41 @@ export function YourBrief() {
                     )}
                     {selectedFundData && selectedFundData.sectors.length > 0 ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        {selectedFundData.sectors.slice(0, 8).map(s => (
-                          <div key={s.sector} style={{
-                            display: 'grid', gridTemplateColumns: '90px 1fr 40px',
-                            alignItems: 'center', gap: 6,
-                          }}>
-                            <span style={{
-                              fontSize: 11, color: theme.colors.textMuted,
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }}>{s.sector}</span>
-                            <div style={{ height: 6, borderRadius: 3, background: theme.colors.surfaceAlt, overflow: 'hidden' }}>
-                              <div style={{
-                                height: '100%', borderRadius: 3, background: s.color,
-                                width: `${Math.min(100, (s.weight / Math.max(...selectedFundData.sectors.map(x => x.weight))) * 100)}%`,
-                              }} />
+                        {selectedFundData.sectors.slice(0, 8).map(s => {
+                          const isActive = selectedSectorBrief === s.sector;
+                          const isDimmed = selectedSectorBrief && !isActive;
+                          return (
+                            <div key={s.sector}
+                              onClick={() => setSelectedSectorBrief(prev => prev === s.sector ? null : s.sector)}
+                              style={{
+                                display: 'grid', gridTemplateColumns: '90px 1fr 40px',
+                                alignItems: 'center', gap: 6,
+                                cursor: 'pointer',
+                                opacity: isDimmed ? 0.35 : 1,
+                                transition: 'opacity 0.15s',
+                                borderRadius: 3,
+                                background: isActive ? `${s.color}15` : 'transparent',
+                                padding: '1px 4px',
+                                margin: '0 -4px',
+                              }}>
+                              <span style={{
+                                fontSize: 11, color: isActive ? theme.colors.text : theme.colors.textMuted,
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                fontWeight: isActive ? 600 : 400,
+                              }}>{s.sector}</span>
+                              <div style={{ height: 6, borderRadius: 3, background: theme.colors.surfaceAlt, overflow: 'hidden' }}>
+                                <div style={{
+                                  height: '100%', borderRadius: 3, background: s.color,
+                                  width: `${Math.min(100, (s.weight / Math.max(...selectedFundData.sectors.map(x => x.weight))) * 100)}%`,
+                                }} />
+                              </div>
+                              <span style={{
+                                fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
+                                color: theme.colors.text, textAlign: 'right',
+                              }}>{s.weight.toFixed(1)}%</span>
                             </div>
-                            <span style={{
-                              fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
-                              color: theme.colors.text, textAlign: 'right',
-                            }}>{s.weight.toFixed(1)}%</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : selectedFundTicker ? (
                       <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
@@ -928,7 +946,7 @@ export function YourBrief() {
                   )}
                 </div>
 
-                {/* RIGHT PANEL — Top Holdings */}
+                {/* RIGHT PANEL — Top Holdings (sector-filterable) */}
                 {!isMobile && (
                   <div style={{
                     display: 'flex', flexDirection: 'column', gap: 8,
@@ -936,43 +954,62 @@ export function YourBrief() {
                     transition: 'opacity 0.2s',
                     minWidth: 0,
                   }}>
-                    {selectedFundTicker && (
-                      <div style={{
-                        fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
-                        textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4,
-                      }}>Top Holdings</div>
-                    )}
-                    {selectedFundData && selectedFundData.holdings.length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {selectedFundData.holdings.slice(0, 8).map((h, idx) => (
-                          <div key={idx} style={{
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                            padding: '2px 0', gap: 8,
-                          }}>
-                            <span style={{
-                              fontSize: 11, color: theme.colors.text,
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                              flex: 1,
-                            }}>{h.name}</span>
-                            {h.ticker && (
-                              <span style={{
-                                fontSize: 10, fontFamily: theme.fonts.mono,
-                                color: theme.colors.textDim, flexShrink: 0,
-                              }}>{h.ticker}</span>
+                    {selectedFundTicker && (() => {
+                      const filtered = selectedSectorBrief
+                        ? selectedFundData?.holdings.filter(h => h.sector === selectedSectorBrief) ?? []
+                        : selectedFundData?.holdings.slice(0, 8) ?? [];
+                      return (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                            <div style={{
+                              fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
+                              textTransform: 'uppercase', letterSpacing: '0.05em',
+                            }}>{selectedSectorBrief ? `${selectedSectorBrief} Holdings` : 'Top Holdings'}</div>
+                            {selectedSectorBrief && (
+                              <button onClick={() => setSelectedSectorBrief(null)} style={{
+                                background: 'none', border: 'none', color: theme.colors.textDim,
+                                cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1,
+                              }}>&times;</button>
                             )}
-                            <span style={{
-                              fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
-                              color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36,
-                              textAlign: 'right',
-                            }}>{h.weight.toFixed(1)}%</span>
                           </div>
-                        ))}
-                      </div>
-                    ) : selectedFundTicker ? (
-                      <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
-                        No holdings data
-                      </span>
-                    ) : null}
+                          {filtered.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {filtered.map((h, idx) => (
+                                <div key={idx} style={{
+                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                  padding: '2px 0', gap: 8,
+                                }}>
+                                  <span style={{
+                                    fontSize: 11, color: theme.colors.text,
+                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    flex: 1,
+                                  }}>{h.name}</span>
+                                  {h.ticker && (
+                                    <span style={{
+                                      fontSize: 10, fontFamily: theme.fonts.mono,
+                                      color: theme.colors.textDim, flexShrink: 0,
+                                    }}>{h.ticker}</span>
+                                  )}
+                                  <span style={{
+                                    fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
+                                    color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36,
+                                    textAlign: 'right',
+                                  }}>{h.weight.toFixed(1)}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : selectedSectorBrief ? (
+                            <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
+                              No {selectedSectorBrief} holdings
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
+                              No holdings data
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -987,7 +1024,7 @@ export function YourBrief() {
                 padding: 16, display: 'flex', flexDirection: 'column', gap: 16,
                 width: '100%',
               }}>
-                {/* Sector exposure */}
+                {/* Sector exposure (clickable for filtering) */}
                 {selectedFundData.sectors.length > 0 && (
                   <div>
                     <div style={{
@@ -995,42 +1032,79 @@ export function YourBrief() {
                       textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
                     }}>Sector Exposure</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {selectedFundData.sectors.slice(0, 6).map(s => (
-                        <div key={s.sector} style={{
-                          display: 'grid', gridTemplateColumns: '80px 1fr 36px',
-                          alignItems: 'center', gap: 6,
-                        }}>
-                          <span style={{ fontSize: 11, color: theme.colors.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
-                          <div style={{ height: 6, borderRadius: 3, background: theme.colors.surface, overflow: 'hidden' }}>
-                            <div style={{
-                              height: '100%', borderRadius: 3, background: s.color,
-                              width: `${Math.min(100, (s.weight / Math.max(...selectedFundData.sectors.map(x => x.weight))) * 100)}%`,
-                            }} />
+                      {selectedFundData.sectors.slice(0, 6).map(s => {
+                        const isActive = selectedSectorBrief === s.sector;
+                        const isDimmed = selectedSectorBrief && !isActive;
+                        return (
+                          <div key={s.sector}
+                            onClick={() => setSelectedSectorBrief(prev => prev === s.sector ? null : s.sector)}
+                            style={{
+                              display: 'grid', gridTemplateColumns: '80px 1fr 36px',
+                              alignItems: 'center', gap: 6,
+                              cursor: 'pointer',
+                              opacity: isDimmed ? 0.35 : 1,
+                              transition: 'opacity 0.15s',
+                              borderRadius: 3,
+                              background: isActive ? `${s.color}15` : 'transparent',
+                              padding: '1px 4px',
+                              margin: '0 -4px',
+                            }}>
+                            <span style={{
+                              fontSize: 11,
+                              color: isActive ? theme.colors.text : theme.colors.textMuted,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              fontWeight: isActive ? 600 : 400,
+                            }}>{s.sector}</span>
+                            <div style={{ height: 6, borderRadius: 3, background: theme.colors.surface, overflow: 'hidden' }}>
+                              <div style={{
+                                height: '100%', borderRadius: 3, background: s.color,
+                                width: `${Math.min(100, (s.weight / Math.max(...selectedFundData.sectors.map(x => x.weight))) * 100)}%`,
+                              }} />
+                            </div>
+                            <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.text, textAlign: 'right' }}>{s.weight.toFixed(1)}%</span>
                           </div>
-                          <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.text, textAlign: 'right' }}>{s.weight.toFixed(1)}%</span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
-                {/* Top holdings */}
-                {selectedFundData.holdings.length > 0 && (
-                  <div>
-                    <div style={{
-                      fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
-                      textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
-                    }}>Top Holdings</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      {selectedFundData.holdings.slice(0, 6).map((h, idx) => (
-                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', gap: 8 }}>
-                          <span style={{ fontSize: 11, color: theme.colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{h.name}</span>
-                          {h.ticker && <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, color: theme.colors.textDim, flexShrink: 0 }}>{h.ticker}</span>}
-                          <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36, textAlign: 'right' }}>{h.weight.toFixed(1)}%</span>
-                        </div>
-                      ))}
+                {/* Top holdings (sector-filterable) */}
+                {(() => {
+                  const filtered = selectedSectorBrief
+                    ? selectedFundData.holdings.filter(h => h.sector === selectedSectorBrief)
+                    : selectedFundData.holdings.slice(0, 6);
+                  return filtered.length > 0 ? (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        <div style={{
+                          fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
+                          textTransform: 'uppercase', letterSpacing: '0.05em',
+                        }}>{selectedSectorBrief ? `${selectedSectorBrief} Holdings` : 'Top Holdings'}</div>
+                        {selectedSectorBrief && (
+                          <button onClick={() => setSelectedSectorBrief(null)} style={{
+                            background: 'none', border: 'none', color: theme.colors.textDim,
+                            cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1,
+                          }}>&times;</button>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {filtered.map((h, idx) => (
+                          <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', gap: 8 }}>
+                            <span style={{ fontSize: 11, color: theme.colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{h.name}</span>
+                            {h.ticker && <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, color: theme.colors.textDim, flexShrink: 0 }}>{h.ticker}</span>}
+                            <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36, textAlign: 'right' }}>{h.weight.toFixed(1)}%</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  ) : selectedSectorBrief ? (
+                    <div>
+                      <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
+                        No {selectedSectorBrief} holdings
+                      </span>
+                    </div>
+                  ) : selectedFundData.holdings.length > 0 ? null : null;
+                })()}
               </div>
             )}
 

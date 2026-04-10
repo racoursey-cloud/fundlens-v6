@@ -121,6 +121,7 @@ interface HoldingData {
   name: string;
   ticker: string | null;
   weight: number;
+  sector: string | null;
 }
 
 interface FundExplorerData {
@@ -154,7 +155,7 @@ function extractExplorerData(score: FundScore): FundExplorerData {
     for (const h of topHoldingsData) {
       const w = h.weight ?? 0;
       if (w > 0) {
-        holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10 });
+        holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10, sector: h.sector || null });
       }
     }
   } else {
@@ -167,7 +168,7 @@ function extractExplorerData(score: FundScore): FundExplorerData {
       for (const h of rawHoldings) {
         const w = h.weight ?? 0;
         if (w > 0) {
-          holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10 });
+          holdings.push({ name: h.name || 'Unknown', ticker: h.ticker || null, weight: Math.round(w * 10) / 10, sector: null });
         }
       }
       holdings.sort((a, b) => b.weight - a.weight);
@@ -194,6 +195,7 @@ export function FundLens() {
   const [pipelineRun, setPipelineRun] = useState<PipelineRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedFund, setExpandedFund] = useState<string | null>(null);
+  const [selectedSector, setSelectedSector] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   // Weights + risk for client-side rescore
@@ -260,7 +262,11 @@ export function FundLens() {
   }, [scores]);
 
   const handleRowClick = useCallback((ticker: string) => {
-    setExpandedFund(prev => prev === ticker ? null : ticker);
+    setExpandedFund(prev => {
+      if (prev === ticker) return null;
+      setSelectedSector(null);  // reset sector filter when switching funds
+      return ticker;
+    });
   }, []);
 
   // ── Loading ──
@@ -418,6 +424,10 @@ export function FundLens() {
                           slices={sectorSlices}
                           size={180}
                           title="Sector Breakdown"
+                          onSliceClick={(slice) => {
+                            if (slice.id === '__unclassified') return;
+                            setSelectedSector(prev => prev === slice.id ? null : slice.id);
+                          }}
                         />
                       )}
 
@@ -429,43 +439,69 @@ export function FundLens() {
                             textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
                           }}>Sector Exposure</div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            {explorerData.sectors.map(sec => (
-                              <div key={sec.sector} style={{
-                                display: 'grid', gridTemplateColumns: '90px 1fr 40px',
-                                alignItems: 'center', gap: 6,
-                              }}>
-                                <span style={{ fontSize: 11, color: theme.colors.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sec.sector}</span>
-                                <div style={{ height: 6, borderRadius: 3, background: theme.colors.surfaceAlt, overflow: 'hidden' }}>
-                                  <div style={{
-                                    height: '100%', borderRadius: 3, background: sec.color,
-                                    width: `${Math.min(100, (sec.weight / Math.max(...explorerData.sectors.map(x => x.weight))) * 100)}%`,
-                                  }} />
+                            {explorerData.sectors.map(sec => {
+                              const isActive = selectedSector === sec.sector;
+                              const isDimmed = selectedSector && !isActive;
+                              return (
+                                <div key={sec.sector}
+                                  onClick={() => setSelectedSector(prev => prev === sec.sector ? null : sec.sector)}
+                                  style={{
+                                    display: 'grid', gridTemplateColumns: '90px 1fr 40px',
+                                    alignItems: 'center', gap: 6, cursor: 'pointer',
+                                    opacity: isDimmed ? 0.35 : 1, transition: 'opacity 0.15s',
+                                  }}>
+                                  <span style={{ fontSize: 11, color: isActive ? theme.colors.text : theme.colors.textMuted, fontWeight: isActive ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sec.sector}</span>
+                                  <div style={{ height: 6, borderRadius: 3, background: theme.colors.surfaceAlt, overflow: 'hidden' }}>
+                                    <div style={{
+                                      height: '100%', borderRadius: 3, background: sec.color,
+                                      width: `${Math.min(100, (sec.weight / Math.max(...explorerData.sectors.map(x => x.weight))) * 100)}%`,
+                                    }} />
+                                  </div>
+                                  <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.text, textAlign: 'right' }}>{sec.weight.toFixed(1)}%</span>
                                 </div>
-                                <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.text, textAlign: 'right' }}>{sec.weight.toFixed(1)}%</span>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}
 
-                      {/* Holdings */}
-                      {explorerData.holdings.length > 0 && (
-                        <div style={{ width: '100%' }}>
-                          <div style={{
-                            fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
-                            textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
-                          }}>Top Holdings</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
-                            {explorerData.holdings.map((h, idx) => (
-                              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', gap: 8 }}>
-                                <span style={{ fontSize: 11, color: theme.colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{h.name}</span>
-                                {h.ticker && <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, color: theme.colors.textDim, flexShrink: 0 }}>{h.ticker}</span>}
-                                <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36, textAlign: 'right' }}>{h.weight.toFixed(1)}%</span>
-                              </div>
-                            ))}
+                      {/* Holdings (filtered by selected sector) */}
+                      {(() => {
+                        const filtered = selectedSector
+                          ? explorerData.holdings.filter(h => h.sector === selectedSector)
+                          : explorerData.holdings;
+                        return filtered.length > 0 ? (
+                          <div style={{ width: '100%' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                              <div style={{
+                                fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
+                                textTransform: 'uppercase', letterSpacing: '0.05em',
+                              }}>{selectedSector ? `${selectedSector} Holdings` : 'Top Holdings'}</div>
+                              {selectedSector && (
+                                <button onClick={() => setSelectedSector(null)} style={{
+                                  background: 'none', border: 'none', color: theme.colors.textDim,
+                                  cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1,
+                                }}>&times;</button>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
+                              {filtered.map((h, idx) => (
+                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', gap: 8 }}>
+                                  <span style={{ fontSize: 11, color: theme.colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{h.name}</span>
+                                  {h.ticker && <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, color: theme.colors.textDim, flexShrink: 0 }}>{h.ticker}</span>}
+                                  <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36, textAlign: 'right' }}>{h.weight.toFixed(1)}%</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        ) : explorerData.holdings.length > 0 ? (
+                          <div style={{ width: '100%' }}>
+                            <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
+                              No {selectedSector} holdings
+                            </span>
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                   ) : (
                     /* ── Desktop: three-panel grid ── */
@@ -484,27 +520,41 @@ export function FundLens() {
                         }}>Sector Exposure</div>
                         {explorerData.sectors.length > 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            {explorerData.sectors.map(sec => (
-                              <div key={sec.sector} style={{
-                                display: 'grid', gridTemplateColumns: '90px 1fr 40px',
-                                alignItems: 'center', gap: 6,
-                              }}>
-                                <span style={{
-                                  fontSize: 11, color: theme.colors.textMuted,
-                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                }}>{sec.sector}</span>
-                                <div style={{ height: 6, borderRadius: 3, background: theme.colors.surfaceAlt, overflow: 'hidden' }}>
-                                  <div style={{
-                                    height: '100%', borderRadius: 3, background: sec.color,
-                                    width: `${Math.min(100, (sec.weight / Math.max(...explorerData.sectors.map(x => x.weight))) * 100)}%`,
-                                  }} />
+                            {explorerData.sectors.map(sec => {
+                              const isActive = selectedSector === sec.sector;
+                              const isDimmed = selectedSector && !isActive;
+                              return (
+                                <div key={sec.sector}
+                                  onClick={() => setSelectedSector(prev => prev === sec.sector ? null : sec.sector)}
+                                  style={{
+                                    display: 'grid', gridTemplateColumns: '90px 1fr 40px',
+                                    alignItems: 'center', gap: 6,
+                                    cursor: 'pointer',
+                                    opacity: isDimmed ? 0.35 : 1,
+                                    transition: 'opacity 0.15s',
+                                    borderRadius: 3,
+                                    background: isActive ? `${sec.color}15` : 'transparent',
+                                    padding: '1px 4px',
+                                    margin: '0 -4px',
+                                  }}>
+                                  <span style={{
+                                    fontSize: 11, color: isActive ? theme.colors.text : theme.colors.textMuted,
+                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    fontWeight: isActive ? 600 : 400,
+                                  }}>{sec.sector}</span>
+                                  <div style={{ height: 6, borderRadius: 3, background: theme.colors.surfaceAlt, overflow: 'hidden' }}>
+                                    <div style={{
+                                      height: '100%', borderRadius: 3, background: sec.color,
+                                      width: `${Math.min(100, (sec.weight / Math.max(...explorerData.sectors.map(x => x.weight))) * 100)}%`,
+                                    }} />
+                                  </div>
+                                  <span style={{
+                                    fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
+                                    color: theme.colors.text, textAlign: 'right',
+                                  }}>{sec.weight.toFixed(1)}%</span>
                                 </div>
-                                <span style={{
-                                  fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
-                                  color: theme.colors.text, textAlign: 'right',
-                                }}>{sec.weight.toFixed(1)}%</span>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
                           <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
@@ -523,6 +573,10 @@ export function FundLens() {
                             slices={sectorSlices}
                             size={200}
                             title="Sector Breakdown"
+                            onSliceClick={(slice) => {
+                              if (slice.id === '__unclassified') return;
+                              setSelectedSector(prev => prev === slice.id ? null : slice.id);
+                            }}
                           />
                         ) : (
                           <div style={{
@@ -535,43 +589,60 @@ export function FundLens() {
                         )}
                       </div>
 
-                      {/* RIGHT — Top Holdings */}
+                      {/* RIGHT — Top Holdings (filtered by selected sector) */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-                        <div style={{
-                          fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
-                          textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4,
-                        }}>Top Holdings</div>
-                        {explorerData.holdings.length > 0 ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
-                            {explorerData.holdings.map((h, idx) => (
-                              <div key={idx} style={{
-                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                padding: '2px 0', gap: 8,
-                              }}>
-                                <span style={{
-                                  fontSize: 11, color: theme.colors.text,
-                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                  flex: 1,
-                                }}>{h.name}</span>
-                                {h.ticker && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                          <div style={{
+                            fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
+                            textTransform: 'uppercase', letterSpacing: '0.05em',
+                          }}>{selectedSector ? `${selectedSector} Holdings` : 'Top Holdings'}</div>
+                          {selectedSector && (
+                            <button
+                              onClick={() => setSelectedSector(null)}
+                              style={{
+                                background: 'none', border: 'none', color: theme.colors.textDim,
+                                cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1,
+                                fontFamily: theme.fonts.body,
+                              }}
+                            >&times;</button>
+                          )}
+                        </div>
+                        {(() => {
+                          const filtered = selectedSector
+                            ? explorerData.holdings.filter(h => h.sector === selectedSector)
+                            : explorerData.holdings;
+                          return filtered.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
+                              {filtered.map((h, idx) => (
+                                <div key={idx} style={{
+                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                  padding: '2px 0', gap: 8,
+                                }}>
                                   <span style={{
-                                    fontSize: 10, fontFamily: theme.fonts.mono,
-                                    color: theme.colors.textDim, flexShrink: 0,
-                                  }}>{h.ticker}</span>
-                                )}
-                                <span style={{
-                                  fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
-                                  color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36,
-                                  textAlign: 'right',
-                                }}>{h.weight.toFixed(1)}%</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
-                            No holdings data
-                          </span>
-                        )}
+                                    fontSize: 11, color: theme.colors.text,
+                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    flex: 1,
+                                  }}>{h.name}</span>
+                                  {h.ticker && (
+                                    <span style={{
+                                      fontSize: 10, fontFamily: theme.fonts.mono,
+                                      color: theme.colors.textDim, flexShrink: 0,
+                                    }}>{h.ticker}</span>
+                                  )}
+                                  <span style={{
+                                    fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
+                                    color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36,
+                                    textAlign: 'right',
+                                  }}>{h.weight.toFixed(1)}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
+                              {selectedSector ? `No ${selectedSector} holdings` : 'No holdings data'}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
