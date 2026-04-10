@@ -734,17 +734,11 @@ function buildUserPrompt(dataPacket: BriefDataPacket): string {
 - ${user.profileSummary}
 
 ## Recommended Allocation
-These are the funds and percentages to recommend. Lead the Brief with this allocation in Section 1 ("Where the Numbers Point"). Present the allocation as a markdown table with columns: Fund | Ticker | Allocation. Follow the table with a brief rationale for each pick.
+These are the funds and their target percentages. The allocation table itself will be rendered dynamically in the UI — do NOT include a markdown table of fund allocations in your output. Instead, in Section 1 ("Where the Numbers Point"), open with a brief rationale for each recommended fund. Reference funds by name and ticker but use qualitative sizing language (e.g., "a core position in FXAIX", "a meaningful allocation to DRRYX", "a smaller tactical position in RNWGX") rather than specific percentage numbers. The reader will see the exact percentages in the live table above your narrative.
 
-| Fund | Ticker | Allocation |
-|------|--------|-----------|
+Context (for your reference only — do not reproduce as a table):
 ${allocation.map(a =>
-  `| ${a.name} | ${a.ticker} | ${a.percentage}% |`
-).join('\n')}
-
-Fund rationale (weave naturally after the table):
-${allocation.map(a =>
-  `- ${a.ticker}: ${a.reason}`
+  `- ${a.name} (${a.ticker}): ${a.percentage}% — ${a.reason}`
 ).join('\n')}
 `;
 
@@ -794,7 +788,7 @@ ${macro.keyThemes.map(t => `- ${t}`).join('\n')}
   }
 
   prompt += `\nWrite the complete Investment Brief now. Use this structure:
-1. "Where the Numbers Point" — Lead with the recommended allocation and why.
+1. "Where the Numbers Point" — Lead with the recommended funds and why (no allocation table — it's rendered separately in the UI).
 2. "Macro Environment" — The economic landscape grounded in specific data.
 3. "Thematic Drivers" — The 2-3 forces shaping markets and connecting macro to sectors.
 4. "Asset Class & Sector Outlook" — Where tailwinds and headwinds are, and the mechanisms.

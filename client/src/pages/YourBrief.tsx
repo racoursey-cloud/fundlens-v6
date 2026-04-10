@@ -291,7 +291,7 @@ function renderMarkdown(md: string): string {
 
 // ─── Sub-Components ────────────────────────────────────────────────────────
 
-function BriefSectionCard({ section }: { section: BriefSection }) {
+function BriefSectionCard({ section, preContent }: { section: BriefSection; preContent?: React.ReactNode }) {
   const accent = SECTION_ACCENTS[section.index - 1] ?? theme.colors.accentBlue;
   return (
     <div style={{
@@ -314,12 +314,89 @@ function BriefSectionCard({ section }: { section: BriefSection }) {
           color: theme.colors.text, margin: 0, lineHeight: 1.4,
         }}>{section.title}</h2>
       </div>
+      {preContent}
       <div dangerouslySetInnerHTML={{ __html: renderMarkdown(section.body) }} />
     </div>
   );
 }
 
-function BriefBody({ contentMd }: { contentMd: string }) {
+// ─── Live Allocation Table (replaces static markdown table in brief) ──────
+
+/**
+ * Strip the markdown allocation table from a section body.
+ * Matches: | Fund | Ticker | Allocation | header, separator, and data rows.
+ * Returns the body with the table removed (prose rationale remains).
+ */
+function stripAllocationTable(body: string): string {
+  const lines = body.split('\n');
+  const filtered: string[] = [];
+  let inTable = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!inTable && /^\|.*Fund.*\|.*Ticker.*\|.*Allocation.*\|$/i.test(trimmed)) {
+      inTable = true;
+      continue;
+    }
+    if (inTable) {
+      if (/^\|[\s:|-]+\|$/.test(trimmed) || /^\|.+\|$/.test(trimmed)) continue;
+      inTable = false;
+    }
+    filtered.push(line);
+  }
+  return filtered.join('\n');
+}
+
+interface LiveAllocation {
+  ticker: string;
+  name: string;
+  allocationPct: number;
+}
+
+function LiveAllocationTable({ allocations }: { allocations: LiveAllocation[] }) {
+  const visible = allocations.filter(a => a.allocationPct > 0);
+  if (visible.length === 0) return null;
+  return (
+    <table style={{
+      width: '100%', borderCollapse: 'collapse', margin: '0 0 16px',
+      fontSize: '13px', fontFamily: theme.fonts.body,
+    }}>
+      <thead>
+        <tr style={{ borderBottom: `2px solid ${theme.colors.border}` }}>
+          {['Fund', 'Ticker', 'Allocation'].map(h => (
+            <th key={h} style={{
+              padding: '10px 14px', textAlign: h === 'Allocation' ? 'right' : 'left',
+              fontWeight: 600, color: theme.colors.textDim, fontSize: '11px',
+              letterSpacing: '0.05em', textTransform: 'uppercase' as const,
+            }}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {visible.map(a => (
+          <tr key={a.ticker} style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
+            <td style={{ padding: '10px 14px', color: theme.colors.text, fontWeight: 500 }}>
+              {a.name}
+            </td>
+            <td style={{ padding: '10px 14px', color: theme.colors.textMuted }}>
+              {a.ticker}
+            </td>
+            <td style={{
+              padding: '10px 14px', textAlign: 'right',
+              fontFamily: theme.fonts.mono, fontWeight: 700,
+              color: theme.colors.accentBlue,
+            }}>{a.allocationPct}%</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function BriefBody({ contentMd, liveAllocations }: {
+  contentMd: string;
+  liveAllocations?: LiveAllocation[];
+}) {
   const { preamble, sections } = parseBriefSections(contentMd);
   if (sections.length === 0) {
     return <div dangerouslySetInnerHTML={{ __html: renderMarkdown(contentMd) }} />;
@@ -331,7 +408,19 @@ function BriefBody({ contentMd }: { contentMd: string }) {
           <div dangerouslySetInnerHTML={{ __html: renderMarkdown(preamble) }} />
         </div>
       )}
-      {sections.map((section, i) => <BriefSectionCard key={i} section={section} />)}
+      {sections.map((section, i) => {
+        const isAllocSection = section.title.toLowerCase().includes('where the numbers point');
+        if (isAllocSection && liveAllocations && liveAllocations.length > 0) {
+          const strippedBody = stripAllocationTable(section.body);
+          return (
+            <BriefSectionCard key={i}
+              section={{ ...section, body: strippedBody }}
+              preContent={<LiveAllocationTable allocations={liveAllocations} />}
+            />
+          );
+        }
+        return <BriefSectionCard key={i} section={section} />;
+      })}
     </div>
   );
 }
@@ -1051,7 +1140,16 @@ export function YourBrief() {
           </div>
           <div style={{ padding: '24px', fontFamily: theme.fonts.body }}>
             {selectedBrief.content_md ? (
-              <BriefBody contentMd={selectedBrief.content_md} />
+              <BriefBody
+                contentMd={selectedBrief.content_md}
+                liveAllocations={allocations
+                  .filter(a => a.allocationPct > 0)
+                  .map(a => ({
+                    ticker: a.ticker,
+                    name: scores.find(s => (s.funds?.ticker || s.fund_id) === a.ticker)?.funds?.name || a.ticker,
+                    allocationPct: a.allocationPct,
+                  }))}
+              />
             ) : (
               <p style={{ color: theme.colors.textDim, fontStyle: 'italic', margin: 0 }}>
                 Brief content not available.
