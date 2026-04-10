@@ -647,10 +647,10 @@ async function runPipelineAsync(runId: string): Promise<void> {
 
     console.log(`[routes] Pipeline run ${runId} completed successfully`);
 
-    // Auto-regenerate Briefs for users whose risk tolerance changed (WATCH-1 fix)
-    import('../engine/brief-scheduler.js').then(({ regenerateBriefsIfRiskChanged }) => {
-      regenerateBriefsIfRiskChanged(runId).catch(err => {
-        console.error(`[routes] Auto-Brief regeneration failed: ${err}`);
+    // Regenerate Briefs for ALL users so scores and narrative stay in sync
+    import('../engine/brief-scheduler.js').then(({ regenerateBriefsForAllUsers }) => {
+      regenerateBriefsForAllUsers(runId).catch(err => {
+        console.error(`[routes] Post-pipeline Brief regeneration failed: ${err}`);
       });
     });
   } catch (err) {

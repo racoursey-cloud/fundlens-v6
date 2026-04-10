@@ -317,6 +317,70 @@ export async function regenerateBriefsIfRiskChanged(
 }
 
 /**
+ * Regenerate Briefs for ALL eligible users after a pipeline run.
+ *
+ * Called after every pipeline completion so that scores and narrative
+ * are always in sync. The Brief uses fund names and scores from the
+ * pipeline run — if we don't regenerate, the Brief text goes stale
+ * (e.g., showing old fund names or outdated allocations).
+ *
+ * Sequential is intentional: we're calling Claude Opus for each user,
+ * and we don't want to hit rate limits.
+ */
+export async function regenerateBriefsForAllUsers(
+  pipelineRunId: string
+): Promise<{ regenerated: number; errors: number }> {
+  console.log(`[brief-scheduler] Regenerating Briefs for ALL users after pipeline ${pipelineRunId}`);
+
+  const { data: users } = await supaSelect<UserProfileRow[]>(
+    'user_profiles',
+    {
+      setup_completed: 'eq.true',
+      briefs_enabled: 'eq.true',
+    }
+  );
+
+  if (!users || users.length === 0) {
+    console.log('[brief-scheduler] No eligible users for Brief regeneration');
+    return { regenerated: 0, errors: 0 };
+  }
+
+  const editorialPolicy = loadEditorialPolicy();
+  let regenerated = 0;
+  let errors = 0;
+
+  for (const user of users) {
+    try {
+      console.log(`[brief-scheduler] Generating Brief for user ${user.id} (${user.email})`);
+
+      const result = await generateBrief(user.id, pipelineRunId, editorialPolicy);
+
+      if (result) {
+        regenerated++;
+        console.log(`[brief-scheduler] Brief ${result.briefId} generated for user ${user.id}`);
+      } else {
+        errors++;
+        console.error(`[brief-scheduler] Brief generation failed for user ${user.id}`);
+      }
+
+      // Delay between users — sequential Claude calls (§5.3)
+      await delay(CLAUDE.CALL_DELAY_MS * 2);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[brief-scheduler] Error generating Brief for user ${user.id}: ${msg}`);
+      errors++;
+    }
+  }
+
+  console.log(
+    `[brief-scheduler] Post-pipeline Brief regeneration complete: ` +
+    `${regenerated} generated, ${errors} errors`
+  );
+
+  return { regenerated, errors };
+}
+
+/**
  * Run the daily Brief scheduler.
  *
  * Called by a cron job (configured in Session 7). Finds all eligible
