@@ -1,6 +1,6 @@
 # FundLens — Master Specification
 ## Version 7.0 — Single Source of Truth
-**Last updated:** April 9, 2026 (Session 23 — N-MFP3, cash sweep monitoring, WATCH-1 resolved)
+**Last updated:** April 9, 2026 (Session 24 — FundLens tab, classification hardening, Brief auto-trigger, fund name fixes)
 **Owner:** Robert Coursey (racoursey@gmail.com)
 
 ---
@@ -837,7 +837,7 @@ HHI (Herfindahl-Hirschman Index) of sector exposure displayed per fund in the de
 - Error boundary wrapping entire app
 - Help page with static FAQs and Claude Haiku Q&A chat
 - Floating help chat widget (bottom-right "?" button, slide-up panel)
-- Navigation: Portfolio | Thesis | Briefs | Settings | Help
+- Navigation: Your Brief | FundLens | Research | Settings | Help
 
 ---
 
@@ -997,7 +997,7 @@ These examples are included in the Claude Opus system prompt to anchor what bad 
 
 ## 9. IMPLEMENTATION STATUS
 
-**Last updated:** April 9, 2026 (after Session 23 — WATCH-1 resolved, N-MFP3 live data, cash sweep monitoring)
+**Last updated:** April 9, 2026 (after Session 24 — FundLens tab, classification hardening, Brief auto-trigger)
 
 This section tells future sessions exactly what state the codebase is in relative to this spec. **Read this before writing any code.** If a feature is listed as "BROKEN" or "MISSING," the code does not match the spec and must be fixed.
 
@@ -1087,6 +1087,10 @@ This section tells future sessions exactly what state the codebase is in relativ
 | Help chat endpoint with rate limiting | §5.3, MISSING-9 | routes.ts, help-agent.ts, help-agent.md | POST /api/help/chat, 20/hour rate limit, scoped system prompt. — Session 16 |
 | Help chat floating widget | MISSING-9 | HelpChat.tsx, AppShell.tsx | Slide-up "?" panel, message history, typing indicator. — Pre-existing (Session 12) |
 | Brief 4-section W layout | §7.2–7.9, MISSING-10 | Briefs.tsx | Section-aware parser splits markdown on `## ` headers. BriefSectionCard renders each section with accent-colored left border, numbered badge, serif title. Legacy fallback for pre-W briefs. — Session 17 |
+| FundLens tab — fund explorer | §6.7 | FundLens.tsx, AppShell.tsx, App.tsx | Scrollable list of all 22 funds ranked by composite score. CSS grid rows (chevron, ticker, name, score, tier). Click to expand three-panel block: sectors (left) | sector donut (center) | holdings (right). "Not Classified" dark-gray donut slice for unclassified remainder. — Session 24 |
+| Classification pre-gate hardening | §4.3, §2.6.1 | classify.ts, pipeline.ts | Derivative asset categories (DIR/DFE/DE/DC/DO) → "Other". Internal funds → "Cash & Equivalents". Expanded debt categories (LON, ABS-MBS, ABS-O, ABS-CBDO). Priority-ordered rules 0a→5. — Session 24 |
+| Brief auto-trigger on every pipeline run | §7.5 | brief-scheduler.ts, cron.ts, routes.ts | `regenerateBriefsForAllUsers()` replaces `regenerateBriefsIfRiskChanged()`. Briefs regenerate for all users after every pipeline completion, not just on risk tolerance changes. — Session 24 |
+| Seed fund name corrections | — | seed_funds.sql | 13 fund names corrected to SEC-verified names (e.g., CFSTX "Cornerstone" → "Commerce Short Term Government Fund"). ON CONFLICT clause includes `name = EXCLUDED.name`. — Session 24 |
 | Fund-of-funds look-through | §2.4.4, MISSING-15 | holdings.ts, fmp.ts | `resolveSubFundTicker()` wired to FMP `searchByName()`. Fund-name heuristic guard + exchange filtering. Depth-1 recursion with graceful null fallback. — Session 17 |
 | Pipeline rate limit re-enabled | §5.3 | routes.ts | `pipelineRateLimit` (3/hour) restored on POST /api/pipeline/run. Was disabled during Session 14 integration testing. — Session 17 |
 
@@ -1229,7 +1233,9 @@ Robert flagged the CUSIP resolver for dedicated review. Session 2 audited `cusip
 | 22 | MM Fund Scoring + Cash Allocation | **DONE** — Real factor scoring for MM funds (cost normally, quality→credit quality, momentum→7-day yield, positioning→neutral 50). De minimis cash sweep routes swept weight to top-scoring MM fund with 15% hard cap. |
 | 23 | WATCH-1 Fix, N-MFP3, Cash Sweep Monitoring | **DONE** — Auto-regenerate Briefs on risk tolerance change (WATCH-1 resolved). Pipeline rate limiter set to 5 min. N-MFP3 EDGAR parser for live MM fund data (yield, fund type, WAM, WAL). Cash sweep yellow-zone admin alert (10-15%). FDRXX in TICKER_OVERRIDES. ADAXX not found in SEC N-MFP3; uses static fallback. |
 
-**Sessions 0–23 complete.** 16 MISSING items resolved, 12 bugs resolved, 1 WATCH item resolved, zero open issues.
+| 24 | FundLens Tab, Classification Hardening, Brief Auto-Trigger | **DONE** — EDGAR series matching fix verified. Classification pre-gate expanded (derivatives→Other, internal funds→Cash, LON/ABS-* debt categories). seed_funds.sql 13 names corrected. Briefs regenerate on every pipeline run (not just risk changes). FundLens tab: ranked fund explorer with expandable three-panel drill-in (sectors/donut/holdings). CSS grid alignment fix. "Not Classified" donut slice for unclassified remainder. Research tab: removed Section 4 (fund list moved to FundLens). |
+
+**Sessions 0–24 complete.** 16 MISSING items resolved, 12 bugs resolved, 1 WATCH item resolved, zero open issues.
 
 **Watch list:**
 
@@ -1992,6 +1998,36 @@ v6 previously classified per-fund (same AAPL classified 5 times if it appeared i
 **Files changed:** `src/engine/edgar.ts`, `src/engine/pipeline.ts`, `src/engine/types.ts`, `src/engine/constants.ts`, `src/engine/admin-alert.ts`, `src/engine/brief-engine.ts`, `src/engine/brief-scheduler.ts`, `src/engine/cron.ts`, `src/routes/routes.ts`
 
 **Pending for next session:** Data pipeline redundancy review (deferred per Robert). ADAXX CIK resolution — ticker not found in SEC EDGAR N-MFP3 filings, needs investigation.
+
+## April 9, 2026 — Session 24: FundLens Tab, Classification Hardening, Brief Auto-Trigger, Fund Names
+
+**Goal:** Verify EDGAR series fix, harden sector classification coverage, fix stale fund names, link Briefs to every pipeline run, build FundLens fund explorer tab.
+
+**Commits (all pushed to main):**
+
+1. **`2123a50` — CORP issuerCategory fix.** issuerCategory=CORP means "corporate issuer" and applies to both stocks AND bonds. Pre-gate Rule 2b now only classifies as "Fixed Income" when BOTH issuerCategory=CORP AND isDebt=true.
+
+2. **`fa11d91` — EDGAR series matching fix verification.** Verified the Session 21 series matching fix works correctly. VWIGX → "VANGUARD INTERNATIONAL GROWTH FUND", BPLBX → "BlackRock Inflation Protected Bond Portfolio" — both correct. The fix removes the `sameDateCandidates.length === 1` shortcut, now checks ALL candidates (up to 30) against target series ID.
+
+3. **`bb280fd` — Classification pre-gate hardening.** Added Rule 0a: derivative asset categories (DIR, DFE, DE, DC, DO) → "Other". Added Rule 0b: internal funds (isInvestmentCompany=true with cash-like names including State Street, treasury fund) → "Cash & Equivalents". Expanded DEBT_ASSET_CATEGORIES: added LON, ABS-MBS, ABS-O, ABS-CBDO. Pipeline Step 5d final-pass safety net updated with matching derivative/debt/investment-company rules.
+
+4. **`af3e421` — seed_funds.sql name corrections.** 13 fund names corrected to SEC-verified names. Key corrections: CFSTX "Cornerstone Total Return Fund" → "Commerce Short Term Government Fund", BPLBX → "BlackRock Inflation Protected Bond Fund", WFPRX → "Allspring Special Mid Cap Value Fund". ON CONFLICT clause now includes `name = EXCLUDED.name` so re-seeding corrects names.
+
+5. **`b4adac3` — Briefs linked to every pipeline run.** Created `regenerateBriefsForAllUsers()` in brief-scheduler.ts — fetches all users with setup_completed=true and briefs_enabled=true, generates a Brief for each sequentially. Replaced `regenerateBriefsIfRiskChanged()` calls in routes.ts (manual pipeline) and cron.ts (scheduled pipeline). Briefs now regenerate on every pipeline completion, picking up corrected fund names and fresh analysis.
+
+6. **`ff693d3` — FundLens tab.** New `FundLens.tsx` page: scrollable ranked list of all 22 funds with expandable three-panel drill-in (sectors | sector donut | holdings). Added to AppShell.tsx tab bar and App.tsx router. Research tab: removed Section 4 (fund list) — moved to FundLens tab. 5-tab navigation: Your Brief | FundLens | Research | Settings | Help.
+
+7. **`58599d6` — FundLens grid alignment fix.** Replaced flexbox fund rows with CSS grid (`gridTemplateColumns: '16px 60px 1fr 52px 64px'`) to fix wavy badge/score alignment reported by Robert.
+
+8. **`e593a93` — FundLens donut "Not Classified" slice.** Sector weights from pipeline don't always sum to 100% due to unclassified holdings. Added dark-gray "Not Classified" slice for any remainder exceeding 0.5%. Makes coverage gaps visible to users rather than showing a partially-filled donut.
+
+**Files created:** `client/src/pages/FundLens.tsx`
+
+**Files changed:** `src/engine/classify.ts`, `src/engine/pipeline.ts`, `src/engine/brief-scheduler.ts`, `src/engine/cron.ts`, `src/routes/routes.ts`, `seed_funds.sql`, `client/src/pages/Research.tsx`, `client/src/components/AppShell.tsx`, `client/src/App.tsx`
+
+**Spec updates:** §6.7 (navigation updated), §9.1 (4 new entries), §9.5 (Session 24 row), §10 (this entry).
+
+**Pending for next session:** Maximize fund classification coverage — reduce "Not Classified" donut slices by improving sector classification rules for derivatives, internal funds, and edge-case holdings. See HANDOFF_SESSION_24.md for detailed objectives.
 
 ---
 
