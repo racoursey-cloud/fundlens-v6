@@ -324,9 +324,18 @@ export async function runFullPipeline(
   //   3. Everything else → "Other" (last resort, prevents Unclassified gravity)
   let finalPassClassified = 0;
   let finalPassOther = 0;
+  const FINAL_DEBT_ASSET_CATS = new Set(['DBT', 'STIV', 'LON', 'ABS-MBS', 'ABS-O', 'ABS-CBDO']);
+  const FINAL_DERIV_ASSET_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DO']);
   for (const [, holdings] of fundHoldings) {
     for (const h of holdings) {
       if (h.sector) continue; // Already classified
+
+      // Rule 0: Derivatives → "Other" (hedging overlays, not sector exposure)
+      if (h.assetCategory && FINAL_DERIV_ASSET_CATS.has(h.assetCategory.toUpperCase())) {
+        h.sector = 'Other';
+        finalPassOther++;
+        continue;
+      }
 
       // Rule 1: No ticker after CUSIP resolution → almost certainly a bond
       if (!h.ticker && h.cusip && !h.isInvestmentCompany) {
@@ -348,8 +357,24 @@ export async function runFullPipeline(
         finalPassClassified++;
         continue;
       }
+      if (h.assetCategory && FINAL_DEBT_ASSET_CATS.has(h.assetCategory.toUpperCase())) {
+        h.sector = 'Fixed Income';
+        finalPassClassified++;
+        continue;
+      }
 
-      // Rule 3: Last resort — assign "Other" to prevent Unclassified gravity toward 50
+      // Rule 3: Investment company (internal funds) not yet classified
+      if (h.isInvestmentCompany) {
+        const nameLower = (h.name || '').toLowerCase();
+        if (nameLower.includes('cash') || nameLower.includes('money market') ||
+            nameLower.includes('liquidity') || nameLower.includes('state street')) {
+          h.sector = 'Cash & Equivalents';
+          finalPassClassified++;
+          continue;
+        }
+      }
+
+      // Rule 4: Last resort — assign "Other" to prevent Unclassified gravity toward 50
       h.sector = 'Other';
       finalPassOther++;
     }

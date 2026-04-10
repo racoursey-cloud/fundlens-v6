@@ -74,6 +74,23 @@ const ALWAYS_DEBT_ISSUER_CATS = new Set([
 const DEBT_ASSET_CATEGORIES = new Set([
   'DBT',   // Debt
   'STIV',  // Short-term investment vehicle (T-bills, commercial paper)
+  'LON',   // Loan (bank loans, leveraged loans)
+  'ABS-MBS',  // Asset-backed: mortgage-backed securities
+  'ABS-O',    // Asset-backed: other (auto, student loan, credit card)
+  'ABS-CBDO', // Asset-backed: CDO/CLO
+]);
+
+/**
+ * NPORT-P assetCategory codes for derivative instruments.
+ * Derivatives are classified as "Other" — they are hedges/overlays,
+ * not direct sector exposure.
+ */
+const DERIVATIVE_ASSET_CATEGORIES = new Set([
+  'DIR',   // Derivative — interest rate (swaps, swaptions, futures)
+  'DFE',   // Derivative — foreign exchange (FX forwards, options)
+  'DE',    // Derivative — equity (options, equity swaps)
+  'DC',    // Derivative — credit (CDS)
+  'DO',    // Derivative — other
 ]);
 
 /**
@@ -102,12 +119,14 @@ function isBondPseudoTicker(ticker: string | null): boolean {
  * Modifies holdings in place (sets the .sector field).
  *
  * Classification rules (in priority order):
- *   1. isDebt === true → "Fixed Income"
- *   2. issuerCategory in FIXED_INCOME_ISSUER_CATS → "Fixed Income"
- *   3. assetCategory in DEBT_ASSET_CATEGORIES → "Fixed Income"
- *   4. Bond pseudo-ticker detected → "Fixed Income"
- *   5. Name contains treasury/bond/note keywords → "Fixed Income"
- *   6. isInvestmentCompany === true and name looks like a cash fund → "Cash & Equivalents"
+ *   0a. assetCategory is derivative (DIR, DFE, DE, DC, DO) → "Other"
+ *   0b. isInvestmentCompany with cash/money-market name → "Cash & Equivalents"
+ *   1.  isDebt === true → "Fixed Income"
+ *   2a. issuerCategory in ALWAYS_DEBT_ISSUER_CATS → "Fixed Income"
+ *   2b. issuerCategory=CORP + debt assetCategory → "Fixed Income"
+ *   3.  assetCategory in DEBT_ASSET_CATEGORIES → "Fixed Income"
+ *   4.  Bond pseudo-ticker detected → "Fixed Income"
+ *   5.  Name contains treasury/bond/note keywords → "Fixed Income"
  *
  * Returns the count of holdings pre-classified.
  */
@@ -116,6 +135,36 @@ function preClassifyByMetadata(holdings: ResolvedHolding[]): number {
 
   for (const h of holdings) {
     if (h.sector) continue; // Already classified
+
+    // Rule 0a: Derivative instruments → "Other"
+    // Derivatives (interest rate swaps, FX forwards, equity options, CDS) are
+    // hedging overlays, not direct sector exposure. Many have name "N/A".
+    if (h.assetCategory && DERIVATIVE_ASSET_CATEGORIES.has(h.assetCategory.toUpperCase())) {
+      h.sector = 'Other';
+      preClassified++;
+      continue;
+    }
+
+    // Rule 0b: Internal fund holdings (investment company flag)
+    // Cash/money-market internal funds → Cash & Equivalents
+    // Other internal funds (bond funds used as sweep vehicles) → based on name
+    if (h.isInvestmentCompany) {
+      const nameLower = (h.name || '').toLowerCase();
+      if (
+        nameLower.includes('cash') ||
+        nameLower.includes('money market') ||
+        nameLower.includes('liquidity') ||
+        nameLower.includes('government reserve') ||
+        nameLower.includes('treasury fund') ||
+        nameLower.includes('state street') // Common sweep account in fund-of-fund structures
+      ) {
+        h.sector = 'Cash & Equivalents';
+        preClassified++;
+        continue;
+      }
+      // Other investment company holdings (e.g., "TCW Central Cash Fund") that
+      // don't match cash keywords — skip to let Claude classify by name
+    }
 
     // Rule 1: Explicit debt flag from NPORT-P
     if (h.isDebt) {
@@ -184,19 +233,7 @@ function preClassifyByMetadata(holdings: ResolvedHolding[]): number {
       continue;
     }
 
-    // Rule 6: Investment company with cash/money-market name
-    if (h.isInvestmentCompany) {
-      if (
-        nameLower.includes('cash') ||
-        nameLower.includes('money market') ||
-        nameLower.includes('liquidity') ||
-        nameLower.includes('government reserve')
-      ) {
-        h.sector = 'Cash & Equivalents';
-        preClassified++;
-        continue;
-      }
-    }
+    // (Rule 6 moved to Rule 0b above — investment company detection now runs first)
   }
 
   return preClassified;
