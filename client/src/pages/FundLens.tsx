@@ -314,12 +314,18 @@ export function FundLens() {
           const isExpanded = expandedFund === ticker;
           const explorerData = explorerMap.get(ticker);
 
-          // Sector donut slices for this fund
-          const sectorSlices: DonutSlice[] = explorerData
-            ? explorerData.sectors.map(sec => ({
-                id: sec.sector, label: sec.sector, pct: sec.weight, color: sec.color,
-              }))
-            : [];
+          // Sector donut slices for this fund — add Unclassified remainder so donut fills to 100%
+          const sectorSlices: DonutSlice[] = [];
+          if (explorerData) {
+            for (const sec of explorerData.sectors) {
+              sectorSlices.push({ id: sec.sector, label: sec.sector, pct: sec.weight, color: sec.color });
+            }
+            const classifiedTotal = explorerData.sectors.reduce((sum, s) => sum + s.weight, 0);
+            const remainder = Math.round((100 - classifiedTotal) * 10) / 10;
+            if (remainder > 0.5) {
+              sectorSlices.push({ id: '__unclassified', label: 'Not Classified', pct: remainder, color: '#2a2d33' });
+            }
+          }
 
           return (
             <div key={s.id}>
