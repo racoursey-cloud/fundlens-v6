@@ -67,14 +67,19 @@ export const DEFAULT_FACTOR_WEIGHTS = {
 } as const;
 
 // ─── Holdings Coverage Thresholds ────────────────────────────────────────────
-// Walk down holdings by weight (largest first). Stop when either threshold hit.
+// Walk down holdings by weight (largest first). Stop when weight threshold hit.
+// Session 25: Raised from 65%/50 to 95%/unlimited to close the "Not Classified"
+// gap in the FundLens donut. The old thresholds left ~35% of NAV unclassified
+// for most funds. Trade-off: more CUSIP resolutions + Claude Haiku calls per
+// pipeline run, but pipeline already takes minutes so the extra time is acceptable.
+// MAX_HOLDINGS raised to 400 as a safety cap.
 export const HOLDINGS_COVERAGE = {
   /** Stop when cumulative weight reaches this percentage.
    *  NPORT-P pctVal is reported as whole percentages (e.g. 4.89 = 4.89%),
    *  so this threshold must also be in whole-percentage units. */
-  TARGET_WEIGHT_PCT: 65,
-  /** Hard cap on number of holdings to analyze per fund */
-  MAX_HOLDINGS: 50,
+  TARGET_WEIGHT_PCT: 95,
+  /** Safety cap — process up to 400 holdings per fund to reach TARGET_WEIGHT_PCT */
+  MAX_HOLDINGS: 400,
 } as const;
 
 // ─── Risk Tolerance (7-Point Kelly Scale, Spec §3.4, §6.4) ─────────────────

@@ -343,8 +343,10 @@ async function findLatestNportFiling(
   );
 
   // Check ALL candidates, most recent first, until we find our series.
-  // Limit to 30 to avoid excessive API calls.
-  for (const candidate of candidates.slice(0, 30)) {
+  // Limit to 60 to handle the largest fund families (Fidelity Salem Street
+  // Trust has 41+ NPORT-P filings on a single date — 30 was too few and
+  // caused FSPGX to fail series matching).
+  for (const candidate of candidates.slice(0, 60)) {
     await delay(PIPELINE.API_CALL_DELAY_MS);
 
     const matchesSeries = await checkFilingSeriesId(
@@ -363,7 +365,7 @@ async function findLatestNportFiling(
   }
 
   console.warn(
-    `[edgar] No NPORT-P filing matched series ${targetSeriesId} among ${candidates.length} candidates (checked up to 30)`
+    `[edgar] No NPORT-P filing matched series ${targetSeriesId} among ${candidates.length} candidates (checked up to 60)`
   );
   return null;
 }
