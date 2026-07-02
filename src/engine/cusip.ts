@@ -84,13 +84,20 @@ export async function cusipCacheSave(
 ): Promise<void> {
   if (resolutions.length === 0) return;
 
-  const rows: Omit<CusipCacheRow, 'resolved_at'>[] = resolutions.map(r => ({
-    cusip: r.cusip,
-    ticker: r.ticker,
-    name: r.name,
-    security_type: r.securityType,
-    resolved: r.resolved,
-  }));
+  // A3 Task 2: never cache under a placeholder key. A row stored as 'N/A'
+  // was shared by every placeholder-CUSIP holding across all funds
+  // (confirmed in production July 2). Ids are per-holding by construction
+  // now ('ISIN:...' / 'NAME:...'), this guard is belt-and-braces.
+  const rows: Omit<CusipCacheRow, 'resolved_at'>[] = resolutions
+    .filter(r => r.cusip.trim().toUpperCase() !== 'N/A' && !/^0+$/.test(r.cusip.trim()))
+    .map(r => ({
+      cusip: r.cusip,
+      ticker: r.ticker,
+      name: r.name,
+      security_type: r.securityType,
+      resolved: r.resolved,
+    }));
+  if (rows.length === 0) return;
 
   const { error } = await supaFetch('cusip_cache', {
     method: 'POST',
@@ -152,11 +159,21 @@ export async function resolveCusips(
       `[cusip] ${uniqueCusips.length} unique CUSIPs: ${cached.size} cached, ${uncached.length} to resolve`
     );
 
-    // ── Step 2: Resolve uncached CUSIPs via OpenFIGI in batches ──
+    // ── Step 2: Resolve uncached ids via OpenFIGI in batches ──
+    // A3 Task 2: ids arrive in three classes (built in holdings.ts):
+    //   real 9-char CUSIP → OpenFIGI ID_CUSIP (unchanged behavior)
+    //   "ISIN:<isin>"     → OpenFIGI ID_ISIN directly — the filing's CUSIP
+    //                       field was a placeholder ("N/A"), the ISIN is the
+    //                       holding's real identifier
+    //   "NAME:<key>"      → no identifier exists; FMP name fallback only
     const newResolutions: CusipResolution[] = [];
 
-    if (uncached.length > 0) {
-      const batches = chunkArray(uncached, OPENFIGI.BATCH_SIZE);
+    const realCusips = uncached.filter(id => !id.startsWith('ISIN:') && !id.startsWith('NAME:'));
+    const isinIds = uncached.filter(id => id.startsWith('ISIN:'));
+    const nameIds = uncached.filter(id => id.startsWith('NAME:'));
+
+    if (realCusips.length > 0) {
+      const batches = chunkArray(realCusips, OPENFIGI.BATCH_SIZE);
 
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
@@ -172,6 +189,40 @@ export async function resolveCusips(
           await delay(PIPELINE.API_CALL_DELAY_MS);
         }
       }
+    }
+
+    // ── Step 2a-ISIN: direct ISIN resolution for placeholder-CUSIP holdings ──
+    if (isinIds.length > 0) {
+      console.log(`[cusip] ${isinIds.length} placeholder-CUSIP holdings resolving via ID_ISIN`);
+      const isinBatches = chunkArray(isinIds, OPENFIGI.BATCH_SIZE);
+
+      for (let i = 0; i < isinBatches.length; i++) {
+        const batch = isinBatches[i];
+        await delay(PIPELINE.API_CALL_DELAY_MS);
+        const results = await callOpenFigiByIsin(
+          batch.map(id => id.slice('ISIN:'.length)),
+          apiKey
+        );
+        // Re-key each result to its full "ISIN:" id (the call returns raw ISINs;
+        // results are index-matched to the request)
+        for (let j = 0; j < batch.length; j++) {
+          const r = results[j];
+          if (r) newResolutions.push({ ...r, cusip: batch[j] });
+        }
+      }
+    }
+
+    // Name-only placeholder holdings: stub as unresolved so the FMP
+    // name-search fallback below can attempt them via nameMap.
+    for (const id of nameIds) {
+      newResolutions.push({
+        cusip: id,
+        ticker: null,
+        name: null,
+        securityType: null,
+        resolved: false,
+        warning: 'Placeholder CUSIP without ISIN — FMP name fallback only',
+      });
     }
 
     // ── Step 2b: ISIN retry for unresolved international holdings (BUG-3) ──
