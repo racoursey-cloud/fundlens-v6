@@ -197,7 +197,7 @@ interface FundBriefData {
   /** Sector exposure breakdown */
   sectorExposure: Array<{
     sector: string;
-    /** Weight as decimal (e.g. 0.35 = 35%) */
+    /** Weight in whole-percent units (e.g. 35 = 35% — pct_of_nav from holdings_cache) */
     weight: number;
   }>;
   /** Coverage: what fraction of the fund's holdings had financial data */
@@ -677,7 +677,8 @@ export async function assembleDataPacket(
  */
 function formatHoldingForPrompt(h: HoldingFinancials): string {
   const lines: string[] = [];
-  lines.push(`  ${h.name}${h.ticker ? ` (${h.ticker})` : ''} — ${(h.weightPct * 100).toFixed(1)}% of fund${h.sector ? `, ${h.sector}` : ''}`);
+  // A2 Task 4: weightPct is already in whole-percent units (7.05 = 7.05%)
+  lines.push(`  ${h.name}${h.ticker ? ` (${h.ticker})` : ''} — ${h.weightPct.toFixed(1)}% of fund${h.sector ? `, ${h.sector}` : ''}`);
 
   const profParts: string[] = [];
   if (h.profitability.operatingMargin != null) profParts.push(`operating margin ${(h.profitability.operatingMargin * 100).toFixed(1)}%`);
@@ -809,10 +810,10 @@ function formatFundBlock(fund: FundBriefData): string {
     block += `- Returns: ${retParts.join(', ')}\n`;
   }
 
-  // Sector exposure
+  // Sector exposure — weights are already whole percents (A2 Task 4)
   if (fund.sectorExposure.length > 0) {
     block += `- Sector exposure: ${fund.sectorExposure.slice(0, 5).map(s =>
-      `${s.sector} ${(s.weight * 100).toFixed(1)}%`
+      `${s.sector} ${s.weight.toFixed(1)}%`
     ).join(', ')}\n`;
   }
 
