@@ -742,7 +742,10 @@ export async function runFullPipeline(
   const macroSnapshot = await fetchMacroSnapshot();
 
   // ── Step 11: Generate macro thesis via Claude Sonnet ──
-  progress(11, 'Generating investment brief');
+  // A3 Task 6a: label was 'Generating investment brief' — wrong (this step
+  // generates the macro thesis; Briefs are a separate, on-demand flow) and
+  // it caused a false alarm on July 2.
+  progress(11, 'Generating macro thesis');
 
   let thesis: MacroThesis;
   try {
