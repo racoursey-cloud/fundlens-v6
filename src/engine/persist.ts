@@ -33,6 +33,48 @@ export interface PersistResult {
   errors: string[];
 }
 
+// ─── Placeholder CUSIP handling (A2.3 Task 1) ───────────────────────────────
+
+/**
+ * NPORT-P filings put the literal "N/A" in the CUSIP field for many foreign
+ * holdings (verified in production July 2, 2026: RNWGX carried 273 distinct
+ * companies all with cusip "N/A"). A placeholder CUSIP does NOT identify a
+ * security — merging rows by it collapses distinct companies into one blob.
+ * The EDGAR parser already drops empty and '000000000' CUSIPs, but persist
+ * must be safe standalone, so all-zeros strings are treated as placeholders
+ * here as well.
+ */
+function isPlaceholderCusip(cusip: string): boolean {
+  const c = cusip.trim().toUpperCase();
+  return c === 'N/A' || /^0+$/.test(c);
+}
+
+/**
+ * Deterministic FNV-1a 32-bit hash, hex-encoded (8 characters).
+ * No dependencies; same input → same output on every run, which keeps the
+ * synthetic keys stable across the delete-then-insert persist flow.
+ */
+function fnv1aHex(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * Synthetic stored cusip for a placeholder-CUSIP row: "NA:" + name hash.
+ * The unique index (fund_id, accession_number, cusip) needs distinct values
+ * for distinct companies. The "NA:" prefix is visually obvious in Supabase
+ * and, at 11 characters, cannot collide with a real 9-character CUSIP.
+ * The cusip column is TEXT (no length limit — verified against the original
+ * v6_full_schema.sql DDL), so no migration is required.
+ */
+function syntheticCusipForName(name: string): string {
+  return `NA:${fnv1aHex(name.trim().toUpperCase())}`;
+}
+
 // ─── Main Persistence Function ──────────────────────────────────────────────
 
 /**
@@ -150,7 +192,7 @@ export async function persistPipelineResults(
       report_date: new Date().toISOString().slice(0, 10),
     }));
 
-    // ── A2 Task 7: merge duplicate CUSIPs within the batch ────────────────
+    // ── A2 Task 7 + A2.3 Task 1: merge duplicate lots within the batch ────
     // NPORT-P filings can list the same security more than once (multiple
     // lots). Two rows sharing (fund_id, accession_number, cusip) in one
     // insert violate idx_holdings_unique and abort the WHOLE batch — the
@@ -158,9 +200,17 @@ export async function persistPipelineResults(
     // holdings after the preceding delete (Principle 1: silent data gap).
     // Merge rule mirrors holdings.ts deduplicateHoldings: sum weights and
     // values, keep the first row's metadata (fill gaps from later rows).
-    const byCusip = new Map<string, typeof mappedRows[number]>();
+    //
+    // A2.3: rows with a PLACEHOLDER cusip ("N/A" — common for foreign
+    // holdings) merge by holding NAME instead, so genuine multi-lot
+    // duplicates still combine but distinct companies never do. They are
+    // stored under a deterministic synthetic key ("NA:" + name hash) so
+    // the post-merge distinct rows satisfy the unique index.
+    const byKey = new Map<string, typeof mappedRows[number]>();
     for (const row of mappedRows) {
-      const existing = byCusip.get(row.cusip);
+      const placeholder = isPlaceholderCusip(row.cusip);
+      const key = placeholder ? `name:${row.name.trim().toUpperCase()}` : row.cusip;
+      const existing = byKey.get(key);
       if (existing) {
         existing.pct_of_nav += row.pct_of_nav;
         existing.value_usd += row.value_usd;
@@ -170,10 +220,13 @@ export async function persistPipelineResults(
         existing.asset_category = existing.asset_category || row.asset_category;
         existing.country = existing.country || row.country;
       } else {
-        byCusip.set(row.cusip, { ...row });
+        byKey.set(key, {
+          ...row,
+          cusip: placeholder ? syntheticCusipForName(row.name) : row.cusip,
+        });
       }
     }
-    const rows = Array.from(byCusip.values());
+    const rows = Array.from(byKey.values());
     if (rows.length < mappedRows.length) {
       console.log(
         `[persist] Holdings ${ticker}: merged ${mappedRows.length - rows.length} duplicate-CUSIP lots before insert`
