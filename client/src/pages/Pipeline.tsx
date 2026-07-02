@@ -20,7 +20,9 @@ import {
   triggerPipeline,
   retryPipeline,
   fetchSystemHealth,
+  fetchLatestDossiers,
   type PipelineRun,
+  type FundDossierRow,
 } from '../api';
 import { theme } from '../theme';
 
@@ -109,6 +111,8 @@ export function Pipeline() {
   const [isRunning, setIsRunning] = useState(false);
   const [healthStatus, setHealthStatus] = useState<string>('');
   const [healthIssues, setHealthIssues] = useState<string[]>([]);
+  const [dossiers, setDossiers] = useState<FundDossierRow[]>([]);
+  const [dossierRunAt, setDossierRunAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState('');
   const [actionError, setActionError] = useState('');
@@ -134,11 +138,25 @@ export function Pipeline() {
     }
   }, []);
 
+  // ── Load fund Dossiers (A3 Task 5) ─────────────────────────────────────
+  const loadDossiers = useCallback(async () => {
+    const { data } = await fetchLatestDossiers();
+    if (data) {
+      setDossiers(data.dossiers);
+      setDossierRunAt(data.completedAt);
+    }
+  }, []);
+
   // ── Initial load ───────────────────────────────────────────────────────
   useEffect(() => {
     loadStatus();
     loadHealth();
   }, [loadStatus, loadHealth]);
+
+  // Dossiers: load on mount and refresh whenever a run finishes
+  useEffect(() => {
+    if (!isRunning) loadDossiers();
+  }, [isRunning, loadDossiers]);
 
   // ── Auto-refresh while running ─────────────────────────────────────────
   useEffect(() => {
@@ -529,6 +547,117 @@ export function Pipeline() {
           )}
         </div>
       </div>
+
+      {/* ═══ Fund Data Quality — Dossier scorecard (A3 Task 5) ═══════════════ */}
+      {dossiers.length > 0 && (
+        <div style={{
+          background: theme.colors.surface,
+          border: `1px solid ${theme.colors.border}`,
+          borderRadius: theme.radii.lg,
+          overflow: 'hidden',
+          marginTop: '24px',
+        }}>
+          <div style={{
+            padding: '14px 20px',
+            borderBottom: `1px solid ${theme.colors.border}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span style={{ fontSize: '14px', fontWeight: 600, color: theme.colors.text }}>
+              Fund Data Quality
+            </span>
+            <span style={{ fontSize: '12px', color: theme.colors.textDim }}>
+              {dossiers.filter(d => d.passes_gate).length}/{dossiers.length} pass the 90/95 gate
+              {dossierRunAt ? ` · run ${fmtDateTime(dossierRunAt)}` : ''}
+            </span>
+          </div>
+
+          {/* Header row */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '70px 1fr 90px 90px 90px 80px 80px',
+            gap: '10px',
+            padding: '10px 20px',
+            borderBottom: `1px solid ${theme.colors.border}`,
+            fontSize: '11px',
+            fontWeight: 600,
+            color: theme.colors.textDim,
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+          }}>
+            <span>Fund</span>
+            <span>Gate</span>
+            <span style={{ textAlign: 'right' }}>Resolved</span>
+            <span style={{ textAlign: 'right' }}>Classified</span>
+            <span style={{ textAlign: 'right' }}>Holdings</span>
+            <span style={{ textAlign: 'right' }}>Fallbacks</span>
+            <span style={{ textAlign: 'right' }}>Scaled</span>
+          </div>
+
+          {dossiers.map(d => {
+            const ticker = d.funds?.ticker || d.fund_id.slice(0, 8);
+            const gateColor = d.is_money_market
+              ? theme.colors.textDim
+              : d.passes_gate ? theme.colors.success : theme.colors.error;
+            const gateLabel = d.is_money_market
+              ? 'MM — special case'
+              : d.passes_gate ? 'PASS' : 'FAIL';
+            return (
+              <div key={d.id} style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '70px 1fr 90px 90px 90px 80px 80px',
+                  gap: '10px',
+                  padding: '10px 20px',
+                  alignItems: 'center',
+                  fontSize: '13px',
+                }}>
+                  <span style={{
+                    fontFamily: theme.fonts.mono, fontWeight: 700,
+                    color: theme.colors.accentBlue,
+                  }}>{ticker}</span>
+                  <span style={{
+                    justifySelf: 'start',
+                    padding: '2px 10px', borderRadius: 4,
+                    fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em',
+                    color: gateColor, background: `${gateColor}18`,
+                    border: `1px solid ${gateColor}40`,
+                  }}>{gateLabel}</span>
+                  <span style={{ textAlign: 'right', fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
+                    {d.is_money_market ? '—' : `${Number(d.nav_resolved_pct).toFixed(1)}%`}
+                  </span>
+                  <span style={{ textAlign: 'right', fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
+                    {d.is_money_market ? '—' : `${Number(d.classified_pct).toFixed(1)}%`}
+                  </span>
+                  <span style={{ textAlign: 'right', fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
+                    {d.is_money_market ? '—' : `${d.holdings_included}/${d.holdings_total}`}
+                  </span>
+                  <span style={{
+                    textAlign: 'right', fontFamily: theme.fonts.mono,
+                    color: d.fallback_count > 0 ? theme.colors.warning : theme.colors.textMuted,
+                  }}>{d.fallback_count}</span>
+                  <span style={{
+                    textAlign: 'right', fontFamily: theme.fonts.mono,
+                    color: d.coverage_scaling_applied ? theme.colors.warning : theme.colors.textMuted,
+                  }}>{d.coverage_scaling_applied ? 'yes' : 'no'}</span>
+                </div>
+                {/* Failure reasons, plain English, under the row */}
+                {!d.passes_gate && d.fail_reasons.length > 0 && (
+                  <div style={{
+                    padding: '0 20px 10px 100px',
+                    fontSize: '12px',
+                    color: theme.colors.error,
+                    lineHeight: 1.5,
+                  }}>
+                    {d.fail_reasons.join(' · ')}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
