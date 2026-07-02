@@ -103,9 +103,11 @@ export async function runHoldingsPipeline(
 
     // ── Step 3: Apply coverage cutoff ──
     const { included, coverage } = applyCoverageCutoff(expandedHoldings);
+    // A2 Task 4: NPORT-P pctVal is already in whole-percent units (95.03 = 95.03%),
+    // so weightCovered must not be multiplied by 100 for display.
     console.log(
       `[holdings] Cutoff applied: ${coverage.holdingsIncluded}/${coverage.holdingsTotal} holdings, ` +
-        `${(coverage.weightCovered * 100).toFixed(1)}% coverage (${coverage.cutoffReason})`
+        `${coverage.weightCovered.toFixed(1)}% coverage (${coverage.cutoffReason})`
     );
 
     // ── Step 4: Resolve CUSIPs to tickers ──
@@ -331,7 +333,7 @@ async function expandFundOfFunds(
   for (const fundHolding of fundHoldings) {
     console.log(
       `[holdings] Looking through sub-fund: "${fundHolding.name}" ` +
-        `(${(fundHolding.pctOfNav * 100).toFixed(2)}% of parent)`
+        `(${fundHolding.pctOfNav.toFixed(2)}% of parent)`
     );
 
     // Try to find the sub-fund's ticker from its name or CUSIP
