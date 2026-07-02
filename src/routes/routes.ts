@@ -978,6 +978,46 @@ router.get('/api/monitor/data-quality', requireAuth, async (req: Request, res: R
 });
 
 /**
+ * GET /api/dossiers/latest
+ * Per-fund data-quality Dossiers from the most recent completed pipeline
+ * run (A3 Task 5). Read-only — Robert's diagnostic instrument on the
+ * Pipeline tab. Failures sort first.
+ */
+router.get('/api/dossiers/latest', requireAuth, async (_req: Request, res: Response) => {
+  const { data: latestRun } = await supaFetch<PipelineRunRow>('pipeline_runs', {
+    params: {
+      status: 'eq.completed',
+      order: 'completed_at.desc',
+      limit: '1',
+    },
+    single: true,
+  });
+
+  if (!latestRun) {
+    res.json({ dossiers: [], runId: null, completedAt: null });
+    return;
+  }
+
+  const { data: dossiers, error } = await supaSelect('fund_dossiers', {
+    pipeline_run_id: `eq.${latestRun.id}`,
+    select: '*, funds(ticker, name)',
+    order: 'passes_gate.asc,created_at.asc',
+  });
+
+  if (error) {
+    console.error('[routes] Failed to fetch dossiers:', error);
+    res.status(500).json({ error: 'Failed to fetch fund dossiers. Please try again later.' });
+    return;
+  }
+
+  res.json({
+    dossiers: dossiers || [],
+    runId: latestRun.id,
+    completedAt: latestRun.completed_at,
+  });
+});
+
+/**
  * GET /api/monitor/cron
  * Cron job status.
  *
