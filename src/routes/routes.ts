@@ -142,7 +142,10 @@ router.get('/api/funds/:ticker', requireAuth, async (req: Request, res: Response
     single: true,
   });
 
-  if (error) {
+  // A2 Task 6 companion: supaFetch now returns error:null (not an error)
+  // when a single-row request matches zero rows, so a missing fund must be
+  // detected by !data to keep returning 404.
+  if (error || !data) {
     res.status(404).json({ error: `Fund not found: ${ticker}` });
     return;
   }
