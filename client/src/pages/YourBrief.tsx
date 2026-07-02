@@ -11,7 +11,7 @@
  * References: Spec §6.1, §7.1–§7.9, editorial-policy.md
  */
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import DOMPurify from 'dompurify';
 import {
   fetchBriefs,
@@ -513,13 +513,56 @@ export function YourBrief() {
     if (data && !error) setSelectedBrief(data.brief);
   };
 
+  // A2.1 Task 2: stops brief polling if the user navigates away mid-generation
+  const pollCancelledRef = useRef(false);
+  useEffect(() => () => { pollCancelledRef.current = true; }, []);
+
   const handleGenerate = async (sendEmail: boolean) => {
     setGenerating(true);
     setGenMessage('');
     setGenError('');
     const { data, error } = await generateBrief(sendEmail);
-    if (error) { setGenError(error); }
-    else { setGenMessage(data?.message ?? 'Brief generation started'); setTimeout(() => loadBriefs(), 3000); }
+    if (error) {
+      setGenError(error);
+      setGenerating(false);
+      return;
+    }
+    setGenMessage(data?.message ?? 'Brief generation started');
+
+    // A2.1 Task 2: the server replies "started" instantly but writes the
+    // brief ~30-60s later. Keep the generating overlay up and poll the
+    // brief list every 5 seconds (up to 2 minutes) until a NEW brief
+    // appears, then load and display it — no manual refresh needed.
+    // A failed generation also saves a brief row (status 'failed'), so
+    // polling detects both outcomes and reports honestly (Principle 1).
+    const baselineId = briefs[0]?.id ?? null;
+    const POLL_INTERVAL_MS = 5000;
+    const MAX_ATTEMPTS = 24; // 24 × 5s = 2 minutes
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+      if (pollCancelledRef.current) return;
+
+      const { data: pollData } = await fetchBriefs();
+      if (pollCancelledRef.current) return;
+
+      const newest = pollData?.briefs?.[0];
+      if (newest && newest.id !== baselineId) {
+        await loadBriefs(); // fetches full content and selects the new brief
+        if (pollCancelledRef.current) return;
+        if (newest.status === 'failed') {
+          setGenMessage('');
+          setGenError('Brief generation failed. Please try again in a few minutes.');
+        } else {
+          setGenMessage('Your new brief is ready.');
+        }
+        setGenerating(false);
+        return;
+      }
+    }
+
+    // Timed out after 2 minutes — generation may still finish on the server.
+    setGenMessage('Still working — refresh in a minute.');
     setGenerating(false);
   };
 
@@ -647,7 +690,12 @@ export function YourBrief() {
         }
       }
 
-      map.set(ticker, { sectors, holdings: holdings.slice(0, 10) });
+      // A2.1 Task 1: keep the FULL holdings list. The old .slice(0, 10) here
+      // meant sector clicks filtered only the top-10 overall survivors — a fund
+      // could show 8% Healthcare yet zero Healthcare holdings. The default
+      // "Top Holdings" view still renders only the first 8 (6 on mobile);
+      // sector views cap their display at render time.
+      map.set(ticker, { sectors, holdings });
     }
     return map;
   }, [scores, allocMap]);
@@ -955,9 +1003,14 @@ export function YourBrief() {
                     minWidth: 0,
                   }}>
                     {selectedFundTicker && (() => {
-                      const filtered = selectedSectorBrief
+                      // A2.1 Task 1: sector clicks filter the FULL holdings list,
+                      // display capped at 10 with a "+N more" note when the
+                      // sector holds more. Default view unchanged (top 8).
+                      const matches = selectedSectorBrief
                         ? selectedFundData?.holdings.filter(h => h.sector === selectedSectorBrief) ?? []
                         : selectedFundData?.holdings.slice(0, 8) ?? [];
+                      const filtered = selectedSectorBrief ? matches.slice(0, 10) : matches;
+                      const hiddenCount = matches.length - filtered.length;
                       return (
                         <>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -997,6 +1050,12 @@ export function YourBrief() {
                                   }}>{h.weight.toFixed(1)}%</span>
                                 </div>
                               ))}
+                              {hiddenCount > 0 && (
+                                <span style={{
+                                  fontSize: 10, color: theme.colors.textDim,
+                                  fontStyle: 'italic', paddingTop: 4,
+                                }}>+ {hiddenCount} more {selectedSectorBrief} holding{hiddenCount === 1 ? '' : 's'}</span>
+                              )}
                             </div>
                           ) : selectedSectorBrief ? (
                             <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
@@ -1070,9 +1129,13 @@ export function YourBrief() {
                 )}
                 {/* Top holdings (sector-filterable) */}
                 {(() => {
-                  const filtered = selectedSectorBrief
+                  // A2.1 Task 1: same full-list sector filtering as desktop,
+                  // display capped at 8 on mobile. Default view unchanged (top 6).
+                  const matches = selectedSectorBrief
                     ? selectedFundData.holdings.filter(h => h.sector === selectedSectorBrief)
                     : selectedFundData.holdings.slice(0, 6);
+                  const filtered = selectedSectorBrief ? matches.slice(0, 8) : matches;
+                  const hiddenCount = matches.length - filtered.length;
                   return filtered.length > 0 ? (
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
@@ -1095,6 +1158,11 @@ export function YourBrief() {
                             <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36, textAlign: 'right' }}>{h.weight.toFixed(1)}%</span>
                           </div>
                         ))}
+                        {hiddenCount > 0 && (
+                          <span style={{ fontSize: 10, color: theme.colors.textDim, fontStyle: 'italic', paddingTop: 4 }}>
+                            + {hiddenCount} more {selectedSectorBrief} holding{hiddenCount === 1 ? '' : 's'}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ) : selectedSectorBrief ? (
