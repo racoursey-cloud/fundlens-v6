@@ -34,6 +34,7 @@ import type { MacroThesis, SectorPreference } from './thesis.js';
 import { computeAllocations } from './allocation.js';
 import type { AllocationInput } from './allocation.js';
 import { supaFetch, supaSelect, supaInsert } from './supabase.js';
+import { alertClaudeApiFailure } from './admin-alert.js';
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 /** Human-readable label for risk tolerance 1.0–7.0 (spec §3.4, §6.4).
@@ -889,6 +890,10 @@ export async function generateBrief(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[brief-engine] Claude API error: ${msg}`);
+
+    // A2 Task 3 (Principle 1): failures must be loud — email Robert,
+    // rate-limited to one alert per error type per 24 hours.
+    alertClaudeApiFailure('Brief generation', msg).catch(() => {});
 
     await supaInsert('investment_briefs', {
       user_id: userId,
