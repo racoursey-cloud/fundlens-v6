@@ -45,6 +45,29 @@ const MAX_LOOKTHROUGH_DEPTH = 1;
  */
 const MIN_SUBFUND_WEIGHT = 0.01;
 
+// ─── Placeholder CUSIP handling (A3 Task 2) ────────────────────────────────
+// Mirrors persist.ts (A2.3 fix): NPORT-P puts the literal "N/A" in the CUSIP
+// field for many foreign holdings. A placeholder identifies nothing — every
+// map in the resolution flow must key by a real per-holding identity.
+
+function isPlaceholderCusip(cusip: string | null | undefined): boolean {
+  if (!cusip) return true;
+  const c = cusip.trim().toUpperCase();
+  return c === '' || c === 'N/A' || /^0+$/.test(c);
+}
+
+/**
+ * Per-holding resolution identity: the real CUSIP, or (when the CUSIP is a
+ * placeholder) the ISIN — a genuine identifier NPORT-P provides for most
+ * foreign holdings — or a name key as last resort. cusip.ts routes each
+ * class to the right lookup (ID_CUSIP / ID_ISIN / FMP name search).
+ */
+function resolutionIdFor(h: EdgarHolding): string {
+  if (!isPlaceholderCusip(h.cusip)) return h.cusip;
+  if (h.isin) return `ISIN:${h.isin}`;
+  return `NAME:${(h.name || '').trim().toUpperCase()}`;
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -110,29 +133,39 @@ export async function runHoldingsPipeline(
         `${coverage.weightCovered.toFixed(1)}% coverage (${coverage.cutoffReason})`
     );
 
-    // ── Step 4: Resolve CUSIPs to tickers ──
-    const cusips = included.map(h => h.cusip).filter(Boolean);
-    console.log(`[holdings] Resolving ${cusips.length} CUSIPs via OpenFIGI...`);
+    // ── Step 4: Resolve holdings to tickers ──
+    // A3 Task 2: each holding resolves under a per-holding identity (real
+    // CUSIP, else ISIN, else name key). Previously every "N/A"-CUSIP holding
+    // in a fund shared ONE resolution slot and ONE cusip_cache row — the
+    // main reason international funds resolved so few holdings (VFWAX was
+    // 68/400 on July 2).
+    const resolveIds = included.map(h => resolutionIdFor(h));
+    const placeholderCount = included.filter(h => isPlaceholderCusip(h.cusip)).length;
+    console.log(
+      `[holdings] Resolving ${resolveIds.length} holdings via OpenFIGI` +
+      (placeholderCount > 0 ? ` (${placeholderCount} placeholder-CUSIP → ISIN/name identity)` : '')
+    );
 
-    // BUG-3 fix: Build ISIN and name maps for international holding resolution.
-    // EDGAR provides ISINs for most holdings — OpenFIGI's ID_ISIN lookup has
-    // much better coverage for non-US securities than ID_CUSIP.
+    // BUG-3 fix: ISIN retry map — now only for REAL CUSIPs that fail the
+    // ID_CUSIP lookup (placeholder-CUSIP holdings resolve via ISIN directly
+    // in cusip.ts). The name map feeds the FMP search fallback for all ids.
     const isinMap = new Map<string, string>();
     const nameMap = new Map<string, string>();
     for (const h of included) {
-      if (h.cusip && h.isin) {
-        isinMap.set(h.cusip, h.isin);
+      const id = resolutionIdFor(h);
+      if (!isPlaceholderCusip(h.cusip) && h.isin) {
+        isinMap.set(id, h.isin);
       }
-      if (h.cusip && h.name) {
-        nameMap.set(h.cusip, h.name);
+      if (h.name) {
+        nameMap.set(id, h.name);
       }
     }
     if (isinMap.size > 0) {
-      console.log(`[holdings] ${isinMap.size} holdings have ISINs for fallback resolution`);
+      console.log(`[holdings] ${isinMap.size} real-CUSIP holdings have ISINs for fallback resolution`);
     }
 
     const cusipResult = await resolveCusips(
-      cusips,
+      resolveIds,
       openFigiKey,
       cacheLookup,
       cacheSave,
@@ -156,11 +189,12 @@ export async function runHoldingsPipeline(
     const unresolvedCusips: string[] = [];
 
     for (const holding of included) {
-      const resolution = cusipMap.get(holding.cusip);
+      // A3 Task 2: look up by the same per-holding identity used to resolve
+      const resolution = cusipMap.get(resolutionIdFor(holding));
       const ticker = resolution?.resolved ? resolution.ticker : null;
 
       if (!ticker) {
-        unresolvedCusips.push(holding.cusip);
+        unresolvedCusips.push(resolutionIdFor(holding));
       }
 
       resolvedHoldings.push({
@@ -473,10 +507,16 @@ function deduplicateHoldings(holdings: EdgarHolding[]): EdgarHolding[] {
   const map = new Map<string, EdgarHolding>();
 
   for (const holding of holdings) {
-    const existing = map.get(holding.cusip);
+    // A3 Task 2: a placeholder CUSIP ("N/A") identifies nothing — merge those
+    // rows by holding name so distinct foreign companies never collapse
+    // (mirrors the A2.3 persist fix).
+    const key = isPlaceholderCusip(holding.cusip)
+      ? `name:${(holding.name || '').trim().toUpperCase()}`
+      : holding.cusip;
+    const existing = map.get(key);
     if (existing) {
       // Merge: sum weights and values, keep the more complete metadata
-      map.set(holding.cusip, {
+      map.set(key, {
         ...existing,
         pctOfNav: existing.pctOfNav + holding.pctOfNav,
         valueUsd: existing.valueUsd + holding.valueUsd,
@@ -489,7 +529,7 @@ function deduplicateHoldings(holdings: EdgarHolding[]): EdgarHolding[] {
           existing.isInvestmentCompany || holding.isInvestmentCompany,
       });
     } else {
-      map.set(holding.cusip, { ...holding });
+      map.set(key, { ...holding });
     }
   }
 
