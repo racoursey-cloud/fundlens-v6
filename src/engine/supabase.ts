@@ -171,12 +171,29 @@ export async function supaFetch<T = unknown>(
     // Handle non-2xx responses
     if (!response.ok) {
       let errorMessage: string;
+      let errorDetails = '';
+      let errorCode = '';
       try {
-        const errorBody = await response.json() as { message?: string; details?: string; hint?: string };
+        const errorBody = await response.json() as { message?: string; details?: string; hint?: string; code?: string };
         errorMessage = errorBody.message || errorBody.details || `HTTP ${response.status}`;
+        errorDetails = errorBody.details || '';
+        errorCode = errorBody.code || '';
         if (errorBody.hint) errorMessage += ` (hint: ${errorBody.hint})`;
       } catch {
         errorMessage = `HTTP ${response.status} ${response.statusText}`;
+      }
+
+      // A2 Task 6: a single-row request that matches ZERO rows is a normal
+      // outcome (e.g. "is a pipeline already running?" → no), not an error.
+      // PostgREST rejects the single-object coercion with code PGRST116 /
+      // "Cannot coerce the result to a single JSON object". Only the
+      // zero-row case is quiet; a multiple-row coercion failure (details
+      // like "The result contains 3 rows") still logs and returns an error.
+      const isCoercionFailure =
+        errorCode === 'PGRST116' || errorMessage.includes('Cannot coerce');
+      const isZeroRows = errorDetails === '' || /\b0 rows\b/i.test(errorDetails);
+      if (single && isCoercionFailure && isZeroRows) {
+        return { data: null, error: null, status: response.status, count };
       }
 
       console.error(`[supaFetch] ${method} ${table} failed: ${errorMessage}`);
