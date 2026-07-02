@@ -42,8 +42,12 @@ const MAX_LOOKTHROUGH_DEPTH = 1;
  * Minimum weight for a sub-fund holding to trigger look-through.
  * If a fund-of-funds holds less than 1% in a sub-fund, skip the
  * recursive fetch — it's not material enough to justify the API calls.
+ *
+ * A3 Task 3: pctOfNav is in WHOLE-PERCENT units (1 = 1% of NAV), so this
+ * threshold is 1, not 0.01. The old value 0.01 assumed decimal fractions
+ * and behaved as "0.01%", looking through essentially every sub-fund.
  */
-const MIN_SUBFUND_WEIGHT = 0.01;
+const MIN_SUBFUND_WEIGHT = 1;
 
 // ─── Placeholder CUSIP handling (A3 Task 2) ────────────────────────────────
 // Mirrors persist.ts (A2.3 fix): NPORT-P puts the literal "N/A" in the CUSIP
@@ -399,14 +403,19 @@ async function expandFundOfFunds(
 
     subFundNames.push(fundHolding.name);
 
-    // Scale the sub-fund's holdings by the parent's position weight
+    // Scale the sub-fund's holdings by the parent's position weight.
     // If the parent holds 10% in a sub-fund, and the sub-fund holds 5% in AAPL,
-    // then the effective weight of AAPL in the parent is 10% × 5% = 0.5%
+    // then the effective weight of AAPL in the parent is 10% × 5% = 0.5%.
+    //
+    // A3 Task 3: both weights are in WHOLE-PERCENT units (10 and 5, not 0.10
+    // and 0.05), so the scale factor is parentWeight / 100. The old bare
+    // multiplication produced weights 100× too large (10 × 5 = 50 instead
+    // of 0.5), letting look-through holdings monopolize the coverage cutoff.
     const parentWeight = fundHolding.pctOfNav;
     const scaledHoldings: EdgarHolding[] = subResult.data.holdings.map(h => ({
       ...h,
-      pctOfNav: h.pctOfNav * parentWeight,
-      valueUsd: h.valueUsd * parentWeight,
+      pctOfNav: h.pctOfNav * parentWeight / 100,
+      valueUsd: h.valueUsd * parentWeight / 100,
       isInvestmentCompany: h.isInvestmentCompany, // Preserve for deeper recursion
     }));
 
