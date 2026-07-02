@@ -134,7 +134,7 @@ export async function persistPipelineResults(
     const fund = funds.find(f => f.ticker === ticker);
     if (!fund) continue;
 
-    const rows = detail.holdings.map(holding => ({
+    const mappedRows = detail.holdings.map(holding => ({
       fund_id: fund.id,
       name: holding.name,
       cusip: holding.cusip,
@@ -149,6 +149,36 @@ export async function persistPipelineResults(
       accession_number: '',
       report_date: new Date().toISOString().slice(0, 10),
     }));
+
+    // ── A2 Task 7: merge duplicate CUSIPs within the batch ────────────────
+    // NPORT-P filings can list the same security more than once (multiple
+    // lots). Two rows sharing (fund_id, accession_number, cusip) in one
+    // insert violate idx_holdings_unique and abort the WHOLE batch — the
+    // July 1 run's 9 persist errors, which also left those funds with no
+    // holdings after the preceding delete (Principle 1: silent data gap).
+    // Merge rule mirrors holdings.ts deduplicateHoldings: sum weights and
+    // values, keep the first row's metadata (fill gaps from later rows).
+    const byCusip = new Map<string, typeof mappedRows[number]>();
+    for (const row of mappedRows) {
+      const existing = byCusip.get(row.cusip);
+      if (existing) {
+        existing.pct_of_nav += row.pct_of_nav;
+        existing.value_usd += row.value_usd;
+        existing.name = existing.name || row.name;
+        existing.ticker = existing.ticker || row.ticker;
+        existing.sector = existing.sector || row.sector;
+        existing.asset_category = existing.asset_category || row.asset_category;
+        existing.country = existing.country || row.country;
+      } else {
+        byCusip.set(row.cusip, { ...row });
+      }
+    }
+    const rows = Array.from(byCusip.values());
+    if (rows.length < mappedRows.length) {
+      console.log(
+        `[persist] Holdings ${ticker}: merged ${mappedRows.length - rows.length} duplicate-CUSIP lots before insert`
+      );
+    }
 
     if (rows.length === 0) continue;
 
