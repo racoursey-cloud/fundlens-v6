@@ -96,8 +96,8 @@ Scoring/allocation/tiers/Briefs, and the regime/pivot engine. The regime engine 
 
 ## 5. Open Decisions (Robert)
 
-1. **Dossier pass thresholds** — approve or adjust the draft numbers in §3 Layer 0.
-2. **Brief cadence** — Session 24 wired Brief regeneration to every pipeline run; the cron makes that *daily Opus generation per user*. Keep, reduce, or park with the Brief layer?
+1. **Dossier pass thresholds** — **RATIFIED July 1, 2026:** 90% of NAV resolved / 95% of resolved NAV classified, per §3 Layer 0.
+2. **Brief cadence** — **RATIFIED July 1, 2026: daily automatic Brief generation killed** (implemented in A2 — Stabilization; post-pipeline regeneration calls removed). The monthly email delivery cadence and on-demand generation remain.
 3. **Commit-rule amendment** — approve the bulk-move exception in §2.
 4. **Theme taxonomy** — reviewed and approved in its own session before Layer 1 work begins.
 
@@ -105,11 +105,12 @@ Scoring/allocation/tiers/Briefs, and the regime/pivot engine. The regime engine 
 
 ## 6. Build Order
 
-- **A1 — Clean Slate:** delete dead code, archive root docs, commit this document. (Written; ready for Claude Code on the Web.)
-- **A2 — Dossier Contract + Scorecard:** DOSSIER_CONTRACT.md, `acquireFund()` refactor behind existing pipeline, admin scoreboard endpoint + minimal view. Resolve the client allocation drift (fix or remove with its UI).
-- **A3–A8 — Coverage passes:** fund-by-fund until 22/22 pass or are explained. Problem children (fund-of-funds, money markets, international-heavy) get dedicated sessions.
-- **A9 — Theme taxonomy + classification pass.**
-- **A10 — Pulse:** returns-based verification module + divergence flags.
-- **A11+ — Explorer upgrades:** fund cards, fee X-ray, overlap detector.
+- **A1 — Clean Slate:** delete dead code, archive root docs, commit this document. (Merged.)
+- **A2 — Stabilization:** July 1 field findings — kill daily Brief generation, loud API failure alerts, ×100 inflation trace, client allocation re-port, supaFetch/persist fixes. (This assignment; replaces the original A2.)
+- **A3 — Dossier Contract + Scorecard:** DOSSIER_CONTRACT.md, `acquireFund()` refactor behind existing pipeline, admin scoreboard endpoint + minimal view.
+- **A4–A9 — Coverage passes:** fund-by-fund until 22/22 pass or are explained. Problem children (fund-of-funds, money markets, international-heavy) get dedicated sessions.
+- **A10 — Theme taxonomy + classification pass.**
+- **A11 — Pulse:** returns-based verification module + divergence flags.
+- **A12+ — Explorer upgrades:** fund cards, fee X-ray, overlap detector.
 
 Every session opens with a half-page briefing (what's new, why it matters, the one decision needed) and closes with the scoreboard.

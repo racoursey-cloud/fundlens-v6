@@ -18,6 +18,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { CLAUDE, PIPELINE } from './constants.js';
 import { ResolvedHolding, delay } from './types.js';
+import { alertClaudeApiFailure } from './admin-alert.js';
 
 // ─── Standard Sectors ───────────────────────────────────────────────────────
 // Must match the sectors in thesis.ts for alignment scoring to work.
@@ -311,6 +312,9 @@ export async function classifyHoldingSectors(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[classify] Batch ${i + 1} failed: ${msg}`);
+      // A2 Task 3 (Principle 1): failures must be loud — email Robert,
+      // rate-limited to one alert per error type per 24 hours.
+      alertClaudeApiFailure('Sector classification', msg).catch(() => {});
       // On failure, leave sectors as null — they'll be neutral in positioning
     }
 

@@ -23,7 +23,7 @@ import cron from 'node-cron';
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 import { runFullPipeline } from './pipeline.js';
 import { persistPipelineResults } from './persist.js';
-import { checkAndSendBriefs, regenerateBriefsForAllUsers } from './brief-scheduler.js';
+import { checkAndSendBriefs } from './brief-scheduler.js';
 import {
   alertPipelineFailure,
   alertPipelineErrors,
@@ -128,11 +128,8 @@ async function scheduledPipelineRun(): Promise<void> {
       alertPipelineErrors(run.id, result.stats.errors).catch(() => {});
     }
 
-    // Regenerate Briefs for ALL users so scores and narrative stay in sync
-    regenerateBriefsForAllUsers(run.id).catch(err => {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[cron] Post-pipeline Brief regeneration failed: ${msg}`);
-    });
+    // Post-pipeline Brief regeneration removed per Robert's July 1, 2026 decision
+    // (A2 Task 2). The 06:00 UTC checkAndSendBriefs delivery cadence is unaffected.
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[cron] Pipeline run ${run.id} failed: ${msg}`);

@@ -246,10 +246,12 @@ export function Research() {
         for (const [sector, weight] of Object.entries(sectors)) {
           sectorAgg.set(sector, (sectorAgg.get(sector) || 0) + weight);
 
-          // Drill: sector → funds contributing to this sector
+          // Drill: sector → funds contributing to this sector.
+          // A2 Task 4: sectorExposure weights are whole percents (35 = 35%),
+          // so contribution = weight% of fundAlloc% → divide by 100, not ×100.
           if (fundAlloc > 0) {
             const existing = sectorFunds.get(sector) || [];
-            const contribution = Math.round(weight * fundAlloc * 10) / 10;
+            const contribution = Math.round((weight * fundAlloc / 100) * 10) / 10;
             if (contribution > 0) {
               existing.push({
                 name: s.funds?.name || ticker,
@@ -296,12 +298,14 @@ export function Research() {
       const details = s.factor_details as Record<string, unknown> | undefined;
       const sectors = (details?.sectorExposure || details?.sectors) as Record<string, number> | undefined;
       if (sectors) {
+        // A2 Task 4: sectorExposure weights are whole percents already —
+        // the old ×100 here made the fund drill-down show '3500.0%'.
         const items: DonutDrillItem[] = Object.entries(sectors)
           .filter(([, w]) => w > 0.001)
           .sort((a, b) => b[1] - a[1])
           .map(([sector, w]) => ({
             name: sector,
-            weight: Math.round(w * 1000) / 10,
+            weight: Math.round(w * 10) / 10,
           }));
         fundSectors.set(ticker, items);
       }

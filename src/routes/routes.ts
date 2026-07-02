@@ -142,7 +142,10 @@ router.get('/api/funds/:ticker', requireAuth, async (req: Request, res: Response
     single: true,
   });
 
-  if (error) {
+  // A2 Task 6 companion: supaFetch now returns error:null (not an error)
+  // when a single-row request matches zero rows, so a missing fund must be
+  // detected by !data to keep returning 404.
+  if (error || !data) {
     res.status(404).json({ error: `Fund not found: ${ticker}` });
     return;
   }
@@ -647,12 +650,9 @@ async function runPipelineAsync(runId: string): Promise<void> {
 
     console.log(`[routes] Pipeline run ${runId} completed successfully`);
 
-    // Regenerate Briefs for ALL users so scores and narrative stay in sync
-    import('../engine/brief-scheduler.js').then(({ regenerateBriefsForAllUsers }) => {
-      regenerateBriefsForAllUsers(runId).catch(err => {
-        console.error(`[routes] Post-pipeline Brief regeneration failed: ${err}`);
-      });
-    });
+    // Post-pipeline Brief regeneration removed per Robert's July 1, 2026 decision
+    // (A2 Task 2). On-demand generation via POST /api/briefs/generate and the
+    // monthly checkAndSendBriefs delivery cadence are unaffected.
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[routes] Pipeline run ${runId} failed: ${msg}`);

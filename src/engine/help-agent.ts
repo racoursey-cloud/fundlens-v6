@@ -17,6 +17,7 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { CLAUDE } from './constants.js';
+import { alertClaudeApiFailure } from './admin-alert.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -121,6 +122,9 @@ export async function helpChat(request: HelpChatRequest): Promise<HelpChatRespon
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[help-agent] Claude API error: ${msg}`);
+    // A2 Task 3 (Principle 1): failures must be loud — email Robert,
+    // rate-limited to one alert per error type per 24 hours.
+    alertClaudeApiFailure('Help chat', msg).catch(() => {});
     return { reply: "I'm having trouble connecting right now. Please try again in a moment." };
   }
 }
