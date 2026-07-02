@@ -694,7 +694,7 @@ export function YourBrief() {
       // meant sector clicks filtered only the top-10 overall survivors — a fund
       // could show 8% Healthcare yet zero Healthcare holdings. The default
       // "Top Holdings" view still renders only the first 8 (6 on mobile);
-      // sector views cap their display at render time.
+      // sector views render the full sector in a scrollable window (A2.2).
       map.set(ticker, { sectors, holdings });
     }
     return map;
@@ -1003,14 +1003,12 @@ export function YourBrief() {
                     minWidth: 0,
                   }}>
                     {selectedFundTicker && (() => {
-                      // A2.1 Task 1: sector clicks filter the FULL holdings list,
-                      // display capped at 10 with a "+N more" note when the
-                      // sector holds more. Default view unchanged (top 8).
-                      const matches = selectedSectorBrief
+                      // A2.2 Task 1: a selected sector shows ALL of its holdings
+                      // in a scrollable window (FundLens pattern — maxHeight 300).
+                      // Default "Top Holdings" view unchanged (top 8, no scroll).
+                      const filtered = selectedSectorBrief
                         ? selectedFundData?.holdings.filter(h => h.sector === selectedSectorBrief) ?? []
                         : selectedFundData?.holdings.slice(0, 8) ?? [];
-                      const filtered = selectedSectorBrief ? matches.slice(0, 10) : matches;
-                      const hiddenCount = matches.length - filtered.length;
                       return (
                         <>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -1026,7 +1024,10 @@ export function YourBrief() {
                             )}
                           </div>
                           {filtered.length > 0 ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <div style={{
+                              display: 'flex', flexDirection: 'column', gap: 2,
+                              ...(selectedSectorBrief ? { maxHeight: 300, overflowY: 'auto' as const } : {}),
+                            }}>
                               {filtered.map((h, idx) => (
                                 <div key={idx} style={{
                                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -1050,12 +1051,6 @@ export function YourBrief() {
                                   }}>{h.weight.toFixed(1)}%</span>
                                 </div>
                               ))}
-                              {hiddenCount > 0 && (
-                                <span style={{
-                                  fontSize: 10, color: theme.colors.textDim,
-                                  fontStyle: 'italic', paddingTop: 4,
-                                }}>+ {hiddenCount} more {selectedSectorBrief} holding{hiddenCount === 1 ? '' : 's'}</span>
-                              )}
                             </div>
                           ) : selectedSectorBrief ? (
                             <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
@@ -1129,13 +1124,11 @@ export function YourBrief() {
                 )}
                 {/* Top holdings (sector-filterable) */}
                 {(() => {
-                  // A2.1 Task 1: same full-list sector filtering as desktop,
-                  // display capped at 8 on mobile. Default view unchanged (top 6).
-                  const matches = selectedSectorBrief
+                  // A2.2 Task 1: same scrollable full-sector view as desktop
+                  // (FundLens pattern). Default view unchanged (top 6, no scroll).
+                  const filtered = selectedSectorBrief
                     ? selectedFundData.holdings.filter(h => h.sector === selectedSectorBrief)
                     : selectedFundData.holdings.slice(0, 6);
-                  const filtered = selectedSectorBrief ? matches.slice(0, 8) : matches;
-                  const hiddenCount = matches.length - filtered.length;
                   return filtered.length > 0 ? (
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
@@ -1150,7 +1143,10 @@ export function YourBrief() {
                           }}>&times;</button>
                         )}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{
+                        display: 'flex', flexDirection: 'column', gap: 2,
+                        ...(selectedSectorBrief ? { maxHeight: 300, overflowY: 'auto' as const } : {}),
+                      }}>
                         {filtered.map((h, idx) => (
                           <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', gap: 8 }}>
                             <span style={{ fontSize: 11, color: theme.colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{h.name}</span>
@@ -1158,11 +1154,6 @@ export function YourBrief() {
                             <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36, textAlign: 'right' }}>{h.weight.toFixed(1)}%</span>
                           </div>
                         ))}
-                        {hiddenCount > 0 && (
-                          <span style={{ fontSize: 10, color: theme.colors.textDim, fontStyle: 'italic', paddingTop: 4 }}>
-                            + {hiddenCount} more {selectedSectorBrief} holding{hiddenCount === 1 ? '' : 's'}
-                          </span>
-                        )}
                       </div>
                     </div>
                   ) : selectedSectorBrief ? (
