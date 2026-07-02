@@ -31,7 +31,9 @@
  */
 
 import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS, MM_SCORING, MM_FUND_DATA } from './constants.js';
-import { delay, ResolvedHolding, FundRow, NmfpFundData } from './types.js';
+import { delay, ResolvedHolding, FundRow, NmfpFundData, HoldingsPipelineResult } from './types.js';
+import { computeDossier } from './dossier.js';
+import type { FundDossier, DossierInput } from './dossier.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics } from './fmp.js';
@@ -53,8 +55,31 @@ import {
   getFmpCache, saveFmpCache,
   getTiingoPriceCache, saveTiingoPriceCache,
   getFinnhubFeeCache, saveFinnhubFeeCache,
-  getSectorClassifications, saveSectorClassifications,
+  getSectorClassifications, saveSectorClassifications, sectorCacheKey,
 } from './cache.js';
+import type { SectorAssetType } from './cache.js';
+
+// ─── A3 Task 1: asset-type derivation for the sector cache key ─────────────
+// The sector cache is keyed by (holding name, asset type) because SEC filings
+// name bonds by their ISSUER — "AMAZON.COM INC" can be a bond in one fund and
+// a stock in another. These sets mirror the metadata signals classify.ts
+// trusts for its pre-gates (see ALWAYS_DEBT_ISSUER_CATS etc. there).
+
+const DEBT_ASSET_CATS = new Set(['DBT', 'STIV', 'LON', 'ABS-MBS', 'ABS-O', 'ABS-CBDO']);
+const ALWAYS_DEBT_ISSUER_CATS = new Set(['UST', 'USGA', 'MUN', 'SOV', 'ABS', 'AGEN', 'AGNCY']);
+const DERIVATIVE_ASSET_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DO']);
+
+function deriveAssetType(h: ResolvedHolding): SectorAssetType {
+  if (h.isDebt) return 'debt';
+  const ac = h.assetCategory?.toUpperCase();
+  if (ac && DEBT_ASSET_CATS.has(ac)) return 'debt';
+  const ic = h.issuerCategory?.toUpperCase();
+  if (ic && ALWAYS_DEBT_ISSUER_CATS.has(ic)) return 'debt';
+  if (ac && DERIVATIVE_ASSET_CATS.has(ac)) return 'other';
+  if (ac === 'EC') return 'equity';
+  if (h.ticker) return 'equity';
+  return 'other';
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +96,8 @@ export interface PipelineResult {
   fundDetails: Map<string, FundPipelineDetail>;
   /** Pipeline execution stats */
   stats: PipelineStats;
+  /** Per-fund data-quality Dossiers graded against the 90/95 gate (A3 Task 4) */
+  dossiers: FundDossier[];
 }
 
 /** Detailed pipeline data for a single fund */
@@ -141,12 +168,16 @@ export async function runFullPipeline(
 
   const openFigiKey = process.env.OPENFIGI_API_KEY || '';
   const fundHoldings = new Map<string, ResolvedHolding[]>();
+  // A3 Task 4: retain each fund's full holdings-pipeline result (coverage
+  // stats, filing identity, fund-of-funds status) for the Dossier.
+  const fundMeta = new Map<string, HoldingsPipelineResult>();
 
   for (const fund of scorableFunds) {
     try {
       const result = await runHoldingsPipeline(fund.ticker, openFigiKey);
       if (result.success && result.data) {
         fundHoldings.set(fund.ticker, result.data.holdings);
+        fundMeta.set(fund.ticker, result.data);
       } else {
         errors.push({ fund: fund.ticker, step: 'holdings', error: result.error || 'Unknown' });
       }
@@ -221,9 +252,11 @@ export async function runFullPipeline(
   // Saves ~4 Claude Haiku calls per run after the first.
   progress(5, 'Classifying holdings into sectors');
 
-  // 5a: Collect all unique unclassified holding names across all funds
+  // 5a: Collect all unique unclassified holdings across all funds.
+  // A3 Task 1: cache identity is (holding name, asset type) — a bond and a
+  // stock sharing an issuer name are different cache entries.
   const allHoldingsNeedingClassification: ResolvedHolding[] = [];
-  const holdingNameToSector = new Map<string, string>();
+  const keyToSector = new Map<string, string>();
 
   for (const [, holdings] of fundHoldings) {
     for (const h of holdings) {
@@ -233,40 +266,61 @@ export async function runFullPipeline(
     }
   }
 
-  // Deduplicate by holding name
-  const uniqueNames = [...new Set(allHoldingsNeedingClassification.map(h => h.name))];
+  // Deduplicate by (holding name, asset type)
+  const uniqueEntries = new Map<string, { holdingName: string; assetType: SectorAssetType }>();
+  for (const h of allHoldingsNeedingClassification) {
+    const assetType = deriveAssetType(h);
+    const key = sectorCacheKey(h.name, assetType);
+    if (!uniqueEntries.has(key)) {
+      uniqueEntries.set(key, { holdingName: h.name, assetType });
+    }
+  }
 
   // 5b: Batch-check sector_classifications cache
   let sectorCacheHits = 0;
-  if (uniqueNames.length > 0) {
+  if (uniqueEntries.size > 0) {
     try {
-      const cachedSectors = await getSectorClassifications(uniqueNames);
-      for (const [name, sector] of cachedSectors) {
-        holdingNameToSector.set(name, sector);
+      const cachedSectors = await getSectorClassifications([...uniqueEntries.values()]);
+      for (const [key, sector] of cachedSectors) {
+        keyToSector.set(key, sector);
         sectorCacheHits++;
       }
-      console.log(`[pipeline] Sector cache: ${sectorCacheHits}/${uniqueNames.length} holdings from cache`);
+      console.log(`[pipeline] Sector cache: ${sectorCacheHits}/${uniqueEntries.size} holdings from cache`);
     } catch (err) {
       console.warn('[pipeline] Sector cache lookup failed, classifying all via Claude');
     }
 
     // Apply cached sectors to holdings
     for (const h of allHoldingsNeedingClassification) {
-      const cachedSector = holdingNameToSector.get(h.name);
-      if (cachedSector) {
-        h.sector = cachedSector;
+      const assetType = deriveAssetType(h);
+      const cachedSector = keyToSector.get(sectorCacheKey(h.name, assetType));
+      if (!cachedSector) continue;
+
+      // A3 Task 1 guardrail: a holding with a resolved stock ticker and no
+      // debt flags must NEVER take 'Fixed Income' from a name-cache hit —
+      // fall through to Claude classification instead.
+      if (cachedSector === 'Fixed Income' && h.ticker && assetType === 'equity') {
+        console.warn(
+          `[pipeline] Sector-cache guardrail: refused 'Fixed Income' for equity ${h.ticker} ("${h.name}")`
+        );
+        continue;
       }
+
+      h.sector = cachedSector;
     }
   }
 
   // 5c: Classify remaining uncached holdings via Claude Haiku
   // Collect holdings that still don't have a sector after cache check
   const stillNeedClassification: ResolvedHolding[] = [];
+  const queuedKeys = new Set<string>();
   for (const [, holdings] of fundHoldings) {
     for (const h of holdings) {
       if (!h.sector && h.name) {
-        // Deduplicate — only add if we haven't already queued this name
-        if (!stillNeedClassification.some(existing => existing.name === h.name)) {
+        // Deduplicate — one representative per (name, asset type)
+        const key = sectorCacheKey(h.name, deriveAssetType(h));
+        if (!queuedKeys.has(key)) {
+          queuedKeys.add(key);
           stillNeedClassification.push(h);
         }
       }
@@ -278,12 +332,13 @@ export async function runFullPipeline(
     try {
       await classifyHoldingSectors(stillNeedClassification);
 
-      // Save new classifications to cache for next run
-      const newClassifications: Array<{ holdingName: string; sector: string }> = [];
+      // Save new classifications to cache for next run (keyed by name + asset type)
+      const newClassifications: Array<{ holdingName: string; assetType: SectorAssetType; sector: string }> = [];
       for (const h of stillNeedClassification) {
         if (h.sector) {
-          newClassifications.push({ holdingName: h.name, sector: h.sector });
-          holdingNameToSector.set(h.name, h.sector);
+          const assetType = deriveAssetType(h);
+          newClassifications.push({ holdingName: h.name, assetType, sector: h.sector });
+          keyToSector.set(sectorCacheKey(h.name, assetType), h.sector);
         }
       }
       if (newClassifications.length > 0) {
@@ -300,7 +355,7 @@ export async function runFullPipeline(
     for (const [, holdings] of fundHoldings) {
       for (const h of holdings) {
         if (!h.sector && h.name) {
-          const sector = holdingNameToSector.get(h.name);
+          const sector = keyToSector.get(sectorCacheKey(h.name, deriveAssetType(h)));
           if (sector) h.sector = sector;
         }
       }
@@ -324,14 +379,17 @@ export async function runFullPipeline(
   //   3. Everything else → "Other" (last resort, prevents Unclassified gravity)
   let finalPassClassified = 0;
   let finalPassOther = 0;
-  const FINAL_DEBT_ASSET_CATS = new Set(['DBT', 'STIV', 'LON', 'ABS-MBS', 'ABS-O', 'ABS-CBDO']);
-  const FINAL_DERIV_ASSET_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DO']);
-  for (const [, holdings] of fundHoldings) {
+  // A3 Task 4: weight labeled 'Other' by the LAST-RESORT rule (Rule 4) counts
+  // as unclassified in the Dossier — track it per fund.
+  const lastResortWeights = new Map<string, number>();
+  // A3 Task 1: these rules reuse the module-level metadata sets shared with
+  // deriveAssetType (previously duplicated locally here).
+  for (const [fundTicker, holdings] of fundHoldings) {
     for (const h of holdings) {
       if (h.sector) continue; // Already classified
 
       // Rule 0: Derivatives → "Other" (hedging overlays, not sector exposure)
-      if (h.assetCategory && FINAL_DERIV_ASSET_CATS.has(h.assetCategory.toUpperCase())) {
+      if (h.assetCategory && DERIVATIVE_ASSET_CATS.has(h.assetCategory.toUpperCase())) {
         h.sector = 'Other';
         finalPassOther++;
         continue;
@@ -352,12 +410,12 @@ export async function runFullPipeline(
         finalPassClassified++;
         continue;
       }
-      if (h.issuerCategory && ['UST', 'USGA', 'MUN', 'SOV', 'ABS', 'AGEN', 'AGNCY'].includes(h.issuerCategory.toUpperCase())) {
+      if (h.issuerCategory && ALWAYS_DEBT_ISSUER_CATS.has(h.issuerCategory.toUpperCase())) {
         h.sector = 'Fixed Income';
         finalPassClassified++;
         continue;
       }
-      if (h.assetCategory && FINAL_DEBT_ASSET_CATS.has(h.assetCategory.toUpperCase())) {
+      if (h.assetCategory && DEBT_ASSET_CATS.has(h.assetCategory.toUpperCase())) {
         h.sector = 'Fixed Income';
         finalPassClassified++;
         continue;
@@ -377,6 +435,8 @@ export async function runFullPipeline(
       // Rule 4: Last resort — assign "Other" to prevent Unclassified gravity toward 50
       h.sector = 'Other';
       finalPassOther++;
+      // A3 Task 4: last-resort weight counts as unclassified in the Dossier
+      lastResortWeights.set(fundTicker, (lastResortWeights.get(fundTicker) || 0) + h.pctOfNav);
     }
   }
   if (finalPassClassified > 0 || finalPassOther > 0) {
@@ -682,7 +742,10 @@ export async function runFullPipeline(
   const macroSnapshot = await fetchMacroSnapshot();
 
   // ── Step 11: Generate macro thesis via Claude Sonnet ──
-  progress(11, 'Generating investment brief');
+  // A3 Task 6a: label was 'Generating investment brief' — wrong (this step
+  // generates the macro thesis; Briefs are a separate, on-demand flow) and
+  // it caused a false alarm on July 2.
+  progress(11, 'Generating macro thesis');
 
   let thesis: MacroThesis;
   try {
@@ -984,6 +1047,41 @@ export async function runFullPipeline(
 
   console.log(`[pipeline] Scoring complete: ${scoring.funds.length} funds ranked`);
 
+  // ── A3 Task 4: compute per-fund Dossiers and flag gate failures ──────────
+  const fallbackByTicker = new Map(fundScoreInputs.map(i => [i.ticker, i.fallbackCount]));
+  const dossiers: FundDossier[] = funds.map(fund => {
+    const isMM = MONEY_MARKET_TICKERS.has(fund.ticker);
+    const meta = fundMeta.get(fund.ticker);
+    const quality = qualityResults.get(fund.ticker);
+    const input: DossierInput = {
+      ticker: fund.ticker,
+      isMoneyMarket: isMM,
+      holdings: fundHoldings.get(fund.ticker) || [],
+      holdingsTotal: meta?.coverage.holdingsTotal ?? 0,
+      weightCoveredPct: meta?.coverage.weightCovered ?? 0,
+      accessionNumber: meta?.filingMeta.accessionNumber ?? null,
+      reportDate: meta?.filingMeta.reportDate ?? null,
+      lookthroughDetected: meta?.fundOfFunds.detected ?? false,
+      lookthroughSubfunds: meta?.fundOfFunds.subFundNames.length ?? 0,
+      lastResortWeightPct: lastResortWeights.get(fund.ticker) ?? 0,
+      fallbackCount: fallbackByTicker.get(fund.ticker) ?? 0,
+      coverageScalingApplied: perFundWeights.has(fund.ticker),
+      qualityCoveragePct: (quality?.coveragePct ?? 0) * 100,
+      holdingsAvailable: isMM || fundHoldings.has(fund.ticker),
+    };
+    return computeDossier(input);
+  });
+
+  const gateFailures = dossiers.filter(d => !d.passesGate);
+  if (gateFailures.length > 0) {
+    console.warn(
+      `[pipeline] Dossier gate: ${gateFailures.length}/${dossiers.length} funds below the 90/95 thresholds — ` +
+      gateFailures.map(d => `${d.ticker} (${d.failReasons.join('; ')})`).join(' · ')
+    );
+  } else {
+    console.log(`[pipeline] Dossier gate: all ${dossiers.length} funds pass (90/95 thresholds)`);
+  }
+
   // ── Step 14: Scores computed — pipeline returns to routes.ts ──
   // Steps 15-16 (fund summaries + DB persist) happen in routes.ts
   progress(14, 'Scores computed');
@@ -1013,5 +1111,5 @@ export async function runFullPipeline(
     `${totalHoldingsScored} holdings, ${errors.length} errors`
   );
 
-  return { scoring, thesis, fundDetails, stats };
+  return { scoring, thesis, fundDetails, stats, dossiers };
 }

@@ -220,6 +220,46 @@ export async function alertClaudeApiFailure(
   );
 }
 
+// ─── Dossier Gate Alerts (A3 Task 4, Founding Principle 2) ─────────────────
+
+/**
+ * Alert: one or more funds failed the Dossier data-quality gate
+ * (ratified thresholds: 90% NAV resolved / 95% classified).
+ *
+ * ONE summary email per run listing every failing fund — never one email
+ * per fund. Rate-limited with the same 24-hour suppression as the Claude
+ * API alerts so the nightly run produces at most one email per day.
+ */
+export async function alertDossierGateFailures(
+  runId: string,
+  failures: Array<{ ticker: string; reasons: string[] }>
+): Promise<void> {
+  if (failures.length === 0) return;
+
+  const key = 'dossier-gate:failures';
+  const now = Date.now();
+  const lastSent = lastAlertSentAt.get(key);
+  if (lastSent !== undefined && now - lastSent < ALERT_SUPPRESS_MS) {
+    console.log(`[admin-alert] Suppressing repeat Dossier gate alert — last sent ${Math.round((now - lastSent) / 60000)}m ago`);
+    return;
+  }
+  lastAlertSentAt.set(key, now);
+
+  const list = failures
+    .map(f => `• <strong>${escapeHtml(f.ticker)}</strong>: ${escapeHtml(f.reasons.join('; '))}`)
+    .join('\n');
+
+  await sendAdminAlert(
+    `Dossier gate: ${failures.length} fund${failures.length === 1 ? '' : 's'} below data-quality thresholds`,
+    `Pipeline run <strong>${escapeHtml(runId)}</strong> completed, but these funds ` +
+    `failed the ratified data-quality gate (90% of NAV resolved / 95% classified):\n\n` +
+    `${list}\n\n` +
+    `Details are on the Pipeline tab (Fund Data Quality section) and in the ` +
+    `<code>fund_dossiers</code> table. Their scores are built on incomplete data ` +
+    `and should be read accordingly. At most one of these emails is sent per 24 hours.`
+  );
+}
+
 /** Alert: stale pipeline run detected and cleaned up */
 export async function alertStaleRun(
   runId: string,

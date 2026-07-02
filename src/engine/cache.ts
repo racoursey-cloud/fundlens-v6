@@ -239,28 +239,45 @@ export async function saveFinnhubFeeCache(
 }
 
 // ─── Sector Classifications Cache (15-day TTL) ────────────────────────────
+// A3 Task 1: the cache is keyed by (holding name, asset type). SEC filings
+// name bonds by their ISSUER, so "AMAZON.COM INC" can be a bond in one fund
+// and a stock in another — a name-only key let bond labels poison equities.
+
+/** Asset type for sector-cache keying, derived from EDGAR metadata */
+export type SectorAssetType = 'equity' | 'debt' | 'other';
+
+/** Composite cache key: "<assetType>|<holdingName>" */
+export function sectorCacheKey(holdingName: string, assetType: SectorAssetType): string {
+  return `${assetType}|${holdingName}`;
+}
 
 /**
- * Batch-fetch cached sector classifications for multiple holding names.
- * Returns a map of holdingName → sector for cache hits only.
- * Stale entries (>15 days) are excluded.
+ * Batch-fetch cached sector classifications for multiple holdings.
+ * Returns a map of sectorCacheKey(name, assetType) → sector for cache hits
+ * whose stored asset_type matches the requested one. Stale entries
+ * (>15 days) are excluded.
  *
- * Holding names are URL-encoded for the PostgREST query to handle
- * special characters (commas, parentheses, etc.) in EDGAR holding names.
+ * The query filters by name only (PostgREST can't filter on tuples) and
+ * matches asset_type client-side from the returned rows.
  */
 export async function getSectorClassifications(
-  holdingNames: string[]
+  entries: Array<{ holdingName: string; assetType: SectorAssetType }>
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>();
-  if (!holdingNames || holdingNames.length === 0) return result;
+  if (!entries || entries.length === 0) return result;
+
+  // The requested (name, assetType) pairs, for client-side matching
+  const requested = new Set(entries.map(e => sectorCacheKey(e.holdingName, e.assetType)));
+  const uniqueNames = [...new Set(entries.map(e => e.holdingName))];
 
   // Batch in groups of 50 to keep URL lengths manageable
   // (holding names can be long and contain special chars)
-  for (let i = 0; i < holdingNames.length; i += 50) {
-    const batch = holdingNames.slice(i, i + 50);
+  for (let i = 0; i < uniqueNames.length; i += 50) {
+    const batch = uniqueNames.slice(i, i + 50);
     const { data, error } = await supaFetch<Array<{
       holding_name: string;
       sector: string;
+      asset_type: SectorAssetType;
       cached_at: string;
     }>>('sector_classifications', {
       params: {
@@ -273,7 +290,10 @@ export async function getSectorClassifications(
 
     for (const row of data) {
       if (isStale(row.cached_at, 15)) continue;
-      result.set(row.holding_name, row.sector);
+      const key = sectorCacheKey(row.holding_name, row.asset_type);
+      if (requested.has(key)) {
+        result.set(key, row.sector);
+      }
     }
   }
 
@@ -285,13 +305,14 @@ export async function getSectorClassifications(
  * Inserts in groups of 50 to avoid PostgREST payload limits.
  */
 export async function saveSectorClassifications(
-  classifications: Array<{ holdingName: string; sector: string }>
+  classifications: Array<{ holdingName: string; assetType: SectorAssetType; sector: string }>
 ): Promise<void> {
   if (!classifications || classifications.length === 0) return;
 
   const now = new Date().toISOString();
   const rows = classifications.map(c => ({
     holding_name: c.holdingName,
+    asset_type: c.assetType,
     sector: c.sector,
     cached_at: now,
   }));

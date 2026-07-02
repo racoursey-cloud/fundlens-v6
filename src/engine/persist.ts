@@ -19,6 +19,7 @@
 import { supaFetch, supaInsert, supaUpdate, supaDelete } from './supabase.js';
 import { computeCompositeFromZScores } from './scoring.js';
 import { DEFAULT_FACTOR_WEIGHTS } from './constants.js';
+import { alertDossierGateFailures } from './admin-alert.js';
 import type { FundRow, FundScoresRow } from './types.js';
 import type { PipelineResult } from './pipeline.js';
 import type { FundSummaryMap } from './fund-summaries.js';
@@ -255,6 +256,54 @@ export async function persistPipelineResults(
       holdingsWritten += rows.length;
     } else {
       errors.push(`Holdings ${ticker}: batch upsert failed — ${error}`);
+    }
+  }
+
+  // ── 3b. Persist per-fund Dossiers (A3 Task 4) ─────────────────────────
+  // One row per fund per run: data-quality state graded against the
+  // ratified 90/95 thresholds. Gate failures email Robert (one summary
+  // email per run, 24h-suppressed inside admin-alert).
+
+  if (result.dossiers && result.dossiers.length > 0) {
+    const dossierRows = result.dossiers
+      .map(d => {
+        const fund = funds.find(f => f.ticker === d.ticker);
+        if (!fund) return null;
+        return {
+          fund_id: fund.id,
+          pipeline_run_id: runId,
+          version: d.version,
+          accession_number: d.accessionNumber,
+          report_date: d.reportDate,
+          nav_resolved_pct: d.navResolvedPct,
+          classified_pct: d.classifiedPct,
+          weight_covered_pct: d.weightCoveredPct,
+          holdings_included: d.holdingsIncluded,
+          holdings_total: d.holdingsTotal,
+          lookthrough_detected: d.lookthroughDetected,
+          lookthrough_subfunds: d.lookthroughSubfunds,
+          fallback_count: d.fallbackCount,
+          coverage_scaling_applied: d.coverageScalingApplied,
+          quality_coverage_pct: d.qualityCoveragePct,
+          is_money_market: d.isMoneyMarket,
+          passes_gate: d.passesGate,
+          fail_reasons: d.failReasons,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    const { error: dossierError } = await supaInsert('fund_dossiers', dossierRows);
+    if (dossierError) {
+      errors.push(`Dossiers: failed to save — ${dossierError}`);
+    } else {
+      console.log(`[persist] Saved ${dossierRows.length} fund Dossiers`);
+    }
+
+    const gateFailures = result.dossiers
+      .filter(d => !d.passesGate)
+      .map(d => ({ ticker: d.ticker, reasons: d.failReasons }));
+    if (gateFailures.length > 0) {
+      alertDossierGateFailures(runId, gateFailures).catch(() => {});
     }
   }
 

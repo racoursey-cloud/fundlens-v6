@@ -29,6 +29,7 @@ import {
   alertPipelineErrors,
   alertBriefFailures,
   alertStaleRun,
+  sendAdminAlert,
 } from './admin-alert.js';
 import type { FundRow, PipelineRunRow } from './types.js';
 
@@ -224,6 +225,43 @@ async function cleanupStaleRuns(): Promise<void> {
   }
 }
 
+// ─── Orphaned Run Detection (A3 Task 6b, Principle 1) ──────────────────────
+
+/**
+ * At server startup, any pipeline run still in 'running' status is by
+ * definition dead — this is a single-server deployment, so a run cannot
+ * survive a restart. Previously a Railway deploy mid-run killed the run
+ * silently and it sat "running" until the 30-minute stale cleanup
+ * (observed July 2). A killed run should be loudly dead: mark it failed
+ * immediately and email Robert.
+ */
+async function failOrphanedRuns(): Promise<void> {
+  const { data: orphans } = await supaSelect<PipelineRunRow[]>('pipeline_runs', {
+    status: 'eq.running',
+  });
+
+  if (!orphans || orphans.length === 0) return;
+
+  for (const run of orphans) {
+    console.warn(
+      `[cron] Orphaned pipeline run ${run.id} (started ${run.started_at}) found at startup — marking failed`
+    );
+    await supaUpdate('pipeline_runs', {
+      status: 'failed',
+      error_message: 'Server restarted mid-run (deploy or crash) — marked failed at startup',
+      completed_at: new Date().toISOString(),
+    }, { id: `eq.${run.id}` });
+
+    sendAdminAlert(
+      'Pipeline run killed by server restart',
+      `Pipeline run <strong>${run.id}</strong> (started ${run.started_at}) was still ` +
+      `"running" when the server booted — a deploy or crash killed it mid-run. ` +
+      `It has been marked failed. You can retry it from the Pipeline tab, or ` +
+      `simply run the pipeline again.`
+    ).catch(() => {});
+  }
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────
 
 /**
@@ -286,9 +324,12 @@ export function startCronJobs(): void {
 
   console.log('[cron] Stale run cleanup scheduled: every 30 minutes');
 
-  // Run stale cleanup once at startup (in case server restarted mid-pipeline)
-  cleanupStaleRuns().catch(err => {
-    console.error('[cron] Initial stale run cleanup error:', err);
+  // A3 Task 6b: at startup, fail ANY run still marked 'running' — a run
+  // cannot survive a server restart, so it is dead regardless of age.
+  // (Replaces the old startup cleanupStaleRuns() call, which only caught
+  // runs older than 15 minutes and did so silently.)
+  failOrphanedRuns().catch(err => {
+    console.error('[cron] Orphaned run cleanup error:', err);
   });
 }
 
