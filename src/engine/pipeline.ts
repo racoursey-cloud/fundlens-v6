@@ -31,7 +31,9 @@
  */
 
 import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS, MM_SCORING, MM_FUND_DATA } from './constants.js';
-import { delay, ResolvedHolding, FundRow, NmfpFundData } from './types.js';
+import { delay, ResolvedHolding, FundRow, NmfpFundData, HoldingsPipelineResult } from './types.js';
+import { computeDossier } from './dossier.js';
+import type { FundDossier, DossierInput } from './dossier.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics } from './fmp.js';
@@ -94,6 +96,8 @@ export interface PipelineResult {
   fundDetails: Map<string, FundPipelineDetail>;
   /** Pipeline execution stats */
   stats: PipelineStats;
+  /** Per-fund data-quality Dossiers graded against the 90/95 gate (A3 Task 4) */
+  dossiers: FundDossier[];
 }
 
 /** Detailed pipeline data for a single fund */
@@ -164,12 +168,16 @@ export async function runFullPipeline(
 
   const openFigiKey = process.env.OPENFIGI_API_KEY || '';
   const fundHoldings = new Map<string, ResolvedHolding[]>();
+  // A3 Task 4: retain each fund's full holdings-pipeline result (coverage
+  // stats, filing identity, fund-of-funds status) for the Dossier.
+  const fundMeta = new Map<string, HoldingsPipelineResult>();
 
   for (const fund of scorableFunds) {
     try {
       const result = await runHoldingsPipeline(fund.ticker, openFigiKey);
       if (result.success && result.data) {
         fundHoldings.set(fund.ticker, result.data.holdings);
+        fundMeta.set(fund.ticker, result.data);
       } else {
         errors.push({ fund: fund.ticker, step: 'holdings', error: result.error || 'Unknown' });
       }
@@ -371,9 +379,12 @@ export async function runFullPipeline(
   //   3. Everything else → "Other" (last resort, prevents Unclassified gravity)
   let finalPassClassified = 0;
   let finalPassOther = 0;
+  // A3 Task 4: weight labeled 'Other' by the LAST-RESORT rule (Rule 4) counts
+  // as unclassified in the Dossier — track it per fund.
+  const lastResortWeights = new Map<string, number>();
   // A3 Task 1: these rules reuse the module-level metadata sets shared with
   // deriveAssetType (previously duplicated locally here).
-  for (const [, holdings] of fundHoldings) {
+  for (const [fundTicker, holdings] of fundHoldings) {
     for (const h of holdings) {
       if (h.sector) continue; // Already classified
 
@@ -424,6 +435,8 @@ export async function runFullPipeline(
       // Rule 4: Last resort — assign "Other" to prevent Unclassified gravity toward 50
       h.sector = 'Other';
       finalPassOther++;
+      // A3 Task 4: last-resort weight counts as unclassified in the Dossier
+      lastResortWeights.set(fundTicker, (lastResortWeights.get(fundTicker) || 0) + h.pctOfNav);
     }
   }
   if (finalPassClassified > 0 || finalPassOther > 0) {
@@ -1031,6 +1044,41 @@ export async function runFullPipeline(
 
   console.log(`[pipeline] Scoring complete: ${scoring.funds.length} funds ranked`);
 
+  // ── A3 Task 4: compute per-fund Dossiers and flag gate failures ──────────
+  const fallbackByTicker = new Map(fundScoreInputs.map(i => [i.ticker, i.fallbackCount]));
+  const dossiers: FundDossier[] = funds.map(fund => {
+    const isMM = MONEY_MARKET_TICKERS.has(fund.ticker);
+    const meta = fundMeta.get(fund.ticker);
+    const quality = qualityResults.get(fund.ticker);
+    const input: DossierInput = {
+      ticker: fund.ticker,
+      isMoneyMarket: isMM,
+      holdings: fundHoldings.get(fund.ticker) || [],
+      holdingsTotal: meta?.coverage.holdingsTotal ?? 0,
+      weightCoveredPct: meta?.coverage.weightCovered ?? 0,
+      accessionNumber: meta?.filingMeta.accessionNumber ?? null,
+      reportDate: meta?.filingMeta.reportDate ?? null,
+      lookthroughDetected: meta?.fundOfFunds.detected ?? false,
+      lookthroughSubfunds: meta?.fundOfFunds.subFundNames.length ?? 0,
+      lastResortWeightPct: lastResortWeights.get(fund.ticker) ?? 0,
+      fallbackCount: fallbackByTicker.get(fund.ticker) ?? 0,
+      coverageScalingApplied: perFundWeights.has(fund.ticker),
+      qualityCoveragePct: (quality?.coveragePct ?? 0) * 100,
+      holdingsAvailable: isMM || fundHoldings.has(fund.ticker),
+    };
+    return computeDossier(input);
+  });
+
+  const gateFailures = dossiers.filter(d => !d.passesGate);
+  if (gateFailures.length > 0) {
+    console.warn(
+      `[pipeline] Dossier gate: ${gateFailures.length}/${dossiers.length} funds below the 90/95 thresholds — ` +
+      gateFailures.map(d => `${d.ticker} (${d.failReasons.join('; ')})`).join(' · ')
+    );
+  } else {
+    console.log(`[pipeline] Dossier gate: all ${dossiers.length} funds pass (90/95 thresholds)`);
+  }
+
   // ── Step 14: Scores computed — pipeline returns to routes.ts ──
   // Steps 15-16 (fund summaries + DB persist) happen in routes.ts
   progress(14, 'Scores computed');
@@ -1060,5 +1108,5 @@ export async function runFullPipeline(
     `${totalHoldingsScored} holdings, ${errors.length} errors`
   );
 
-  return { scoring, thesis, fundDetails, stats };
+  return { scoring, thesis, fundDetails, stats, dossiers };
 }
