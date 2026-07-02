@@ -17,8 +17,10 @@ import { Resend } from 'resend';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-/** Admin email recipients for operational alerts */
-const ADMIN_EMAILS = ['rcoursey@gmail.com'];
+/** Admin email recipients for operational alerts.
+ *  A2 Task 3: corrected from 'rcoursey@gmail.com' (typo — not Robert's address);
+ *  alerts sent before this fix never reached him. */
+const ADMIN_EMAILS = ['racoursey@gmail.com'];
 
 /** Sender address for alert emails */
 const FROM_ADDRESS = 'FundLens Ops <alerts@fundlens.app>';
@@ -127,6 +129,94 @@ export async function alertBriefFailures(
     `Brief delivery: ${errors.length} failure${errors.length === 1 ? '' : 's'}`,
     `Brief delivery run: ${sent}/${totalEligible} sent successfully, ` +
     `${errors.length} failed.\n\n${errorList}${suffix}`
+  );
+}
+
+// ─── Claude API Failure Alerts (A2 Task 3, Founding Principle 1) ───────────
+// A Claude API error in Brief generation, Help chat, or sector classification
+// must reach Robert as an email — silent gaps are worse than visible failures.
+// Rate-limited: at most ONE alert per (feature, error type) per 24 hours, so a
+// recurring nightly failure produces one email, not 193.
+//
+// The rate-limit memory is in-process. A server restart resets it, which at
+// worst means one extra email — acceptable for an alerting path.
+
+/** How long to suppress repeat alerts for the same feature + error type */
+const ALERT_SUPPRESS_MS = 24 * 60 * 60 * 1000;
+
+/** Last-sent timestamp per "feature:errorType" key */
+const lastAlertSentAt = new Map<string, number>();
+
+/**
+ * Classify a Claude API error message into a coarse error type, and pick a
+ * one-line plain-English hint for the alert email.
+ */
+function classifyClaudeError(errorMessage: string): { errorType: string; hint: string } {
+  const lower = errorMessage.toLowerCase();
+
+  if (lower.includes('credit balance')) {
+    return {
+      errorType: 'credit-balance',
+      hint: 'Credit balance errors are fixed at console.anthropic.com → Billing (add credits).',
+    };
+  }
+  if (lower.includes('rate limit') || lower.includes('429')) {
+    return {
+      errorType: 'rate-limit',
+      hint: 'Rate limit errors usually pass on their own; if they persist, check usage at console.anthropic.com.',
+    };
+  }
+  if (lower.includes('authentication') || lower.includes('invalid x-api-key') || lower.includes('401')) {
+    return {
+      errorType: 'auth',
+      hint: 'Authentication errors mean the API key is wrong or revoked — check the key at console.anthropic.com and the Railway variables.',
+    };
+  }
+  if (lower.includes('overloaded') || lower.includes('529')) {
+    return {
+      errorType: 'overloaded',
+      hint: 'The Claude API is temporarily overloaded on Anthropic’s side; this usually resolves within minutes.',
+    };
+  }
+  return {
+    errorType: 'other',
+    hint: 'Unrecognized error — check the Railway logs around this timestamp for context.',
+  };
+}
+
+/**
+ * Alert: a Claude API call failed in an engine feature.
+ *
+ * Fire-and-forget and rate-limited (one email per feature + error type per
+ * 24 hours). Safe to call from any catch block without wrapping.
+ *
+ * @param feature - Which feature failed (e.g. "Brief generation", "Help chat", "Sector classification")
+ * @param errorMessage - The API error message, verbatim
+ */
+export async function alertClaudeApiFailure(
+  feature: string,
+  errorMessage: string
+): Promise<void> {
+  const { errorType, hint } = classifyClaudeError(errorMessage);
+
+  const key = `${feature}:${errorType}`;
+  const now = Date.now();
+  const lastSent = lastAlertSentAt.get(key);
+
+  if (lastSent !== undefined && now - lastSent < ALERT_SUPPRESS_MS) {
+    console.log(`[admin-alert] Suppressing repeat Claude API alert (${key}) — last sent ${Math.round((now - lastSent) / 60000)}m ago`);
+    return;
+  }
+
+  lastAlertSentAt.set(key, now);
+
+  await sendAdminAlert(
+    `Claude API failure — ${feature}`,
+    `A Claude API call failed in <strong>${escapeHtml(feature)}</strong>.\n\n` +
+    `<strong>Error (verbatim):</strong>\n<code>${escapeHtml(errorMessage)}</code>\n\n` +
+    `<strong>Hint:</strong> ${escapeHtml(hint)}\n\n` +
+    `Repeat failures of this type are suppressed for 24 hours — ` +
+    `you will get at most one email per feature per error type per day.`
   );
 }
 
