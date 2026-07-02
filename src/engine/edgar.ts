@@ -654,7 +654,10 @@ function parseHoldingElement(
   const valUsdStr = getTextValue(item, 'valUSD');
   const valueUsd = valUsdStr ? parseFloat(valUsdStr) : 0;
 
-  // Percentage of NAV (reported as decimal, e.g. 0.07 = 7%)
+  // Percentage of NAV. NPORT-P reports pctVal in whole-percent units
+  // (e.g. 4.89 = 4.89% of net assets), NOT as a decimal fraction.
+  // This comment previously claimed decimal — the source of the ×100
+  // display inflation fixed in A2 Task 4. Stored as-is, whole percents.
   const pctValStr = getTextValue(item, 'pctVal');
   const pctOfNav = pctValStr ? parseFloat(pctValStr) : 0;
 
