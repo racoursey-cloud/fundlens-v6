@@ -229,6 +229,39 @@ export const fetchThesis = () =>
 export const fetchSystemHealth = () =>
   apiFetch<{ status: string; issues: string[] }>('/api/monitor/health');
 
+// Fund Dossiers — per-fund data-quality records (A3 Task 5)
+export interface FundDossierRow {
+  id: string;
+  fund_id: string;
+  pipeline_run_id: string;
+  version: number;
+  accession_number: string | null;
+  report_date: string | null;
+  /** Whole-percent values (e.g. 92.5 = 92.5%) */
+  nav_resolved_pct: number;
+  classified_pct: number;
+  weight_covered_pct: number;
+  holdings_included: number;
+  holdings_total: number;
+  lookthrough_detected: boolean;
+  lookthrough_subfunds: number;
+  fallback_count: number;
+  coverage_scaling_applied: boolean;
+  quality_coverage_pct: number;
+  is_money_market: boolean;
+  passes_gate: boolean;
+  fail_reasons: string[];
+  created_at: string;
+  funds?: { ticker: string; name: string };
+}
+
+export const fetchLatestDossiers = () =>
+  apiFetch<{
+    dossiers: FundDossierRow[];
+    runId: string | null;
+    completedAt: string | null;
+  }>('/api/dossiers/latest');
+
 // Help Agent
 export interface HelpMessage {
   role: 'user' | 'assistant';
