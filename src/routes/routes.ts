@@ -554,19 +554,22 @@ router.post('/api/pipeline/run', requireAuth, requireAdmin, pipelineRateLimit, a
   });
 
   if (running) {
-    // Check if this is a stale run from a previous container
-    const startedAt = new Date(running.started_at).getTime();
-    const ageMinutes = (Date.now() - startedAt) / 60000;
+    const ageMinutes = (Date.now() - new Date(running.started_at).getTime()) / 60000;
     console.warn(`[routes] Pipeline blocked: existing run ${running.id} started ${ageMinutes.toFixed(0)}m ago`);
 
-    // A5 Task 1: stale threshold raised 15 → 120 minutes to match cron.ts —
-    // full-examination runs legitimately exceed 15 minutes (first run
-    // forecast 60–100 min; weekly FMP-refresh nights run long too).
-    if (ageMinutes > 120) {
-      console.warn(`[routes] Stale run detected (${ageMinutes.toFixed(0)}m old) — marking failed`);
+    // v8 A0 (Gap 5): THE shared liveness rule from monitor.ts — no heartbeat
+    // for 10+ minutes (started_at fallback for pre-migration rows), or past
+    // the 6-hour ceiling. Replaces this file's own copy of the old
+    // 120-minute wall clock; cron.ts imports the same rule.
+    const { runIsStale } = await import('../engine/monitor.js');
+    if (runIsStale(running)) {
+      console.warn(
+        `[routes] Stale run detected (started ${running.started_at}, ` +
+        `last heartbeat ${running.heartbeat_at ?? 'none recorded'}) — marking failed`
+      );
       await supaUpdate('pipeline_runs', {
         status: 'failed',
-        error_message: 'Stale run — server restarted during execution',
+        error_message: 'Marked as failed by stale-run check — no heartbeat for 10+ minutes, or past the 6-hour ceiling',
         completed_at: new Date().toISOString(),
       }, { id: `eq.${running.id}` });
     } else {
@@ -622,6 +625,10 @@ async function runPipelineAsync(runId: string): Promise<void> {
   // Import dynamically to avoid circular dependencies
   const { persistPipelineResults } = await import('../engine/persist.js');
   const { runFullPipeline } = await import('../engine/pipeline.js');
+  // v8 A0 (Gap 5): heartbeat for the web-trigger path — one of the three
+  // runner sites (cron.ts nightly and monitor.ts retry are the others)
+  const { startRunHeartbeat } = await import('../engine/monitor.js');
+  const stopHeartbeat = startRunHeartbeat(runId);
 
   try {
     // Get active funds
@@ -704,6 +711,8 @@ async function runPipelineAsync(runId: string): Promise<void> {
 
     // Clean up after a delay so the client has time to poll the error
     setTimeout(() => activePipelineSteps.delete(runId), 10000);
+  } finally {
+    stopHeartbeat();
   }
 }
 
@@ -1112,6 +1121,18 @@ router.post('/api/benchmark/classification', requireAuth, requireAdmin, async (r
   res.status(202).json({
     message: 'Benchmark started — the report will arrive by email in a few minutes.',
   });
+});
+
+/**
+ * GET /api/benchmark/status
+ * v8 A0 (Gap 4): admin-only benchmark visibility — running state and the
+ * last run's outcome (finished when, success/failed, summary, whether the
+ * report email actually sent). The harness stays: v8 A3's Sonnet 5
+ * acceptance gate reuses it, so this endpoint is not temporary.
+ */
+router.get('/api/benchmark/status', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  const { getBenchmarkStatus } = await import('../engine/benchmark.js');
+  res.json(getBenchmarkStatus());
 });
 
 /**

@@ -332,6 +332,11 @@ export interface PipelineRunRow {
   /** JSON array of { fund, step, error } for detailed debugging */
   errors: Array<{ fund: string; step: string; error: string }>;
   created_at: string;
+  /** v8 A0 (Gap 5): last sign of life — stamped ~every 60s by the running
+   *  process (monitor.ts startRunHeartbeat). Optional: null/absent on rows
+   *  from before the v8_a0_pipeline_runs_heartbeat migration; the liveness
+   *  check falls back to started_at. */
+  heartbeat_at?: string | null;
 }
 
 // ─── Scoring Types (Full — Session 3) ───────────────────────────────────────

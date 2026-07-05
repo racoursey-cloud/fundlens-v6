@@ -23,6 +23,7 @@
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
 import { runFullPipeline } from './pipeline.js';
 import { persistPipelineResults } from './persist.js';
+import { getAlertEmailStatus, type AlertEmailStatus } from './admin-alert.js';
 import type { FundRow, PipelineRunRow, FundScoresRow, ThesisCacheRow } from './types.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -35,6 +36,64 @@ const MAX_RETRIES = 2;
 
 /** Delay before retrying a failed pipeline (5 minutes) */
 const RETRY_DELAY_MS = 5 * 60 * 1000;
+
+// ─── v8 A0 (Gap 5): run liveness — heartbeat, one shared staleness rule ────
+// The old rule ("started more than 120 minutes ago") lived in two places
+// (cron.ts and routes.ts) and judged death by total elapsed time — slow to
+// catch a real crash (up to 2h) and destined to false-kill legitimately
+// long runs as the universe grows. Liveness is now a heartbeat: the running
+// process stamps heartbeat_at every ~60s (timer-based, deliberately NOT
+// tied to pipeline progress events — some steps run tens of minutes between
+// progress calls, verified on the July 5 full-examination run). Both former
+// call sites import runIsStale below; there is exactly one definition of
+// "stale". Numbers ratified by Robert, July 5, 2026.
+
+/** How often a live run stamps heartbeat_at */
+const HEARTBEAT_WRITE_MS = 60 * 1000;
+
+/** No heartbeat for this long ⇒ the run's process is dead */
+const RUN_SILENCE_STALE_MS = 10 * 60 * 1000;
+
+/** Absolute runtime ceiling — the backstop for a process that is alive but
+ *  hung forever (a heartbeat can't distinguish "working" from "stuck") */
+const RUN_HARD_CEILING_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Start stamping heartbeat_at on a pipeline run's row every ~60s.
+ * Returns the stop function — call it in a finally block when the run ends.
+ * Write failures are logged but never interrupt the pipeline; the liveness
+ * check's started_at fallback covers a run whose stamps never land.
+ */
+export function startRunHeartbeat(runId: string): () => void {
+  const beat = () => {
+    supaUpdate('pipeline_runs', { heartbeat_at: new Date().toISOString() }, { id: `eq.${runId}` })
+      .then(r => {
+        if (r.error) console.warn(`[monitor] Heartbeat write failed for run ${runId}: ${r.error}`);
+      })
+      .catch(err => {
+        console.warn(`[monitor] Heartbeat write failed for run ${runId}: ${err}`);
+      });
+  };
+  beat(); // first stamp immediately — a fresh run is alive by definition
+  const timer = setInterval(beat, HEARTBEAT_WRITE_MS);
+  timer.unref?.(); // never keep the process alive just to heartbeat
+  return () => clearInterval(timer);
+}
+
+/**
+ * THE shared liveness rule (imported by cron.ts and routes.ts — never
+ * duplicated): a 'running' row is stale when its last sign of life
+ * (heartbeat_at; started_at for pre-migration rows or if stamps never
+ * landed) is older than 10 minutes, or total runtime exceeds the 6-hour
+ * hard ceiling.
+ */
+export function runIsStale(run: PipelineRunRow, nowMs: number = Date.now()): boolean {
+  if (run.status !== 'running') return false;
+  const startedMs = new Date(run.started_at).getTime();
+  if (nowMs - startedMs > RUN_HARD_CEILING_MS) return true;
+  const lastSignMs = run.heartbeat_at ? new Date(run.heartbeat_at).getTime() : startedMs;
+  return nowMs - lastSignMs > RUN_SILENCE_STALE_MS;
+}
 
 // ─── Health Assessment ─────────────────────────────────────────────────────
 
@@ -138,9 +197,28 @@ export async function getSystemHealth(): Promise<SystemHealthReport> {
     issues.push('No macro thesis generated yet');
   }
 
+  // ── v8 A0 (Gap 1): alert-email path status ────────────────────────────
+  // Config presence + the outcome of the last real send (no live Resend
+  // call — the last actual send is genuine deliverability evidence, and
+  // it's free). A disconnected or failing alarm bell degrades health; it
+  // never upgrades an already-unhealthy status.
+  const alertEmail = getAlertEmailStatus();
+  if (!alertEmail.configured) {
+    issues.push('Alert emails are not configured (RESEND_API_KEY missing) — failures cannot reach Robert by email');
+    if (status === 'healthy') status = 'degraded';
+  } else if (alertEmail.lastSendOk === false) {
+    issues.push(
+      `The last alert email failed to send` +
+      (alertEmail.lastFailedSubject ? ` (subject: "${alertEmail.lastFailedSubject}")` : '') +
+      ` — check the Resend dashboard and Railway logs`
+    );
+    if (status === 'healthy') status = 'degraded';
+  }
+
   return {
     status,
     issues,
+    alertEmail,
     latestRun: latestRun ? {
       id: latestRun.id,
       status: latestRun.status,
@@ -364,6 +442,9 @@ export async function retryPipelineRun(
  * Used by both the retry function and could be used by other callers.
  */
 async function runPipelineInBackground(runId: string): Promise<void> {
+  // v8 A0 (Gap 5): heartbeat for the retry path — one of the three runner
+  // sites (routes.ts trigger and cron.ts nightly are the others)
+  const stopHeartbeat = startRunHeartbeat(runId);
   try {
     const { data: funds } = await supaSelect<FundRow[]>('funds', {
       is_active: 'eq.true',
@@ -391,6 +472,8 @@ async function runPipelineInBackground(runId: string): Promise<void> {
       error_message: msg,
       completed_at: new Date().toISOString(),
     }, { id: `eq.${runId}` });
+  } finally {
+    stopHeartbeat();
   }
 }
 
@@ -434,6 +517,8 @@ export interface SystemHealthReport {
   status: 'healthy' | 'degraded' | 'unhealthy';
   /** Human-readable issues */
   issues: string[];
+  /** v8 A0 (Gap 1): alert-email path — config presence + last send outcome */
+  alertEmail: AlertEmailStatus;
   /** Latest pipeline run summary */
   latestRun: {
     id: string;

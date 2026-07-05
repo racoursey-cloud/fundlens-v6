@@ -30,25 +30,71 @@ const ADMIN_EMAILS = ['racoursey@gmail.com'];
  *  every alert email until July 5. */
 const FROM_ADDRESS = 'FundLens Ops <alerts@updates.fundlens.app>';
 
+// ─── v8 A0 (Gap 1): send-outcome record for the health report ───────────────
+// In-process memory of the most recent send attempt, surfaced by
+// getAlertEmailStatus() into /api/monitor/health so a disconnected alarm
+// bell degrades the health light instead of hiding (July 5 lesson above:
+// an unverified sender silently killed every alert for weeks). Resets on
+// restart — same precedent as the 24-hour suppression memory below.
+
+export interface AlertEmailStatus {
+  /** Is RESEND_API_KEY present in the environment? */
+  configured: boolean;
+  /** When the last send was attempted (ISO), null if none this process */
+  lastSendAt: string | null;
+  /** Did the last attempted send succeed? null if none this process */
+  lastSendOk: boolean | null;
+  /** Subject of the most recent FAILED send, for the health issue line */
+  lastFailedSubject: string | null;
+}
+
+let lastSendAt: string | null = null;
+let lastSendOk: boolean | null = null;
+let lastFailedSubject: string | null = null;
+
+/** Current alert-email path status (config presence + last real outcome). */
+export function getAlertEmailStatus(): AlertEmailStatus {
+  return {
+    configured: Boolean(process.env.RESEND_API_KEY),
+    lastSendAt,
+    lastSendOk,
+    lastFailedSubject,
+  };
+}
+
+function recordSendOutcome(subject: string, ok: boolean): void {
+  lastSendAt = new Date().toISOString();
+  lastSendOk = ok;
+  if (!ok) lastFailedSubject = subject;
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
  * Send an operational alert email to all admins.
  *
- * Fire-and-forget: errors are logged but never thrown.
- * Safe to call from catch blocks without try/catch wrapping.
+ * Never throws — safe to call from catch blocks without try/catch wrapping.
+ * v8 A0 (Gap 2): returns TRUE only when Resend actually accepted the email
+ * (an ID came back), FALSE on every failure path, so callers can gate their
+ * own success logs on reality instead of assuming (Principle 1). Existing
+ * fire-and-forget callers may ignore the return value unchanged.
+ *
+ * v8 A0 (Gap 3): every failure log names the subject of the alert that was
+ * lost, exactly as the success log always has.
  *
  * @param subject - Email subject line (keep it short and scannable)
  * @param body - Plain text or simple HTML body describing the issue
+ * @returns true if Resend accepted the email; false otherwise
  */
 export async function sendAdminAlert(
   subject: string,
   body: string
-): Promise<void> {
+): Promise<boolean> {
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) {
-    console.warn('[admin-alert] RESEND_API_KEY not configured — skipping alert email');
-    return;
+    console.warn(`[admin-alert] RESEND_API_KEY not configured — skipping alert email: "${subject}"`);
+    recordSendOutcome(subject, false);
+    return false;
   }
 
   try {
@@ -64,14 +110,19 @@ export async function sendAdminAlert(
     });
 
     if (result.error) {
-      console.error(`[admin-alert] Resend error: ${result.error.message}`);
-      return;
+      console.error(`[admin-alert] Resend error for "${subject}": ${result.error.message}`);
+      recordSendOutcome(subject, false);
+      return false;
     }
 
     console.log(`[admin-alert] Alert sent: "${subject}" (Resend ID: ${result.data?.id})`);
+    recordSendOutcome(subject, true);
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[admin-alert] Failed to send alert: ${msg}`);
+    console.error(`[admin-alert] Failed to send alert "${subject}": ${msg}`);
+    recordSendOutcome(subject, false);
+    return false;
   }
 }
 
