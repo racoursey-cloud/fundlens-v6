@@ -276,6 +276,11 @@ export const fetchLatestDossiers = () =>
     completedAt: string | null;
   }>('/api/dossiers/latest');
 
+// A5 Task 7 (temporary): admin-only classification benchmark trigger.
+// The report arrives by admin email; this just kicks it off.
+export const runClassificationBenchmark = () =>
+  apiFetch<{ message: string }>('/api/benchmark/classification', { method: 'POST' });
+
 // Help Agent
 export interface HelpMessage {
   role: 'user' | 'assistant';
