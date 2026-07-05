@@ -51,17 +51,30 @@ function tierRank(tier: ListingTier): number {
 
 /**
  * OpenFIGI exchCode values for the NYSE/Nasdaq venue family plus the 'US'
- * composite. Other short U-prefixed codes are treated as US-market but
- * OTC-tier; PQ/PK are OTC Markets codes.
- *
- * NOTE (A4 Task 1): this set could not be verified against live OpenFIGI
- * responses during implementation (network policy blocks the API from the
- * build environment). Any resolved symbol whose exchCode falls outside all
- * known sets is logged loudly below so the first production run confirms
- * or corrects the mapping.
+ * composite. UC/UX/UM/UD/UF/UB/UT cataloged from the first production run
+ * (July 5, 2026 — Robert's verification pass: HII and BALL are NYSE and
+ * were mis-tiering to 'otc' under the pre-catalog default). Remaining
+ * uncataloged U-prefixed codes still default to 'otc' (US-market, still
+ * FMP-servable) with a once-per-code log line.
  */
-const FIGI_US_MAJOR_EXCH = new Set(['US', 'UN', 'UW', 'UQ', 'UR', 'UA', 'UP']);
+const FIGI_US_MAJOR_EXCH = new Set([
+  'US', 'UN', 'UW', 'UQ', 'UR', 'UA', 'UP',
+  'UC', 'UX', 'UM', 'UD', 'UF', 'UB', 'UT',
+]);
 const FIGI_OTC_EXCH = new Set(['PQ', 'PK', 'UV']);
+
+/** A4 first-run fix: the tier-note verification logging produced 1,805
+ *  lines on July 5's run (one per holding). Log once per exchange code per
+ *  process instead — the note exists to surface NEW codes, not volume. */
+const tierNotesLogged = new Set<string>();
+function logTierNoteOnce(kind: string, exchCode: string, ticker: string | null): void {
+  const key = `${kind}:${exchCode}`;
+  if (tierNotesLogged.has(key)) return;
+  tierNotesLogged.add(key);
+  console.log(
+    `[cusip] Listing-tier note (once per code): ${kind} exchCode "${exchCode}" (first seen: ${ticker || 'unknown'}) → tier 'otc'`
+  );
+}
 
 /** Derive the listing tier of an OpenFIGI result. */
 function figiTier(d: FigiResult): ListingTier {
@@ -71,13 +84,13 @@ function figiTier(d: FigiResult): ListingTier {
   // U-prefixed 1–2 char codes are US venues we haven't cataloged: treat as
   // US-market but OTC-tier (still FMP-servable), and log for verification.
   if (/^U[A-Z]?$/.test(ex)) {
-    console.log(`[cusip] Listing-tier note: uncataloged US-family exchCode "${ex}" (ticker ${d.ticker}) → tier 'otc'`);
+    logTierNoteOnce('uncataloged US-family', ex, d.ticker);
     return 'otc';
   }
   // An ADR trades in the US by definition, whatever venue code it carries.
   const secType = `${d.securityType || ''} ${d.securityType2 || ''}`.toUpperCase();
   if (secType.includes('ADR')) {
-    console.log(`[cusip] Listing-tier note: ADR with non-US exchCode "${ex}" (ticker ${d.ticker}) → tier 'otc'`);
+    logTierNoteOnce('ADR with non-US', ex, d.ticker);
     return 'otc';
   }
   return 'home';
