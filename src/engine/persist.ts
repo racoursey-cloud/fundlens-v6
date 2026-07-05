@@ -126,7 +126,7 @@ export async function persistPipelineResults(
     return {
       /** Line 1: % of the fund's value whose securities are identity-verified */
       identifiedPct: d.navResolvedPct,
-      /** Line 2: classification provenance — filed data vs model-assessed */
+      /** Line 2: classification provenance — filed data vs estimated (Decision 2 vocabulary) */
       filedClassifiedPct: d.confFullyVerifiedPct,
       modelClassifiedPct: d.confModelClassifiedPct,
       /** Fund detail: the full four-rung ladder (% of positive NAV) */
