@@ -185,9 +185,9 @@ Magic-link sign-in (`client/src/auth.ts → signInWithOtp`) **creates a brand-ne
 
 Commits: migration (1), routes.ts (1), api.ts type (1), AppShell.tsx (1), App.tsx or Pipeline.tsx gating (1), auth.ts (1), Login.tsx (1).
 
-## Ghost-residue verification (paste-ready — also in the session report)
+## Ghost-residue verification — VERIFIED CLEAN 2026-07-05
 
-Run in Supabase SQL Editor; every count should be 0:
+**Robert ran the query below in the Supabase SQL Editor on 2026-07-05; all six counts returned 0** (auth.users, user_profiles, orphan profiles, orphan briefs, orphan deliveries, orphan allocations). The ghost account `rcoursey@gmail.com` left no residue anywhere. This satisfies the "ghost-account residue zero" clause of A5 acceptance criterion 3; the query is kept here as the evidence of record:
 
 ```sql
 SELECT 'auth.users' AS place, count(*) FROM auth.users WHERE email = 'rcoursey@gmail.com'
