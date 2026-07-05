@@ -142,6 +142,10 @@ export interface ResolvedHolding {
   name: string;
   /** CUSIP from EDGAR */
   cusip: string;
+  /** ISIN from EDGAR (A4 first-run fix: carried so persist can key
+   *  placeholder-CUSIP rows by ISIN — distinct bond maturities sharing an
+   *  issuer name must never collapse) */
+  isin?: string | null;
   /** Resolved ticker from OpenFIGI (null if unresolved) */
   ticker: string | null;
   /** Percentage of fund net assets in whole-percent units (e.g. 4.89 = 4.89% of NAV) */
