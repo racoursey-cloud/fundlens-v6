@@ -39,6 +39,43 @@ export interface BenchmarkStatus {
   reason?: string;
 }
 
+// ─── v8 A0 (Gap 4): benchmark visibility ────────────────────────────────────
+// The UI could trigger a benchmark but never see it finish — completion
+// existed only as an email and a server log line. This record is served by
+// GET /api/benchmark/status so the Pipeline tab can show running state and
+// the last outcome. In-process memory; resets on restart.
+
+export interface BenchmarkRunStatus {
+  running: boolean;
+  /** When the running/most recent benchmark started (ISO) */
+  startedAt: string | null;
+  /** When the most recent benchmark finished (ISO); null while running */
+  finishedAt: string | null;
+  outcome: 'success' | 'failed' | null;
+  /** The agreement summary (success) or the error message (failure) */
+  summary: string | null;
+  /** Did the report/failure email actually send? (Gap 2 boolean, surfaced) */
+  emailed: boolean | null;
+}
+
+let lastStartedAt: string | null = null;
+let lastFinishedAt: string | null = null;
+let lastOutcome: 'success' | 'failed' | null = null;
+let lastSummary: string | null = null;
+let lastEmailed: boolean | null = null;
+
+/** Current benchmark state for the admin UI (Gap 4). */
+export function getBenchmarkStatus(): BenchmarkRunStatus {
+  return {
+    running: benchmarkRunning,
+    startedAt: lastStartedAt,
+    finishedAt: lastFinishedAt,
+    outcome: lastOutcome,
+    summary: lastSummary,
+    emailed: lastEmailed,
+  };
+}
+
 interface SampleRow {
   ticker: string;
   name: string;
@@ -78,20 +115,35 @@ export function startClassificationBenchmark(sampleTarget = 400): BenchmarkStatu
     return { started: false, reason: 'A benchmark is already running.' };
   }
   benchmarkRunning = true;
+  lastStartedAt = new Date().toISOString();
+  lastFinishedAt = null;
+  lastOutcome = null;
+  lastSummary = null;
+  lastEmailed = null;
   const clamped = Math.max(50, Math.min(500, sampleTarget));
 
   runBenchmark(clamped)
-    .catch(err => {
+    .catch(async err => {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[benchmark] Failed: ${msg}`);
-      sendAdminAlert(
+      lastOutcome = 'failed';
+      lastSummary = msg;
+      // v8 A0 (Gap 2, failure path): the failure email is also gated on the
+      // real send outcome — a failed benchmark whose failure email also
+      // fails must not be doubly invisible.
+      const emailed = await sendAdminAlert(
         'A5 Task 7 benchmark FAILED',
         `The classification benchmark stopped with an error: <strong>${msg}</strong>. ` +
         `Nothing was changed anywhere — the benchmark is read-only. Re-run it from the Pipeline tab.`
-      ).catch(() => {});
+      );
+      lastEmailed = emailed;
+      if (!emailed) {
+        console.error('[benchmark] Failure email did NOT send — this log line is the only record of the failure');
+      }
     })
     .finally(() => {
       benchmarkRunning = false;
+      lastFinishedAt = new Date().toISOString();
     });
 
   return { started: true };
@@ -209,7 +261,9 @@ async function runBenchmark(sampleTarget: number): Promise<void> {
     `<h3>${title} (${items.length})</h3>` +
     (items.length ? `<ul>${items.map(m => `<li>${esc(m)}</li>`).join('')}</ul>` : '<p>None.</p>');
 
-  await sendAdminAlert(
+  // v8 A0 (Gap 2): the success log is gated on the REAL send outcome —
+  // "Report emailed" was previously printed even when the send failed.
+  const emailed = await sendAdminAlert(
     'A5 Task 7 benchmark report: Haiku classification agreement',
     `<pre>${esc(summary)}</pre>` +
     `<p>The disagreement lists below are the raw material for the report's ` +
@@ -218,5 +272,16 @@ async function runBenchmark(sampleTarget: number): Promise<void> {
     listHtml('Industry disagreements', industryMisses)
   );
 
-  console.log('[benchmark] Report emailed via admin-alert');
+  lastOutcome = 'success';
+  lastSummary = summary;
+  lastEmailed = emailed;
+
+  if (emailed) {
+    console.log('[benchmark] Report emailed via admin-alert');
+  } else {
+    console.error(
+      '[benchmark] Report email did NOT send — the agreement summary is in the log line above; ' +
+      'the disagreement lists were not delivered anywhere'
+    );
+  }
 }
