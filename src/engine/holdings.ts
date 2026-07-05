@@ -205,6 +205,9 @@ export async function runHoldingsPipeline(
         name: holding.name,
         cusip: holding.cusip,
         ticker,
+        // A4 Task 1: symbol class travels with the holding so enrichment
+        // steps can skip 'home' listings (identity only, not FMP-servable)
+        listingTier: resolution?.listingTier ?? null,
         pctOfNav: holding.pctOfNav,
         valueUsd: holding.valueUsd,
         assetCategory: holding.assetCategory,
