@@ -573,10 +573,12 @@ export function Pipeline() {
             </span>
           </div>
 
-          {/* Header row */}
+          {/* Header row — A4 Task 6: "Resolvable" shows how much of the
+              examined NAV is structurally resolvable; "Resolved" is the v2
+              graded number (% of resolvable NAV resolved, threshold 90) */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '70px 1fr 90px 90px 90px 80px 80px',
+            gridTemplateColumns: '70px 1fr 90px 90px 90px 90px 80px 80px',
             gap: '10px',
             padding: '10px 20px',
             borderBottom: `1px solid ${theme.colors.border}`,
@@ -588,6 +590,7 @@ export function Pipeline() {
           }}>
             <span>Fund</span>
             <span>Gate</span>
+            <span style={{ textAlign: 'right' }}>Resolvable</span>
             <span style={{ textAlign: 'right' }}>Resolved</span>
             <span style={{ textAlign: 'right' }}>Classified</span>
             <span style={{ textAlign: 'right' }}>Holdings</span>
@@ -603,11 +606,31 @@ export function Pipeline() {
             const gateLabel = d.is_money_market
               ? 'MM — special case'
               : d.passes_gate ? 'PASS' : 'FAIL';
+            // A4 Task 6: v2 rows grade % of RESOLVABLE NAV resolved; v1
+            // rows (before the migration/deploy) fall back to the old number
+            const isV2 = d.version >= 2;
+            const resolvedShown = isV2
+              ? Number(d.resolved_of_resolvable_pct ?? 0)
+              : Number(d.nav_resolved_pct);
+            // Visible v2 detail: what was excluded and why (Principle 1)
+            const v2Notes: string[] = [];
+            if (isV2 && Number(d.unresolvable_weight_pct ?? 0) > 0) {
+              v2Notes.push(`${Number(d.unresolvable_weight_pct).toFixed(1)}% structurally unresolvable (bullion, cash/repo, derivatives, no identifier)`);
+            }
+            if (isV2 && Number(d.short_overlay_weight_pct ?? 0) !== 0) {
+              v2Notes.push(`${Number(d.short_overlay_weight_pct).toFixed(1)}% net short/overlay legs (excluded from ratios)`);
+            }
+            if (isV2 && Number(d.momentum_firewalled_weight_pct ?? 0) > 0) {
+              v2Notes.push(`${Number(d.momentum_firewalled_weight_pct).toFixed(1)}% liquidity-firewalled (classification only)`);
+            }
+            if (isV2 && (Number(d.industry_fmp_pct ?? 0) > 0 || Number(d.industry_haiku_pct ?? 0) > 0)) {
+              v2Notes.push(`industry tags: FMP ${Number(d.industry_fmp_pct ?? 0).toFixed(0)}% · Haiku ${Number(d.industry_haiku_pct ?? 0).toFixed(0)}% · none ${Number(d.industry_none_pct ?? 0).toFixed(0)}%`);
+            }
             return (
               <div key={d.id} style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: '70px 1fr 90px 90px 90px 80px 80px',
+                  gridTemplateColumns: '70px 1fr 90px 90px 90px 90px 80px 80px',
                   gap: '10px',
                   padding: '10px 20px',
                   alignItems: 'center',
@@ -625,7 +648,10 @@ export function Pipeline() {
                     border: `1px solid ${gateColor}40`,
                   }}>{gateLabel}</span>
                   <span style={{ textAlign: 'right', fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
-                    {d.is_money_market ? '—' : `${Number(d.nav_resolved_pct).toFixed(1)}%`}
+                    {d.is_money_market || !isV2 ? '—' : `${Number(d.resolvable_pct ?? 0).toFixed(1)}%`}
+                  </span>
+                  <span style={{ textAlign: 'right', fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
+                    {d.is_money_market ? '—' : `${resolvedShown.toFixed(1)}%`}
                   </span>
                   <span style={{ textAlign: 'right', fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
                     {d.is_money_market ? '—' : `${Number(d.classified_pct).toFixed(1)}%`}
@@ -642,6 +668,17 @@ export function Pipeline() {
                     color: d.coverage_scaling_applied ? theme.colors.warning : theme.colors.textMuted,
                   }}>{d.coverage_scaling_applied ? 'yes' : 'no'}</span>
                 </div>
+                {/* v2 detail line: excluded slices, shown not hidden */}
+                {v2Notes.length > 0 && (
+                  <div style={{
+                    padding: '0 20px 10px 100px',
+                    fontSize: '12px',
+                    color: theme.colors.textDim,
+                    lineHeight: 1.5,
+                  }}>
+                    {v2Notes.join(' · ')}
+                  </div>
+                )}
                 {/* Failure reasons, plain English, under the row */}
                 {!d.passes_gate && d.fail_reasons.length > 0 && (
                   <div style={{

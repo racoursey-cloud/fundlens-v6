@@ -5,11 +5,13 @@
  * via the OpenFIGI API. Tickers are what FMP needs to fetch company
  * fundamentals (income statements, balance sheets, ratios, etc.).
  *
- * Fallback chain (spec §4.6):
+ * Fallback chain (spec §4.6; A4 Task 2 added the FMP ISIN step):
  *   1. Supabase cusip_cache (persistent, avoids redundant API calls)
- *   2. OpenFIGI v3 API (batch, 100 per request)
- *   3. FMP search-by-name (for CUSIPs that OpenFIGI can't resolve)
- *   4. Supabase manual entry (manual overrides always win)
+ *   2. FMP search-by-ISIN — foreign-ISIN holdings only (FMP sometimes
+ *      stores the home-listing ISIN that SEC filings carry)
+ *   3. OpenFIGI v3 API (batch, 100 per request)
+ *   4. FMP search-by-name (for ids that OpenFIGI can't resolve)
+ *   5. Supabase manual entry (manual overrides always win)
  *
  * OpenFIGI v3 API:
  * - POST https://api.openfigi.com/v3/mapping
@@ -27,11 +29,71 @@ import {
   CusipCacheRow,
   FigiMappingJob,
   FigiResult,
+  ListingTier,
   PipelineStepResult,
   delay,
 } from './types.js';
 import { supaFetch } from './supabase.js';
-import { searchByName } from './fmp.js';
+import { searchByIsin, searchByName } from './fmp.js';
+
+// ─── A4 Task 1: US-symbol-preferred listing tiers ───────────────────────────
+// When one identifier maps to several listings, prefer:
+//   1. 'us'   — NYSE/Nasdaq listing or ADR
+//   2. 'otc'  — OTC-market ADR (FMP Starter serves these — Tencent TCEHY,
+//               even near-dead SSNLF, verified July 2, 2026)
+//   3. 'home' — home-exchange listing (identity only; FMP Starter cannot
+//               serve it — the .T/.DE/.KS/.SW dead ends from production)
+
+/** Rank for sorting: lower = preferred. */
+function tierRank(tier: ListingTier): number {
+  return tier === 'us' ? 0 : tier === 'otc' ? 1 : 2;
+}
+
+/**
+ * OpenFIGI exchCode values for the NYSE/Nasdaq venue family plus the 'US'
+ * composite. Other short U-prefixed codes are treated as US-market but
+ * OTC-tier; PQ/PK are OTC Markets codes.
+ *
+ * NOTE (A4 Task 1): this set could not be verified against live OpenFIGI
+ * responses during implementation (network policy blocks the API from the
+ * build environment). Any resolved symbol whose exchCode falls outside all
+ * known sets is logged loudly below so the first production run confirms
+ * or corrects the mapping.
+ */
+const FIGI_US_MAJOR_EXCH = new Set(['US', 'UN', 'UW', 'UQ', 'UR', 'UA', 'UP']);
+const FIGI_OTC_EXCH = new Set(['PQ', 'PK', 'UV']);
+
+/** Derive the listing tier of an OpenFIGI result. */
+function figiTier(d: FigiResult): ListingTier {
+  const ex = (d.exchCode || '').toUpperCase();
+  if (FIGI_US_MAJOR_EXCH.has(ex)) return 'us';
+  if (FIGI_OTC_EXCH.has(ex)) return 'otc';
+  // U-prefixed 1–2 char codes are US venues we haven't cataloged: treat as
+  // US-market but OTC-tier (still FMP-servable), and log for verification.
+  if (/^U[A-Z]?$/.test(ex)) {
+    console.log(`[cusip] Listing-tier note: uncataloged US-family exchCode "${ex}" (ticker ${d.ticker}) → tier 'otc'`);
+    return 'otc';
+  }
+  // An ADR trades in the US by definition, whatever venue code it carries.
+  const secType = `${d.securityType || ''} ${d.securityType2 || ''}`.toUpperCase();
+  if (secType.includes('ADR')) {
+    console.log(`[cusip] Listing-tier note: ADR with non-US exchCode "${ex}" (ticker ${d.ticker}) → tier 'otc'`);
+    return 'otc';
+  }
+  return 'home';
+}
+
+/**
+ * Derive the listing tier of an FMP search result from its exchange name.
+ * FMP uses NYSE / NASDAQ / AMEX for the majors and OTC-flavored names
+ * ("Other OTC", "OTC", PNK/OTCQX/OTCQB) for the OTC markets.
+ */
+function fmpExchangeTier(exchangeShortName: string | null | undefined): ListingTier {
+  const ex = (exchangeShortName || '').toUpperCase();
+  if (ex === 'NYSE' || ex === 'NASDAQ' || ex === 'AMEX') return 'us';
+  if (ex.includes('OTC') || ex === 'PNK') return 'otc';
+  return 'home';
+}
 
 // ─── Supabase Cache Functions ─────────────────────────────────────────────
 
@@ -67,6 +129,8 @@ export async function cusipCacheLookup(
       securityType: row.security_type,
       resolved: row.resolved,
       warning: null,
+      // A4 Task 1: tier travels with the cached resolution ('us'/'otc'/'home')
+      listingTier: (row.listing_tier as ListingTier | null) ?? null,
     });
   }
 
@@ -96,6 +160,7 @@ export async function cusipCacheSave(
       name: r.name,
       security_type: r.securityType,
       resolved: r.resolved,
+      listing_tier: r.listingTier ?? null,
     }));
   if (rows.length === 0) return;
 
@@ -125,6 +190,9 @@ export async function cusipCacheSave(
  * @param cacheSave - Function to persist new resolutions to Supabase (default: cusipCacheSave)
  * @param isinMap - Optional map of CUSIP → ISIN for international holdings (BUG-3 fix)
  * @param nameMap - Optional map of CUSIP → holding name from EDGAR for FMP fallback (BUG-3 fix)
+ * @param fmpIsinSkipIds - Ids that skip the PAID FMP-ISIN step (A4 Task 6:
+ *   debt holdings — a bond never yields a company profile; the free batched
+ *   OpenFIGI path still runs for them)
  */
 export async function resolveCusips(
   cusips: string[],
@@ -132,7 +200,8 @@ export async function resolveCusips(
   cacheLookup: (cusips: string[]) => Promise<Map<string, CusipResolution>> = cusipCacheLookup,
   cacheSave: (resolutions: CusipResolution[]) => Promise<void> = cusipCacheSave,
   isinMap?: Map<string, string>,
-  nameMap?: Map<string, string>
+  nameMap?: Map<string, string>,
+  fmpIsinSkipIds?: Set<string>
 ): Promise<PipelineStepResult<Map<string, CusipResolution>>> {
   const start = Date.now();
 
@@ -172,8 +241,78 @@ export async function resolveCusips(
     const isinIds = uncached.filter(id => id.startsWith('ISIN:'));
     const nameIds = uncached.filter(id => id.startsWith('NAME:'));
 
-    if (realCusips.length > 0) {
-      const batches = chunkArray(realCusips, OPENFIGI.BATCH_SIZE);
+    // ── Step 2-pre (A4 Task 2): direct ISIN-to-FMP lookup for foreign holdings ──
+    // FMP profiles sometimes store the home-listing ISIN (Samsung's
+    // KR7005930003 — the identifier class SEC filings carry), so a filing
+    // ISIN can match an FMP-covered symbol directly, skipping OpenFIGI.
+    // US-ISIN holdings keep the batched OpenFIGI path (already resolving
+    // 98.9–100% for domestic funds at 100 ids per request).
+    //
+    // Only 'us'/'otc' tier answers are accepted here: those are the symbols
+    // FMP Starter can enrich. A home-exchange-only answer falls through to
+    // OpenFIGI, which can still surface a US listing (Tencent-class: FMP
+    // stores the ADR's ISIN, so the filing's HK ISIN misses here and the
+    // OTC ADR is found via OpenFIGI + Task 1 ranking).
+    const resolvedByFmpIsin = new Set<string>();
+    const fmpIsinCandidates: Array<{ id: string; isin: string }> = [];
+    for (const id of isinIds) {
+      if (fmpIsinSkipIds?.has(id)) continue; // A4 Task 6: debt — no profile exists
+      const isin = id.slice('ISIN:'.length);
+      if (!isin.toUpperCase().startsWith('US')) fmpIsinCandidates.push({ id, isin });
+    }
+    for (const id of realCusips) {
+      if (fmpIsinSkipIds?.has(id)) continue; // A4 Task 6: debt — no profile exists
+      const isin = isinMap?.get(id);
+      if (isin && !isin.toUpperCase().startsWith('US')) fmpIsinCandidates.push({ id, isin });
+    }
+
+    if (fmpIsinCandidates.length > 0) {
+      console.log(
+        `[cusip] ${fmpIsinCandidates.length} foreign-ISIN holdings trying FMP ISIN search first (sequential, ${PIPELINE.API_CALL_DELAY_MS}ms pacing)`
+      );
+      for (const { id, isin } of fmpIsinCandidates) {
+        try {
+          await delay(PIPELINE.API_CALL_DELAY_MS);
+          const results = await searchByIsin(isin);
+          if (results.length === 0) continue;
+
+          const ranked = [...results].sort(
+            (a, b) =>
+              tierRank(fmpExchangeTier(a.exchangeShortName || a.exchange)) -
+              tierRank(fmpExchangeTier(b.exchangeShortName || b.exchange))
+          );
+          const best = ranked[0];
+          const tier = fmpExchangeTier(best.exchangeShortName || best.exchange);
+          if (!best.symbol || tier === 'home') continue;
+
+          newResolutions.push({
+            cusip: id,
+            ticker: best.symbol,
+            name: best.name || null,
+            securityType: null,
+            resolved: true,
+            warning: 'Resolved via FMP ISIN search',
+            listingTier: tier,
+          });
+          resolvedByFmpIsin.add(id);
+        } catch {
+          // Best-effort — a failed search falls through to OpenFIGI
+          console.warn(`[cusip] FMP ISIN search failed for ${isin}`);
+        }
+      }
+      if (resolvedByFmpIsin.size > 0) {
+        console.log(
+          `[cusip] FMP ISIN search resolved ${resolvedByFmpIsin.size}/${fmpIsinCandidates.length} foreign holdings directly`
+        );
+      }
+    }
+
+    // Ids resolved by FMP ISIN search skip the OpenFIGI steps below.
+    const realCusipsRemaining = realCusips.filter(id => !resolvedByFmpIsin.has(id));
+    const isinIdsRemaining = isinIds.filter(id => !resolvedByFmpIsin.has(id));
+
+    if (realCusipsRemaining.length > 0) {
+      const batches = chunkArray(realCusipsRemaining, OPENFIGI.BATCH_SIZE);
 
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
@@ -191,10 +330,11 @@ export async function resolveCusips(
       }
     }
 
-    // ── Step 2a-ISIN: direct ISIN resolution for placeholder-CUSIP holdings ──
-    if (isinIds.length > 0) {
-      console.log(`[cusip] ${isinIds.length} placeholder-CUSIP holdings resolving via ID_ISIN`);
-      const isinBatches = chunkArray(isinIds, OPENFIGI.BATCH_SIZE);
+    // ── Step 2a-ISIN: OpenFIGI ISIN resolution for placeholder-CUSIP holdings ──
+    // (A4 Task 2: only those the FMP ISIN search above did not resolve)
+    if (isinIdsRemaining.length > 0) {
+      console.log(`[cusip] ${isinIdsRemaining.length} placeholder-CUSIP holdings resolving via ID_ISIN`);
+      const isinBatches = chunkArray(isinIdsRemaining, OPENFIGI.BATCH_SIZE);
 
       for (let i = 0; i < isinBatches.length; i++) {
         const batch = isinBatches[i];
@@ -271,6 +411,7 @@ export async function resolveCusips(
                   securityType: isinResult.securityType || newResolutions[idx].securityType,
                   resolved: true,
                   warning: 'Resolved via ISIN fallback',
+                  listingTier: isinResult.listingTier ?? null,
                 };
                 isinResolved++;
               }
@@ -368,13 +509,13 @@ async function tryFmpSearchFallback(
       const results = await searchByName(searchQuery, 3);
 
       if (results.length > 0) {
-        // Prefer US-listed result
-        const usResult = results.find(r =>
-          r.exchangeShortName === 'NYSE' ||
-          r.exchangeShortName === 'NASDAQ' ||
-          r.exchangeShortName === 'AMEX'
+        // A4 Task 1: rank by listing tier (us > otc > home) instead of the
+        // old NYSE/Nasdaq-or-first rule. A home-exchange name match is kept
+        // as identity only — its tier flags it as not FMP-enrichable.
+        const ranked = [...results].sort(
+          (a, b) => tierRank(fmpExchangeTier(a.exchangeShortName)) - tierRank(fmpExchangeTier(b.exchangeShortName))
         );
-        const bestResult = usResult || results[0];
+        const bestResult = ranked[0];
 
         // Update the resolution in-place (it's the same object in allResolutions)
         const idx = allResolutions.findIndex(r => r.cusip === resolution.cusip);
@@ -385,6 +526,7 @@ async function tryFmpSearchFallback(
             name: bestResult.name || allResolutions[idx].name,
             resolved: true,
             warning: 'Resolved via FMP search fallback',
+            listingTier: fmpExchangeTier(bestResult.exchangeShortName),
           };
           fmpResolved++;
         }
@@ -579,11 +721,16 @@ function parseOpenFigiResponse(
       continue;
     }
 
-    // Prefer US-listed equities; fall back to first result
-    const bestMatch =
-      data.find(d => d.exchCode === 'US' && d.marketSector === 'Equity') ||
-      data.find(d => d.exchCode === 'US') ||
-      data[0];
+    // A4 Task 1: rank candidates by listing tier (us > otc > home), then
+    // prefer Equity within a tier (preserves the old US-equity-first rule).
+    // A home-exchange match is still accepted — it is a real identity —
+    // but its tier marks it as not FMP-enrichable.
+    const ranked = [...data].sort(
+      (a, b) =>
+        tierRank(figiTier(a)) - tierRank(figiTier(b)) ||
+        (a.marketSector === 'Equity' ? 0 : 1) - (b.marketSector === 'Equity' ? 0 : 1)
+    );
+    const bestMatch = ranked[0];
 
     const ticker = bestMatch.ticker || null;
 
@@ -595,6 +742,7 @@ function parseOpenFigiResponse(
       // Only mark as resolved if we actually got a usable ticker
       resolved: ticker !== null,
       warning: ticker ? null : 'OpenFIGI matched but no ticker returned',
+      listingTier: ticker ? figiTier(bestMatch) : null,
     });
   }
 

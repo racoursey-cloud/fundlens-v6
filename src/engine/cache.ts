@@ -22,7 +22,7 @@
  */
 
 import { supaFetch } from './supabase.js';
-import { FmpRatios, FmpKeyMetrics } from './fmp.js';
+import { FmpRatios, FmpKeyMetrics, FmpProfile } from './fmp.js';
 import { TiingoDailyPrice } from './tiingo.js';
 
 // ─── TTL Constants ─────────────────────────────────────────────────────────
@@ -45,6 +45,10 @@ function inList(items: string[]): string {
 export interface FmpCacheEntry {
   ratios: FmpRatios | null;
   keyMetrics: FmpKeyMetrics | null;
+  /** A4 Task 3: company profile (industry, exchange, volume). Null on rows
+   *  cached before A4 — the pipeline backfills those with a profile-only
+   *  fetch instead of treating the whole row as a miss. */
+  profile?: FmpProfile | null;
 }
 
 /**
@@ -65,6 +69,7 @@ export async function getFmpCache(
       ticker: string;
       ratios: FmpRatios | null;
       key_metrics: FmpKeyMetrics | null;
+      profile: FmpProfile | null;
       cached_at: string;
     }>>('fmp_cache', {
       params: {
@@ -80,6 +85,7 @@ export async function getFmpCache(
       result.set(row.ticker.toUpperCase(), {
         ratios: row.ratios,
         keyMetrics: row.key_metrics,
+        profile: row.profile ?? null,
       });
     }
   }
@@ -93,7 +99,8 @@ export async function getFmpCache(
 export async function saveFmpCache(
   ticker: string,
   ratios: FmpRatios | null,
-  keyMetrics: FmpKeyMetrics | null
+  keyMetrics: FmpKeyMetrics | null,
+  profile: FmpProfile | null = null
 ): Promise<void> {
   await supaFetch('fmp_cache', {
     method: 'POST',
@@ -101,6 +108,7 @@ export async function saveFmpCache(
       ticker: ticker.toUpperCase(),
       ratios: ratios,
       key_metrics: keyMetrics,
+      profile: profile,
       cached_at: new Date().toISOString(),
     },
     upsert: true,
@@ -320,6 +328,79 @@ export async function saveSectorClassifications(
   for (let i = 0; i < rows.length; i += 50) {
     const batch = rows.slice(i, i + 50);
     await supaFetch('sector_classifications', {
+      method: 'POST',
+      body: batch,
+      upsert: true,
+    });
+  }
+}
+
+// ─── Industry Classifications Cache (A4 Task 5, 15-day TTL) ────────────────
+// Haiku industry labels against the pinned FMP menu, keyed by
+// (holding name, asset type) — the A3 scheme, same as sectors. 'Other'
+// rows are cached too (no re-asking Haiku about unclassifiable names every
+// run) but count as unclassified in the Dossier metric.
+
+/**
+ * Batch-fetch cached industry classifications. Returns a map of
+ * sectorCacheKey(name, assetType) → industry for fresh cache hits.
+ */
+export async function getIndustryClassifications(
+  entries: Array<{ holdingName: string; assetType: SectorAssetType }>
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (!entries || entries.length === 0) return result;
+
+  const requested = new Set(entries.map(e => sectorCacheKey(e.holdingName, e.assetType)));
+  const uniqueNames = [...new Set(entries.map(e => e.holdingName))];
+
+  for (let i = 0; i < uniqueNames.length; i += 50) {
+    const batch = uniqueNames.slice(i, i + 50);
+    const { data, error } = await supaFetch<Array<{
+      holding_name: string;
+      industry: string;
+      asset_type: SectorAssetType;
+      cached_at: string;
+    }>>('industry_classifications', {
+      params: {
+        holding_name: `in.(${inList(batch)})`,
+        select: '*',
+      },
+    });
+
+    if (error || !data) continue;
+
+    for (const row of data) {
+      if (isStale(row.cached_at, 15)) continue;
+      const key = sectorCacheKey(row.holding_name, row.asset_type);
+      if (requested.has(key)) {
+        result.set(key, row.industry);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Upsert a batch of industry classifications into the cache.
+ */
+export async function saveIndustryClassifications(
+  classifications: Array<{ holdingName: string; assetType: SectorAssetType; industry: string }>
+): Promise<void> {
+  if (!classifications || classifications.length === 0) return;
+
+  const now = new Date().toISOString();
+  const rows = classifications.map(c => ({
+    holding_name: c.holdingName,
+    asset_type: c.assetType,
+    industry: c.industry,
+    cached_at: now,
+  }));
+
+  for (let i = 0; i < rows.length; i += 50) {
+    const batch = rows.slice(i, i + 50);
+    await supaFetch('industry_classifications', {
       method: 'POST',
       body: batch,
       upsert: true,

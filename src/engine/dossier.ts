@@ -28,18 +28,31 @@
  * A fund that fails the gate is Not Rated territory: flagged in pipeline
  * output, persisted with reasons, and included in the admin alert email.
  * Pure computation — no API calls, no database access (persist.ts writes).
+ *
+ * v2 (A4 Task 6, endorsed July 2, approved July 5, 2026): grading moves to
+ * RESOLVABLE NAV. Three visible numbers replace the conflated v1 gate:
+ * % examined (the cutoff's doing), % of examined structurally resolvable
+ * (derivative category OR no CUSIP and no ISIN = unresolvable — asset
+ * category alone can't define it; bullion files as EC and STIV), and
+ * % of resolvable NAV resolved — the graded number, threshold 90. All
+ * ratios run over positive-weight holdings; negative-weight overlay legs
+ * are reported in their own field, never averaged in.
  */
 
 import type { ResolvedHolding } from './types.js';
 
 // ─── Contract ───────────────────────────────────────────────────────────────
 
-/** Bump when the Dossier's fields or their meanings change */
-export const DOSSIER_VERSION = 1;
+/** Bump when the Dossier's fields or their meanings change.
+ *  v2 (A4 Task 6): grading moves to resolvable NAV. The v1 gate conflated
+ *  three facts and failed seven funds on denominator artifacts alone —
+ *  PRPFX's "missing" 34% is its bullion, working as designed. */
+export const DOSSIER_VERSION = 2;
 
 /** Ratified pass thresholds (July 1, 2026). NOT tunable without Robert. */
 export const DOSSIER_THRESHOLDS = {
-  /** Minimum % of NAV resolved to identified securities */
+  /** v2 graded number: minimum % of structurally RESOLVABLE NAV resolved
+   *  to identified securities (A4 Task 6, endorsed July 2, 2026) */
   NAV_RESOLVED_PCT: 90,
   /** Minimum % of held weight classified by a real signal */
   CLASSIFIED_PCT: 95,
@@ -52,12 +65,29 @@ export interface FundDossier {
   /** EDGAR filing identity (null for money markets / failed fetches) */
   accessionNumber: string | null;
   reportDate: string | null;
-  /** % of NAV resolved to identified securities (whole-percent) */
+  /** % of NAV resolved to identified securities (whole-percent).
+   *  v1 continuity number — kept for comparison across versions. */
   navResolvedPct: number;
   /** % of held weight classified by a real signal (whole-percent) */
   classifiedPct: number;
   /** % of NAV covered by the holdings the cutoff walk included */
   weightCoveredPct: number;
+  // ── v2 metrics (A4 Task 6) — all over POSITIVE-weight holdings only ──
+  /** % of examined NAV that is structurally resolvable */
+  resolvablePct: number;
+  /** THE GRADED NUMBER: % of resolvable NAV resolved (threshold 90) */
+  resolvedOfResolvablePct: number;
+  /** The visible unresolvable slice (derivatives, bullion, sweeps, no-id) */
+  unresolvableWeightPct: number;
+  /** Net weight of negative-weight rows (short/overlay legs) — excluded
+   *  from the ratios above, shown here instead of hidden (Principle 1) */
+  shortOverlayWeightPct: number;
+  /** A4 Task 4: % of positive included weight below the liquidity firewall */
+  momentumFirewalledWeightPct: number;
+  /** A4 Task 3: industry-tag provenance shares of positive included weight */
+  industryFmpPct: number;
+  industryHaikuPct: number;
+  industryNonePct: number;
   holdingsIncluded: number;
   holdingsTotal: number;
   lookthroughDetected: boolean;
@@ -141,11 +171,24 @@ export function computeDossier(input: DossierInput): FundDossier {
     isMoneyMarket: input.isMoneyMarket,
   };
 
+  // v2 zero-filled metrics for the special-case branches below
+  const v2Zeros = {
+    resolvablePct: 0,
+    resolvedOfResolvablePct: 0,
+    unresolvableWeightPct: 0,
+    shortOverlayWeightPct: 0,
+    momentumFirewalledWeightPct: 0,
+    industryFmpPct: 0,
+    industryHaikuPct: 0,
+    industryNonePct: 0,
+  };
+
   // Money market special case (Founding §3): no N-PORT holdings exist;
   // the fund passes on identity + expenses + NAV.
   if (input.isMoneyMarket) {
     return {
       ...base,
+      ...v2Zeros,
       navResolvedPct: 0,
       classifiedPct: 0,
       passesGate: true,
@@ -157,6 +200,7 @@ export function computeDossier(input: DossierInput): FundDossier {
   if (!input.holdingsAvailable) {
     return {
       ...base,
+      ...v2Zeros,
       navResolvedPct: 0,
       classifiedPct: 0,
       passesGate: false,
@@ -164,30 +208,72 @@ export function computeDossier(input: DossierInput): FundDossier {
     };
   }
 
-  // NAV resolved %: identified weight, measured against total NAV.
-  // pctOfNav is already in whole-percent-of-NAV units, so the sum IS the %.
-  let identifiedWeight = 0;
-  let includedWeight = 0;
-  for (const h of input.holdings) {
-    includedWeight += h.pctOfNav;
-    if (h.ticker || isIdentifiedWithoutTicker(h)) {
-      identifiedWeight += h.pctOfNav;
-    }
-  }
-  const navResolvedPct = r2(Math.min(100, identifiedWeight));
+  // ── v2 walk (A4 Task 6) — one pass over the included holdings ───────────
+  // pctOfNav is in whole-percent-of-NAV units, so sums ARE percentages.
+  // Negative-weight rows (short/overlay derivative legs, observed in
+  // DRRYX's filing) are excluded from every ratio and reported in their
+  // own field (Robert's July 5 decision — nothing hidden, nothing warped).
+  let examinedPos = 0;        // positive included weight (all ratios' base)
+  let shortOverlayWeight = 0; // net weight of negative rows
+  let unresolvableWeight = 0; // structurally unresolvable positive weight
+  let resolvableWeight = 0;   // positive weight eligible for resolution
+  let resolvedWeight = 0;     // resolvable weight actually identified
+  let identifiedWeight = 0;   // v1 continuity numerator (all identified)
+  let firewalledWeight = 0;   // A4 Task 4: momentum_eligible === false
+  let industryFmpWeight = 0;  // A4 Task 3 provenance shares
+  let industryHaikuWeight = 0;
 
-  // Classified %: real-signal classified weight / included weight.
+  for (const h of input.holdings) {
+    if (h.pctOfNav < 0) {
+      shortOverlayWeight += h.pctOfNav;
+      continue;
+    }
+    examinedPos += h.pctOfNav;
+
+    const identified = Boolean(h.ticker) || isIdentifiedWithoutTicker(h);
+    if (identified) identifiedWeight += h.pctOfNav;
+
+    if (h.structurallyUnresolvable) {
+      unresolvableWeight += h.pctOfNav;
+    } else {
+      resolvableWeight += h.pctOfNav;
+      if (identified) resolvedWeight += h.pctOfNav;
+    }
+
+    if (h.momentumEligible === false) firewalledWeight += h.pctOfNav;
+    if (h.industrySource === 'fmp') industryFmpWeight += h.pctOfNav;
+    else if (h.industrySource === 'haiku') industryHaikuWeight += h.pctOfNav;
+  }
+
+  const pctOf = (part: number, whole: number): number =>
+    whole > 0 ? r2(Math.min(100, (part / whole) * 100)) : 0;
+
+  const navResolvedPct = r2(Math.min(100, identifiedWeight)); // v1 continuity
+  const resolvablePct = pctOf(resolvableWeight, examinedPos);
+  // Vacuous pass when nothing is resolvable (a pure-bullion fund has
+  // nothing to resolve and nothing missing) — the unresolvable slice is
+  // displayed right beside it, so nothing is hidden.
+  const resolvedOfResolvablePct = resolvableWeight > 0
+    ? pctOf(resolvedWeight, resolvableWeight)
+    : 100;
+
+  // Classified %: real-signal classified weight / positive included weight.
   // Everything gets SOME label by the end of step 5, so real-signal weight
-  // = included weight minus what the last-resort rule labeled 'Other'.
-  const classifiedRealWeight = Math.max(0, includedWeight - input.lastResortWeightPct);
-  const classifiedPct = includedWeight > 0
-    ? r2(Math.min(100, (classifiedRealWeight / includedWeight) * 100))
+  // = positive included weight minus what the last-resort rule labeled
+  // 'Other'.
+  const classifiedRealWeight = Math.max(0, examinedPos - input.lastResortWeightPct);
+  const classifiedPct = pctOf(classifiedRealWeight, examinedPos);
+
+  const industryFmpPct = pctOf(industryFmpWeight, examinedPos);
+  const industryHaikuPct = pctOf(industryHaikuWeight, examinedPos);
+  const industryNonePct = examinedPos > 0
+    ? r2(Math.max(0, 100 - industryFmpPct - industryHaikuPct))
     : 0;
 
   const failReasons: string[] = [];
-  if (navResolvedPct < DOSSIER_THRESHOLDS.NAV_RESOLVED_PCT) {
+  if (resolvedOfResolvablePct < DOSSIER_THRESHOLDS.NAV_RESOLVED_PCT) {
     failReasons.push(
-      `${navResolvedPct.toFixed(1)}% of NAV resolved — threshold is ${DOSSIER_THRESHOLDS.NAV_RESOLVED_PCT}%`
+      `${resolvedOfResolvablePct.toFixed(1)}% of resolvable NAV resolved — threshold is ${DOSSIER_THRESHOLDS.NAV_RESOLVED_PCT}%`
     );
   }
   if (classifiedPct < DOSSIER_THRESHOLDS.CLASSIFIED_PCT) {
@@ -200,6 +286,14 @@ export function computeDossier(input: DossierInput): FundDossier {
     ...base,
     navResolvedPct,
     classifiedPct,
+    resolvablePct,
+    resolvedOfResolvablePct,
+    unresolvableWeightPct: pctOf(unresolvableWeight, examinedPos),
+    shortOverlayWeightPct: r2(shortOverlayWeight),
+    momentumFirewalledWeightPct: pctOf(firewalledWeight, examinedPos),
+    industryFmpPct,
+    industryHaikuPct,
+    industryNonePct,
     passesGate: failReasons.length === 0,
     failReasons,
   };

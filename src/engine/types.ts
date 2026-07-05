@@ -90,6 +90,16 @@ export interface MutualFundTickerEntry {
 
 // ─── CUSIP Resolution Types ─────────────────────────────────────────────────
 
+/**
+ * Listing tier of a resolved symbol (A4 Task 1). Preference order when one
+ * identifier maps to several listings:
+ *   'us'   — NYSE/Nasdaq listing or ADR (fully enrichable via FMP)
+ *   'otc'  — OTC-market ADR (FMP Starter serves profiles for these)
+ *   'home' — home-exchange listing, kept as identity only; FMP Starter
+ *            cannot serve it, so enrichment steps must skip it
+ */
+export type ListingTier = 'us' | 'otc' | 'home';
+
 /** OpenFIGI mapping job — one per CUSIP or ISIN in a batch POST */
 export interface FigiMappingJob {
   idType: 'ID_CUSIP' | 'ID_ISIN';
@@ -119,6 +129,9 @@ export interface CusipResolution {
   resolved: boolean;
   /** Warning message if resolution failed */
   warning: string | null;
+  /** Symbol class of the resolved ticker (A4 Task 1). Optional: absent on
+   *  rows cached before A4 and on unresolved entries. */
+  listingTier?: ListingTier | null;
 }
 
 // ─── Holdings Pipeline Types ────────────────────────────────────────────────
@@ -158,6 +171,30 @@ export interface ResolvedHolding {
   debtInArrears: string | null;
   /** Whether this holding is itself a fund (for bond/equity classification) */
   isInvestmentCompany: boolean;
+  // ── A4 Tasks 1+3: listing tier + industry harvest (optional — absent on
+  //    holdings processed before A4) ──
+  /** Symbol class of the resolved ticker; 'home' = identity only, skip FMP */
+  listingTier?: ListingTier | null;
+  /** Fine-grained industry (FMP profile, or Haiku fallback in Task 5) */
+  industry?: string | null;
+  /** Provenance of the industry tag */
+  industrySource?: 'fmp' | 'haiku' | null;
+  /** FMP's own sector label — report-only comparison signal, gap-fill for
+   *  unclassified equity; NEVER overwrites an existing label (Robert,
+   *  July 5, 2026). Not persisted. */
+  fmpSector?: string | null;
+  /** FMP ADR flag — unreliable for unsponsored tickers, never sole signal */
+  isAdr?: boolean | null;
+  /** Exchange short name from the FMP profile */
+  exchange?: string | null;
+  /** Average daily share volume from the FMP profile */
+  averageVolume?: number | null;
+  /** False = below the liquidity firewall: classification only (A4 Task 4) */
+  momentumEligible?: boolean | null;
+  /** A4 Task 6: true = derivative category OR no CUSIP and no ISIN — the
+   *  holding is kept and displayed but never sent through resolution, and
+   *  it is excluded from the resolvable-NAV denominator in the Dossier. */
+  structurallyUnresolvable?: boolean;
 }
 
 /** Result of the holdings pipeline for a single fund */
@@ -235,6 +272,14 @@ export interface HoldingsCacheRow {
   is_look_through: boolean;
   parent_fund_name: string | null;
   created_at: string;
+  // ── A4 Task 3 migration columns (optional — NULL on pre-A4 rows) ──
+  industry?: string | null;
+  /** 'fmp' | 'haiku' | null */
+  industry_source?: string | null;
+  is_adr?: boolean | null;
+  exchange?: string | null;
+  average_volume?: number | null;
+  momentum_eligible?: boolean | null;
 }
 
 /** Row in the `cusip_cache` table — persistent CUSIP→ticker mappings */
@@ -245,6 +290,8 @@ export interface CusipCacheRow {
   security_type: string | null;
   resolved: boolean;
   resolved_at: string;
+  /** us | otc | home | null — symbol class (A4 Task 1 migration) */
+  listing_tier?: string | null;
 }
 
 /** Row in the `pipeline_runs` table — tracks pipeline execution history */

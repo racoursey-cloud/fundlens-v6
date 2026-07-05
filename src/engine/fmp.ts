@@ -45,6 +45,15 @@ export interface FmpProfile {
   isActivelyTrading: boolean;
   mktCap: number;
   price: number;
+  // ── A4 Task 3: industry harvest + liquidity fields ──
+  // Optional: FMP omits them for some symbols; treat absent as unknown.
+  /** ADR flag — UNRELIABLE for unsponsored tickers (SSNLF returned false,
+   *  verified July 2, 2026). Stored as data, never the sole ADR signal. */
+  isAdr?: boolean;
+  /** Average daily share volume — the liquidity firewall's input (Task 4).
+   *  A missing value counts as BELOW the threshold (worst-input rule). */
+  averageVolume?: number | null;
+  volume?: number | null;
 }
 
 /** Real-time quote from FMP /stable/quote */
@@ -413,6 +422,30 @@ export function extractExpenseRatio(data: Record<string, unknown>): number | nul
   }
 
   return null;
+}
+
+/**
+ * Search FMP by ISIN (A4 Task 2).
+ *
+ * FMP profiles are inconsistent about which ISIN they store — Samsung's
+ * carries the Korean home-listing ISIN (KR7005930003), the exact identifier
+ * class that appears in SEC fund filings. So a filing ISIN can match an
+ * FMP-covered symbol DIRECTLY, skipping OpenFIGI entirely.
+ *
+ * Endpoint literal lives here (like '/etf-info' above) because constants.ts
+ * is frozen per CLAUDE.md hard rules.
+ *
+ * @param isin 12-character ISIN from the SEC filing
+ * @returns Array of matches (symbol/name/exchange), empty when FMP has none
+ */
+export async function searchByIsin(
+  isin: string
+): Promise<Array<{ symbol: string; name: string; exchangeShortName?: string; exchange?: string }>> {
+  const data = await fmpFetch<Array<{ symbol: string; name: string; exchangeShortName?: string; exchange?: string }>>(
+    '/search-isin',
+    { isin }
+  );
+  return data || [];
 }
 
 /**

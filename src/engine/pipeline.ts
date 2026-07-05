@@ -36,7 +36,7 @@ import { computeDossier } from './dossier.js';
 import type { FundDossier, DossierInput } from './dossier.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
-import { FmpRatios, FmpKeyMetrics } from './fmp.js';
+import { FmpRatios, FmpKeyMetrics, FmpProfile } from './fmp.js';
 import { supaUpdate } from './supabase.js';
 import { fetchExpenseRatio, fetchFinnhubExpenseRatio, KNOWN_EXPENSE_RATIOS } from './finnhub.js';
 import { fetchTiingoPrices, convertTiingoPricesToFmpFormat, TiingoDailyPrice } from './tiingo.js';
@@ -49,13 +49,14 @@ import { getHeadlines } from './rss.js';
 import { fetchMacroSnapshot } from './fred.js';
 import { generateMacroThesis, MacroThesis } from './thesis.js';
 import { scorePositioning, PositioningResult } from './positioning.js';
-import { classifyHoldingSectors } from './classify.js';
+import { classifyHoldingSectors, classifyHoldingIndustries } from './classify.js';
 import { fetchMoneyMarketData } from './edgar.js';
 import {
   getFmpCache, saveFmpCache,
   getTiingoPriceCache, saveTiingoPriceCache,
   getFinnhubFeeCache, saveFinnhubFeeCache,
   getSectorClassifications, saveSectorClassifications, sectorCacheKey,
+  getIndustryClassifications, saveIndustryClassifications,
 } from './cache.js';
 import type { SectorAssetType } from './cache.js';
 
@@ -67,7 +68,10 @@ import type { SectorAssetType } from './cache.js';
 
 const DEBT_ASSET_CATS = new Set(['DBT', 'STIV', 'LON', 'ABS-MBS', 'ABS-O', 'ABS-CBDO']);
 const ALWAYS_DEBT_ISSUER_CATS = new Set(['UST', 'USGA', 'MUN', 'SOV', 'ABS', 'AGEN', 'AGNCY']);
-const DERIVATIVE_ASSET_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DO']);
+// A4 Task 6: 'DCR' (credit derivative) added — observed in DRRYX's actual
+// filing (July 5 evidence); the NPORT code in the wild differs from the
+// 'DC' the original sets assumed. Both are kept.
+const DERIVATIVE_ASSET_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DCR', 'DO']);
 
 function deriveAssetType(h: ResolvedHolding): SectorAssetType {
   if (h.isDebt) return 'debt';
@@ -79,6 +83,31 @@ function deriveAssetType(h: ResolvedHolding): SectorAssetType {
   if (ac === 'EC') return 'equity';
   if (h.ticker) return 'equity';
   return 'other';
+}
+
+// ─── A4 Task 3: FMP sector label → FundLens sector taxonomy ────────────────
+// FMP uses a Morningstar-style naming; this maps its labels onto the sector
+// list classify.ts/thesis.ts share. Only clean, unambiguous mappings — a
+// label outside this map is never used as a classification signal.
+const FMP_SECTOR_MAP: Record<string, string> = {
+  'technology': 'Technology',
+  'healthcare': 'Healthcare',
+  'financial services': 'Financials',
+  'financial': 'Financials',
+  'consumer cyclical': 'Consumer Discretionary',
+  'consumer defensive': 'Consumer Staples',
+  'communication services': 'Communication Services',
+  'energy': 'Energy',
+  'industrials': 'Industrials',
+  'basic materials': 'Materials',
+  'real estate': 'Real Estate',
+  'utilities': 'Utilities',
+};
+
+/** Map an FMP sector label to our taxonomy, or null when not cleanly mappable. */
+function mapFmpSector(fmpSector: string | null | undefined): string | null {
+  if (!fmpSector) return null;
+  return FMP_SECTOR_MAP[fmpSector.trim().toLowerCase()] ?? null;
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -190,28 +219,45 @@ export async function runFullPipeline(
 
   progress(3, `Holdings fetched for ${fundHoldings.size}/${scorableFunds.length} funds`);
 
-  // ── Step 4: Fetch company fundamentals from FMP (with cache) ──
+  // ── Step 4: Fetch company fundamentals + profiles from FMP (with cache) ──
   // Session 10: Pre-fetch all unique tickers from Supabase cache in ONE query.
   // Only hit FMP for cache misses. Save misses to cache for next run.
+  // A4 Task 3: the company profile (industry, exchange, averageVolume) joins
+  // the bundle — a cache-miss ticker now costs 3 sequential calls instead
+  // of 2, same pacing, cached 7 days like the rest of the row.
   progress(4, 'Fetching company fundamentals from FMP');
 
-  // Collect unique tickers across all funds
+  // Collect unique tickers across all funds.
+  // A4 Task 1: 'home'-tier symbols are identity only — FMP Starter cannot
+  // serve them (the .T/.DE/.KS dead ends verified July 2) — so they are
+  // excluded from FMP enrichment instead of burning requests on dead ends.
   const allTickers = new Set<string>();
+  let homeTierSkipped = 0;
   for (const holdings of fundHoldings.values()) {
     for (const h of holdings) {
-      if (h.ticker) allTickers.add(h.ticker);
+      if (!h.ticker) continue;
+      if (h.listingTier === 'home') {
+        homeTierSkipped++;
+        continue;
+      }
+      allTickers.add(h.ticker);
     }
+  }
+  if (homeTierSkipped > 0) {
+    console.log(
+      `[pipeline] A4 Task 1: ${homeTierSkipped} home-exchange holdings excluded from FMP enrichment (identity only)`
+    );
   }
 
   const allTickerArray = Array.from(allTickers);
-  const fundamentals = new Map<string, { ratios: FmpRatios | null; keyMetrics: FmpKeyMetrics | null }>();
+  const fundamentals = new Map<string, { ratios: FmpRatios | null; keyMetrics: FmpKeyMetrics | null; profile: FmpProfile | null }>();
 
   // Step 4a: Batch-check FMP cache (single Supabase query for all tickers)
   let fmpCacheHits = 0;
   try {
     const cached = await getFmpCache(allTickerArray);
     for (const [ticker, entry] of cached) {
-      fundamentals.set(ticker, { ratios: entry.ratios, keyMetrics: entry.keyMetrics });
+      fundamentals.set(ticker, { ratios: entry.ratios, keyMetrics: entry.keyMetrics, profile: entry.profile ?? null });
       fmpCacheHits++;
     }
     console.log(`[pipeline] FMP cache: ${fmpCacheHits}/${allTickerArray.length} tickers from cache`);
@@ -221,6 +267,7 @@ export async function runFullPipeline(
 
   // Step 4b: Fetch cache misses from FMP API (sequential with delays)
   const fmpMisses = allTickerArray.filter(t => !fundamentals.has(t));
+  const fmpMissSet = new Set(fmpMisses);
   let fetchedCount = 0;
 
   if (fmpMisses.length > 0) {
@@ -229,21 +276,100 @@ export async function runFullPipeline(
 
   for (const ticker of fmpMisses) {
     try {
+      // A4 Task 3: profile first (industry harvest), then the bundle
+      const profile = await fetchProfile(ticker);
+      await delay(PIPELINE.API_CALL_DELAY_MS);
       const bundle = await fetchFundamentalsBundle(ticker);
-      fundamentals.set(ticker, bundle);
+      fundamentals.set(ticker, { ...bundle, profile });
 
       // Save to cache for next run (fire-and-forget — don't block pipeline)
-      saveFmpCache(ticker, bundle.ratios, bundle.keyMetrics).catch(cacheErr => {
+      saveFmpCache(ticker, bundle.ratios, bundle.keyMetrics, profile).catch(cacheErr => {
         console.warn(`[pipeline] FMP cache save failed for ${ticker}: ${cacheErr}`);
       });
     } catch (err) {
-      fundamentals.set(ticker, { ratios: null, keyMetrics: null });
+      fundamentals.set(ticker, { ratios: null, keyMetrics: null, profile: null });
     }
     fetchedCount++;
     if (fetchedCount % 25 === 0) {
       progress(4, `Fundamentals: ${fetchedCount}/${fmpMisses.length} API calls`);
     }
     await delay(PIPELINE.API_CALL_DELAY_MS);
+  }
+
+  // Step 4c (A4 Task 3): pre-A4 cache rows carry fundamentals but no
+  // profile. Backfill with a profile-only fetch (1 call each) so industry
+  // lands on the first post-deploy run without refetching fundamentals.
+  const profileBackfill = allTickerArray.filter(t => {
+    const entry = fundamentals.get(t);
+    return entry && !entry.profile && !fmpMissSet.has(t);
+  });
+  if (profileBackfill.length > 0) {
+    progress(4, `Backfilling ${profileBackfill.length} company profiles (industry) into the FMP cache`);
+    for (const ticker of profileBackfill) {
+      try {
+        const profile = await fetchProfile(ticker);
+        const entry = fundamentals.get(ticker)!;
+        entry.profile = profile;
+        if (profile) {
+          saveFmpCache(ticker, entry.ratios, entry.keyMetrics, profile).catch(cacheErr => {
+            console.warn(`[pipeline] FMP profile backfill save failed for ${ticker}: ${cacheErr}`);
+          });
+        }
+      } catch {
+        // Best-effort: a missing profile just means no industry tag this run
+      }
+      await delay(PIPELINE.API_CALL_DELAY_MS);
+    }
+  }
+
+  // Step 4d (A4 Task 3): harvest profile fields onto every enrichable holding
+  for (const [, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (!h.ticker || h.listingTier === 'home') continue;
+      const prof = fundamentals.get(h.ticker)?.profile;
+      if (!prof) continue;
+      h.industry = prof.industry || null;
+      h.industrySource = prof.industry ? 'fmp' : null;
+      h.isAdr = prof.isAdr ?? null;
+      h.exchange = prof.exchangeShortName || prof.exchange || null;
+      h.averageVolume = prof.averageVolume ?? null;
+      h.fmpSector = prof.sector || null;
+    }
+  }
+
+  // ── Step 4e (A4 Task 4): liquidity firewall — classification vs prices ──
+  // Thin OTC tickers are good for classification and poisonous for prices
+  // (SSNLF: average volume ~11 shares/day, verified July 2, 2026). A holding
+  // below the threshold contributes classification data ONLY: any future
+  // per-holding price fetch (the Pulse layer, Founding §3 Layer 2) must
+  // check momentumEligible first. No current code path fetches holding-level
+  // prices — the Momentum factor consumes fund NAV and is unchanged here.
+  //
+  // Verdicts: true/false only for FMP-enriched holdings. Identity-only
+  // ('home' tier), unresolved, and never-profiled holdings stay null
+  // ("not applicable"). A profile with MISSING volume counts as below the
+  // line — a silent gap must not pass as healthy (Principle 1).
+  //
+  // Threshold per A4 Task 4: 10,000 shares/day. Known refinement on record
+  // (Robert, July 5, 2026): shares/day treats a $5 stock and a $500 stock
+  // very differently — dollar volume may be the better yardstick when the
+  // Pulse layer consumes these flags. See the A4 Task 7 report.
+  const MOMENTUM_MIN_AVG_VOLUME = 10_000;
+  for (const [fundTicker, holdings] of fundHoldings) {
+    let firewalledWeight = 0;
+    for (const h of holdings) {
+      if (!h.ticker || h.listingTier === 'home') continue;
+      const prof = fundamentals.get(h.ticker)?.profile;
+      if (!prof) continue;
+      h.momentumEligible = (prof.averageVolume ?? 0) >= MOMENTUM_MIN_AVG_VOLUME;
+      if (!h.momentumEligible) firewalledWeight += h.pctOfNav;
+    }
+    if (firewalledWeight > 0) {
+      console.log(
+        `[pipeline] A4 Task 4: ${fundTicker} — ${firewalledWeight.toFixed(1)}% of NAV firewalled ` +
+        `(classification only; too thin for price series)`
+      );
+    }
   }
 
   // ── Step 5: Classify holdings into sectors via Claude Haiku (with cache) ──
@@ -308,6 +434,30 @@ export async function runFullPipeline(
 
       h.sector = cachedSector;
     }
+  }
+
+  // 5b-ii (A4 Task 3, Robert-approved policy July 5): FMP's sector fills
+  // gaps ONLY — an equity holding still unclassified after the cache check
+  // takes a cleanly-mapped FMP sector as a real signal before falling to
+  // Haiku (real filed data beats a model guess, and it saves Haiku calls).
+  // Existing labels are NEVER overwritten. Restricted to equity holdings so
+  // an issuer's profile can't mislabel a same-named bond (A3 Task 1 lesson).
+  let fmpSectorFilled = 0;
+  for (const [, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (h.sector || !h.fmpSector) continue;
+      if (deriveAssetType(h) !== 'equity') continue;
+      const mapped = mapFmpSector(h.fmpSector);
+      if (mapped) {
+        h.sector = mapped;
+        fmpSectorFilled++;
+      }
+    }
+  }
+  if (fmpSectorFilled > 0) {
+    console.log(
+      `[pipeline] A4 Task 3: FMP sector filled ${fmpSectorFilled} unclassified equity holdings (real signal, pre-Haiku)`
+    );
   }
 
   // 5c: Classify remaining uncached holdings via Claude Haiku
@@ -444,6 +594,122 @@ export async function runFullPipeline(
       `[pipeline] Final-pass classification: ${finalPassClassified} → Fixed Income, ${finalPassOther} → Other ` +
       `(0 remaining Unclassified)`
     );
+  }
+
+  // ── Step 5f (A4 Task 5): Haiku industry fallback on the pinned FMP menu ──
+  // Holdings FMP couldn't serve an industry for (home-exchange-only foreign
+  // names — the smallest slice of weight) are classified by Haiku against
+  // the SAME 159-industry menu, so the whole dataset speaks one taxonomy.
+  // Cache: (holding name, asset type), 15-day TTL — the A3 keying scheme.
+  {
+    const needIndustry: ResolvedHolding[] = [];
+    for (const [, holdings] of fundHoldings) {
+      for (const h of holdings) {
+        if (!h.industry && h.name && deriveAssetType(h) === 'equity') {
+          needIndustry.push(h);
+        }
+      }
+    }
+
+    if (needIndustry.length > 0) {
+      // Dedupe: one representative per (name, asset type)
+      const industryReps = new Map<string, ResolvedHolding>();
+      for (const h of needIndustry) {
+        const key = sectorCacheKey(h.name, deriveAssetType(h));
+        if (!industryReps.has(key)) industryReps.set(key, h);
+      }
+
+      // Batch-check the industry cache
+      const keyToIndustry = new Map<string, string>();
+      let industryCacheHits = 0;
+      try {
+        const cachedIndustries = await getIndustryClassifications(
+          [...industryReps.values()].map(h => ({ holdingName: h.name, assetType: deriveAssetType(h) }))
+        );
+        for (const [key, industry] of cachedIndustries) {
+          keyToIndustry.set(key, industry);
+          industryCacheHits++;
+        }
+        console.log(`[pipeline] A4 Task 5: industry cache — ${industryCacheHits}/${industryReps.size} holdings from cache`);
+      } catch {
+        console.warn('[pipeline] Industry cache lookup failed, classifying all via Claude');
+      }
+
+      // Classify the uncached representatives via Haiku (sequential, 1.2s)
+      const uncachedReps = [...industryReps.entries()]
+        .filter(([key]) => !keyToIndustry.has(key))
+        .map(([, h]) => h);
+      if (uncachedReps.length > 0) {
+        progress(5, `Classifying ${uncachedReps.length} holdings into industries via Claude (${industryCacheHits} cached)`);
+        try {
+          await classifyHoldingIndustries(uncachedReps);
+
+          const newIndustries: Array<{ holdingName: string; assetType: SectorAssetType; industry: string }> = [];
+          for (const h of uncachedReps) {
+            if (h.industry) {
+              const assetType = deriveAssetType(h);
+              keyToIndustry.set(sectorCacheKey(h.name, assetType), h.industry);
+              // 'Other' rows are cached too — no re-asking Haiku every run
+              newIndustries.push({ holdingName: h.name, assetType, industry: h.industry });
+            }
+          }
+          if (newIndustries.length > 0) {
+            saveIndustryClassifications(newIndustries).catch(cacheErr => {
+              console.warn(`[pipeline] Industry cache save failed: ${cacheErr}`);
+            });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push({ fund: 'ALL', step: 'industry-classification', error: msg });
+        }
+      }
+
+      // Apply industries to ALL matching holdings across ALL funds.
+      // 'Other' = fell off the menu after the retry: counts as unclassified,
+      // so industrySource stays null (July 2 decision applied to industries).
+      for (const h of needIndustry) {
+        if (h.industry) continue; // representative, already set
+        const industry = keyToIndustry.get(sectorCacheKey(h.name, deriveAssetType(h)));
+        if (industry) {
+          h.industry = industry;
+          h.industrySource = industry === 'Other' ? null : 'haiku';
+        }
+      }
+    }
+  }
+
+  // ── Step 5e (A4 Task 3): FMP-sector vs existing-label disagreement count ──
+  // Report ONLY — never acted on (Robert, July 5: a large number is a
+  // finding to discuss, not a queue of silent corrections). Compares FMP's
+  // mapped sector against the final label for equity holdings that have
+  // both; last-resort 'Other' rows are excluded (they carry no real label).
+  let fmpSectorAgree = 0;
+  let fmpSectorDisagree = 0;
+  const fmpDisagreeExamples: string[] = [];
+  for (const [fundTicker, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (!h.fmpSector || !h.sector || h.sector === 'Other') continue;
+      if (deriveAssetType(h) !== 'equity') continue;
+      const mapped = mapFmpSector(h.fmpSector);
+      if (!mapped) continue;
+      if (mapped === h.sector) {
+        fmpSectorAgree++;
+      } else {
+        fmpSectorDisagree++;
+        if (fmpDisagreeExamples.length < 10) {
+          fmpDisagreeExamples.push(`${fundTicker}/${h.ticker || h.name}: FMP=${mapped} vs existing=${h.sector}`);
+        }
+      }
+    }
+  }
+  if (fmpSectorAgree + fmpSectorDisagree > 0) {
+    console.log(
+      `[pipeline] A4 Task 3 sector comparison: ${fmpSectorAgree} agree, ${fmpSectorDisagree} disagree ` +
+      `of ${fmpSectorAgree + fmpSectorDisagree} comparable equity holdings (report-only, nothing changed)`
+    );
+    if (fmpDisagreeExamples.length > 0) {
+      console.log(`[pipeline] A4 Task 3 disagreement examples: ${fmpDisagreeExamples.join(' · ')}`);
+    }
   }
 
   // ── Step 6: Score Holdings Quality factor ──

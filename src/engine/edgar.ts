@@ -100,6 +100,48 @@ export async function fetchEdgarHoldings(
     // Step 4: Parse XML into structured data
     const result = await parseNportXml(xml, tickerEntry, filing);
 
+    // ── A4 Task 6 first-run verification logging ──────────────────────────
+    // These rows were silently dropped before A4. Log them by asset category
+    // (rows + net NAV weight) so the first production run can be checked
+    // against the July 5 evidence table (DRRYX: DBT 45/33.11%, EC 26/15.23%,
+    // STIV 1/5.92%, derivatives ~61/~0.46% net; PRPFX: EC 1/14.13%,
+    // STIV 3/11.18%, DBT 7/7.89%).
+    const keptNoCusip = result.holdings.filter(h => h.cusip === '');
+    if (keptNoCusip.length > 0) {
+      const byCat = new Map<string, { rows: number; weight: number }>();
+      for (const h of keptNoCusip) {
+        const cat = (h.assetCategory || 'NO-CATEGORY').toUpperCase();
+        const entry = byCat.get(cat) || { rows: 0, weight: 0 };
+        entry.rows++;
+        entry.weight += h.pctOfNav;
+        byCat.set(cat, entry);
+      }
+      const summary = [...byCat.entries()]
+        .sort((a, b) => b[1].weight - a[1].weight)
+        .map(([cat, e]) => `${cat} ${e.rows} rows/${e.weight.toFixed(2)}%`)
+        .join(', ');
+      console.log(
+        `[edgar] ${ticker}: A4 Task 6 — kept ${keptNoCusip.length}/${result.holdings.length} ` +
+        `previously-dropped no-CUSIP holdings: ${summary}`
+      );
+
+      // Robert's July 5 instruction: identifier-less rows that are NOT
+      // derivative-category are listed by NAME and weight so he can eyeball
+      // for anything that looks like a real operating company rather than
+      // bullion/coins/sweeps. Report-only — if any appear, the unresolvable
+      // test gets revisited for equity-category rows in a follow-up.
+      const DERIV_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DCR', 'DO']);
+      for (const h of keptNoCusip) {
+        const cat = (h.assetCategory || '').toUpperCase();
+        if (!h.isin && !DERIV_CATS.has(cat)) {
+          console.log(
+            `[edgar] ${ticker}:   identifier-less non-derivative: ` +
+            `"${h.name}" ${h.pctOfNav.toFixed(2)}% (${h.assetCategory || 'no category'})`
+          );
+        }
+      }
+    }
+
     return {
       success: true,
       data: result,
@@ -633,17 +675,24 @@ function extractHoldings(
 
 /**
  * Parse a single <invstOrSec> XML element into an EdgarHolding.
- * Skips holdings with no CUSIP (these are typically cash, derivatives, or
- * other non-equity positions we can't score).
+ *
+ * A4 Task 6: no-CUSIP holdings are KEPT. The old early-return here silently
+ * dropped every no-CUSIP row since Session 2 — DRRYX's "missing" 55.30% of
+ * NAV and PRPFX's bullion were never parsed in at all (evidence of record:
+ * Robert's July 5 parse of the actual filings; raw XML sha256 DRRYX
+ * a428d661…, PRPFX 01866004…). A missing/all-zeros CUSIP becomes '' and
+ * downstream identity is the A3 scheme: ISIN when the filing has one, else
+ * a name key; rows with neither identifier (or derivative category) are
+ * structurally unresolvable — kept, labeled, never sent to resolution.
  */
 function parseHoldingElement(
   item: Record<string, unknown>
 ): EdgarHolding | null {
-  const cusip = getTextValue(item, 'cusip');
-  // Skip holdings without a CUSIP — can't resolve to a ticker
-  if (!cusip || cusip === '000000000' || cusip.trim() === '') {
-    return null;
-  }
+  const rawCusip = getTextValue(item, 'cusip');
+  const cusip =
+    !rawCusip || rawCusip.trim() === '' || /^0+$/.test(rawCusip.trim())
+      ? ''
+      : rawCusip;
 
   const name = getTextValue(item, 'name') || '';
   const title = getTextValue(item, 'title') || name;

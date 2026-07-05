@@ -191,6 +191,14 @@ export async function persistPipelineResults(
       parent_fund_name: holding.parentFundName,
       accession_number: '',
       report_date: new Date().toISOString().slice(0, 10),
+      // A4 Task 3: industry harvest + liquidity fields (Task 4 writes
+      // momentum_eligible; null until then / for non-enrichable holdings)
+      industry: holding.industry ?? null,
+      industry_source: holding.industrySource ?? null,
+      is_adr: holding.isAdr ?? null,
+      exchange: holding.exchange ?? null,
+      average_volume: holding.averageVolume ?? null,
+      momentum_eligible: holding.momentumEligible ?? null,
     }));
 
     // ── A2 Task 7 + A2.3 Task 1: merge duplicate lots within the batch ────
@@ -220,6 +228,15 @@ export async function persistPipelineResults(
         existing.sector = existing.sector || row.sector;
         existing.asset_category = existing.asset_category || row.asset_category;
         existing.country = existing.country || row.country;
+        // A4 Task 3: fill gaps from later lots; industry travels with its source
+        if (!existing.industry && row.industry) {
+          existing.industry = row.industry;
+          existing.industry_source = row.industry_source;
+        }
+        existing.is_adr = existing.is_adr ?? row.is_adr;
+        existing.exchange = existing.exchange || row.exchange;
+        existing.average_volume = existing.average_volume ?? row.average_volume;
+        existing.momentum_eligible = existing.momentum_eligible ?? row.momentum_eligible;
       } else {
         byKey.set(key, {
           ...row,
@@ -278,6 +295,15 @@ export async function persistPipelineResults(
           nav_resolved_pct: d.navResolvedPct,
           classified_pct: d.classifiedPct,
           weight_covered_pct: d.weightCoveredPct,
+          // A4 Task 6: v2 resolvable-NAV grading + Task 3/4 metrics
+          resolvable_pct: d.resolvablePct,
+          resolved_of_resolvable_pct: d.resolvedOfResolvablePct,
+          unresolvable_weight_pct: d.unresolvableWeightPct,
+          short_overlay_weight_pct: d.shortOverlayWeightPct,
+          momentum_firewalled_weight_pct: d.momentumFirewalledWeightPct,
+          industry_fmp_pct: d.industryFmpPct,
+          industry_haiku_pct: d.industryHaikuPct,
+          industry_none_pct: d.industryNonePct,
           holdings_included: d.holdingsIncluded,
           holdings_total: d.holdingsTotal,
           lookthrough_detected: d.lookthroughDetected,
