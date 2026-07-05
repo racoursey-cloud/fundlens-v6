@@ -19,6 +19,15 @@ export interface EdgarHolding {
   cusip: string;
   /** ISIN if present in filing (12 chars) */
   isin: string | null;
+  /** SEDOL if present under <identifiers><other otherDesc="SEDOL"> — some
+   *  filers (QFVRX's Pear Tree Polaris, verified July 5, 2026) provide NO
+   *  ISIN and identify equities by SEDOL + Bloomberg ticker only.
+   *  Optional so pre-A4-QFVRX construction sites stay valid. */
+  sedol?: string | null;
+  /** Bloomberg-format ticker from <identifiers><ticker value="1299 HK"/> —
+   *  carried as a hint; not used for resolution yet (deferred until the
+   *  SEDOL path proves insufficient) */
+  identifierTicker?: string | null;
   /** Legal Entity Identifier if present */
   lei: string | null;
   /** Security title */
@@ -102,7 +111,7 @@ export type ListingTier = 'us' | 'otc' | 'home';
 
 /** OpenFIGI mapping job — one per CUSIP or ISIN in a batch POST */
 export interface FigiMappingJob {
-  idType: 'ID_CUSIP' | 'ID_ISIN';
+  idType: 'ID_CUSIP' | 'ID_ISIN' | 'ID_SEDOL';
   idValue: string;
 }
 
@@ -146,6 +155,11 @@ export interface ResolvedHolding {
    *  placeholder-CUSIP rows by ISIN — distinct bond maturities sharing an
    *  issuer name must never collapse) */
   isin?: string | null;
+  /** SEDOL from EDGAR (A4 QFVRX fix: identity + persist key when neither
+   *  CUSIP nor ISIN exists) */
+  sedol?: string | null;
+  /** Bloomberg-format identifiers-ticker hint (stored, not yet consumed) */
+  identifierTicker?: string | null;
   /** Resolved ticker from OpenFIGI (null if unresolved) */
   ticker: string | null;
   /** Percentage of fund net assets in whole-percent units (e.g. 4.89 = 4.89% of NAV) */
