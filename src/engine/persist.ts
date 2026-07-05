@@ -339,6 +339,11 @@ export async function persistPipelineResults(
           industry_fmp_pct: d.industryFmpPct,
           industry_haiku_pct: d.industryHaikuPct,
           industry_none_pct: d.industryNonePct,
+          // A5 Task 2: v3 confidence profile (a5_task2_dossier_v3 migration)
+          conf_fully_verified_pct: d.confFullyVerifiedPct,
+          conf_model_classified_pct: d.confModelClassifiedPct,
+          conf_identity_only_pct: d.confIdentityOnlyPct,
+          conf_opaque_pct: d.confOpaquePct,
           holdings_included: d.holdingsIncluded,
           holdings_total: d.holdingsTotal,
           lookthrough_detected: d.lookthroughDetected,
