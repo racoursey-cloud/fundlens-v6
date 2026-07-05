@@ -573,12 +573,14 @@ export function Pipeline() {
             </span>
           </div>
 
-          {/* Header row — A4 Task 6: "Resolvable" shows how much of the
-              examined NAV is structurally resolvable; "Resolved" is the v2
-              graded number (% of resolvable NAV resolved, threshold 90) */}
+          {/* Header row — A4 Task 6 + follow-up: the columns read left to
+              right as the actual chain (Principle 1): "Examined" = % of NAV
+              the cutoff walk covered; "Resolvable" = how much of that is
+              structurally resolvable; "Resolved" = the v2 graded number
+              (% of resolvable NAV resolved, threshold 90); "Classified". */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '70px 1fr 90px 90px 90px 90px 80px 80px',
+            gridTemplateColumns: '70px 1fr 90px 90px 90px 90px 90px 80px 80px',
             gap: '10px',
             padding: '10px 20px',
             borderBottom: `1px solid ${theme.colors.border}`,
@@ -590,6 +592,7 @@ export function Pipeline() {
           }}>
             <span>Fund</span>
             <span>Gate</span>
+            <span style={{ textAlign: 'right' }}>Examined</span>
             <span style={{ textAlign: 'right' }}>Resolvable</span>
             <span style={{ textAlign: 'right' }}>Resolved</span>
             <span style={{ textAlign: 'right' }}>Classified</span>
@@ -630,7 +633,7 @@ export function Pipeline() {
               <div key={d.id} style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: '70px 1fr 90px 90px 90px 90px 80px 80px',
+                  gridTemplateColumns: '70px 1fr 90px 90px 90px 90px 90px 80px 80px',
                   gap: '10px',
                   padding: '10px 20px',
                   alignItems: 'center',
@@ -647,6 +650,9 @@ export function Pipeline() {
                     color: gateColor, background: `${gateColor}18`,
                     border: `1px solid ${gateColor}40`,
                   }}>{gateLabel}</span>
+                  <span style={{ textAlign: 'right', fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
+                    {d.is_money_market ? '—' : `${Number(d.weight_covered_pct).toFixed(1)}%`}
+                  </span>
                   <span style={{ textAlign: 'right', fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
                     {d.is_money_market || !isV2 ? '—' : `${Number(d.resolvable_pct ?? 0).toFixed(1)}%`}
                   </span>
