@@ -31,6 +31,9 @@ import {
   alertStaleRun,
   sendAdminAlert,
 } from './admin-alert.js';
+// v8 A0 (Gap 5): heartbeat + THE shared liveness rule — cron.ts and
+// routes.ts both import runIsStale; neither carries its own copy anymore.
+import { startRunHeartbeat, runIsStale } from './monitor.js';
 import type { FundRow, PipelineRunRow } from './types.js';
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -93,6 +96,9 @@ async function scheduledPipelineRun(): Promise<void> {
     return;
   }
 
+  // v8 A0 (Gap 5): heartbeat for the nightly path — one of the three runner
+  // sites (routes.ts trigger and monitor.ts retry are the others)
+  const stopHeartbeat = startRunHeartbeat(run.id);
   try {
     // Get active funds
     const { data: funds } = await supaSelect<FundRow[]>('funds', {
@@ -144,6 +150,7 @@ async function scheduledPipelineRun(): Promise<void> {
     // Alert admins of total pipeline failure
     alertPipelineFailure(run.id, msg).catch(() => {});
   } finally {
+    stopHeartbeat();
     jobState.pipelineRunning = false;
   }
 }
@@ -197,35 +204,33 @@ async function scheduledBriefDelivery(): Promise<void> {
 /**
  * Check for pipeline runs stuck in "running" status.
  *
- * If a pipeline has been "running" for more than 120 minutes (A5 Task 1),
- * something went wrong (server restart, crash, etc.). Mark it as failed so
- * the next scheduled run can proceed. Long legitimate runs (full-exam first
- * run, weekly FMP refresh night) stay safely under this line.
+ * v8 A0 (Gap 5): liveness is now judged by the shared runIsStale rule in
+ * monitor.ts — no heartbeat for 10+ minutes (started_at fallback for rows
+ * from before the heartbeat migration), or past the 6-hour hard ceiling.
+ * This replaces the 120-minute wall clock (A5 Task 1), whose inherent
+ * trade-off was slow crash detection vs false-killing long legitimate
+ * runs; a heartbeat has neither problem. The routes.ts trigger path uses
+ * the SAME rule — one definition of "stale", two importers.
  */
 async function cleanupStaleRuns(): Promise<void> {
-  // A5 Task 1 (Robert-approved July 5, 2026): raised 15 → 120 minutes. The
-  // 15-minute line was tuned for the cached, 400-holding world ("~70s");
-  // full examination makes long runs LEGITIMATE — the first run is forecast
-  // at 60–100 minutes and the weekly FMP-cache-refresh night runs long too.
-  // A run older than 120 minutes is genuinely dead.
-  const staleThresholdAgo = new Date(Date.now() - 120 * 60 * 1000).toISOString();
-
-  const { data: staleRuns } = await supaSelect<PipelineRunRow[]>('pipeline_runs', {
+  const { data: runningRuns } = await supaSelect<PipelineRunRow[]>('pipeline_runs', {
     status: 'eq.running',
-    'started_at': `lt.${staleThresholdAgo}`,
   });
 
-  if (staleRuns && staleRuns.length > 0) {
-    for (const stale of staleRuns) {
-      console.warn(`[cron] Marking stale pipeline run ${stale.id} as failed (started ${stale.started_at})`);
-      await supaUpdate('pipeline_runs', {
-        status: 'failed',
-        error_message: 'Marked as failed by stale run cleanup — exceeded 120-minute timeout',
-        completed_at: new Date().toISOString(),
-      }, { id: `eq.${stale.id}` });
+  const staleRuns = (runningRuns || []).filter(r => runIsStale(r));
 
-      alertStaleRun(stale.id, stale.started_at).catch(() => {});
-    }
+  for (const stale of staleRuns) {
+    console.warn(
+      `[cron] Marking stale pipeline run ${stale.id} as failed ` +
+      `(started ${stale.started_at}, last heartbeat ${stale.heartbeat_at ?? 'none recorded'})`
+    );
+    await supaUpdate('pipeline_runs', {
+      status: 'failed',
+      error_message: 'Marked as failed by stale-run cleanup — no heartbeat for 10+ minutes, or past the 6-hour ceiling',
+      completed_at: new Date().toISOString(),
+    }, { id: `eq.${stale.id}` });
+
+    alertStaleRun(stale.id, stale.started_at).catch(() => {});
   }
 }
 
