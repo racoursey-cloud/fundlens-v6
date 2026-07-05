@@ -516,7 +516,7 @@ export async function assembleDataPacket(
     macroStance: ((thesisRow as Record<string, unknown>).macro_stance as string || 'mixed') as MacroThesis['macroStance'],
     riskFactors: (thesisRow as Record<string, unknown>).risk_factors as string[] || [],
     generatedAt: new Date().toISOString(),
-    model: CLAUDE.THESIS_MODEL,
+    model: CLAUDE.PROSE_MODEL,
   } : {
     narrative: 'Macro thesis unavailable.',
     sectorPreferences: [],
@@ -525,7 +525,7 @@ export async function assembleDataPacket(
     macroStance: 'mixed' as const,
     riskFactors: [],
     generatedAt: new Date().toISOString(),
-    model: CLAUDE.THESIS_MODEL,
+    model: CLAUDE.PROSE_MODEL,
   };
 
   // Build user weights (used internally for composite, never sent to Claude)
@@ -869,16 +869,21 @@ export async function generateBrief(
   const systemPrompt = editorialPolicy;
   const userPrompt = buildUserPrompt(dataPacket);
 
-  // ── Step 3: Call Claude Opus ──
-  console.log(`[brief-engine] Calling Claude ${CLAUDE.BRIEF_MODEL} for Brief generation`);
+  // ── Step 3: Call Claude (A5 Task 5 / Decision 6, ratified July 5, 2026:
+  // the Brief moves to PROSE_MODEL with the rest of the user-facing prose —
+  // one voice everywhere, judged by ear, one-constant revert if the ear
+  // says otherwise). Thinking is on by default on Sonnet 5 and counts
+  // against max_tokens; ceiling raised 4096 -> 12000. Only text blocks are
+  // read below, so thinking output cannot reach the Brief. ──
+  console.log(`[brief-engine] Calling Claude ${CLAUDE.PROSE_MODEL} for Brief generation`);
 
   const client = new Anthropic();
   let contentMd = '';
 
   try {
     const response = await client.messages.create({
-      model: CLAUDE.BRIEF_MODEL,
-      max_tokens: 4096,
+      model: CLAUDE.PROSE_MODEL,
+      max_tokens: 12000,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
     });
@@ -902,7 +907,7 @@ export async function generateBrief(
       title: `${BRIEF.DISPLAY_NAME} — Generation Failed`,
       content_md: '',
       data_packet: dataPacket,
-      model_used: CLAUDE.BRIEF_MODEL,
+      model_used: CLAUDE.PROSE_MODEL,
       generation_ms: Date.now() - startMs,
       thesis_narrative: dataPacket.macro.narrative,
       status: 'failed',
@@ -927,7 +932,7 @@ export async function generateBrief(
     title,
     content_md: contentMd,
     data_packet: dataPacket,
-    model_used: CLAUDE.BRIEF_MODEL,
+    model_used: CLAUDE.PROSE_MODEL,
     generation_ms: generationMs,
     thesis_narrative: dataPacket.macro.narrative,
     status: 'generated',
@@ -969,6 +974,6 @@ export async function generateBrief(
     contentMd,
     dataPacket,
     generationMs,
-    model: CLAUDE.BRIEF_MODEL,
+    model: CLAUDE.PROSE_MODEL,
   };
 }
