@@ -190,6 +190,9 @@ export async function cusipCacheSave(
  * @param cacheSave - Function to persist new resolutions to Supabase (default: cusipCacheSave)
  * @param isinMap - Optional map of CUSIP → ISIN for international holdings (BUG-3 fix)
  * @param nameMap - Optional map of CUSIP → holding name from EDGAR for FMP fallback (BUG-3 fix)
+ * @param fmpIsinSkipIds - Ids that skip the PAID FMP-ISIN step (A4 Task 6:
+ *   debt holdings — a bond never yields a company profile; the free batched
+ *   OpenFIGI path still runs for them)
  */
 export async function resolveCusips(
   cusips: string[],
@@ -197,7 +200,8 @@ export async function resolveCusips(
   cacheLookup: (cusips: string[]) => Promise<Map<string, CusipResolution>> = cusipCacheLookup,
   cacheSave: (resolutions: CusipResolution[]) => Promise<void> = cusipCacheSave,
   isinMap?: Map<string, string>,
-  nameMap?: Map<string, string>
+  nameMap?: Map<string, string>,
+  fmpIsinSkipIds?: Set<string>
 ): Promise<PipelineStepResult<Map<string, CusipResolution>>> {
   const start = Date.now();
 
@@ -252,10 +256,12 @@ export async function resolveCusips(
     const resolvedByFmpIsin = new Set<string>();
     const fmpIsinCandidates: Array<{ id: string; isin: string }> = [];
     for (const id of isinIds) {
+      if (fmpIsinSkipIds?.has(id)) continue; // A4 Task 6: debt — no profile exists
       const isin = id.slice('ISIN:'.length);
       if (!isin.toUpperCase().startsWith('US')) fmpIsinCandidates.push({ id, isin });
     }
     for (const id of realCusips) {
+      if (fmpIsinSkipIds?.has(id)) continue; // A4 Task 6: debt — no profile exists
       const isin = isinMap?.get(id);
       if (isin && !isin.toUpperCase().startsWith('US')) fmpIsinCandidates.push({ id, isin });
     }
