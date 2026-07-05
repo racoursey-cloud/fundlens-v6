@@ -22,8 +22,13 @@ import { Resend } from 'resend';
  *  alerts sent before this fix never reached him. */
 const ADMIN_EMAILS = ['racoursey@gmail.com'];
 
-/** Sender address for alert emails */
-const FROM_ADDRESS = 'FundLens Ops <alerts@fundlens.app>';
+/** Sender address for alert emails.
+ *  A5 follow-up (Robert, July 5, 2026): the Resend-verified sending domain
+ *  is updates.fundlens.app — a subdomain, deliberately (subdomain sending
+ *  is deliverability best practice). Resend verification is exact-match
+ *  per domain; the root domain was never verified, which silently killed
+ *  every alert email until July 5. */
+const FROM_ADDRESS = 'FundLens Ops <alerts@updates.fundlens.app>';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
