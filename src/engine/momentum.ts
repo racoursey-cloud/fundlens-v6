@@ -93,6 +93,19 @@ const TRADING_DAYS_PER_MONTH = 21;
  */
 const MIN_DAILY_RETURNS_FOR_VOL = 10;
 
+/**
+ * v8 A0 item 3: minimum trading days of NAV history for a REAL momentum
+ * score. This implements the v7 charter §3 pass threshold ("≥ 240 trading
+ * days of NAV history") that was ratified July 1, 2026 but never coded —
+ * Robert's Option C ruling, July 5, 2026: "CEMEX is too new for us to make
+ * an evaluation." A fund below this line takes the existing synthetic-
+ * neutral path (score 50, isFallback, disclosed in the dossier and on the
+ * fund surface) instead of a real score renormalized onto its shortest,
+ * noisiest windows. Seasoned funds are untouched: the pipeline's 400-
+ * calendar-day fetch yields ~275 trading days.
+ */
+const MIN_TRADING_DAYS_FOR_MOMENTUM = 240;
+
 // ─── Math Helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -142,7 +155,17 @@ export function calculateFundMomentum(
   ticker: string,
   prices: FmpDailyPrice[]
 ): FundMomentum {
-  if (!prices || prices.length === 0) {
+  // v8 A0 item 3: too little history is treated exactly like no history —
+  // the fund takes the synthetic-neutral fallback path (§2.5.3) rather than
+  // a real score built from renormalized short windows (Option C, ratified
+  // July 5, 2026; charter §3 lineage on the constant above).
+  if (!prices || prices.length < MIN_TRADING_DAYS_FOR_MOMENTUM) {
+    if (prices && prices.length > 0) {
+      console.log(
+        `[momentum] ${ticker}: only ${prices.length} trading days of NAV history ` +
+        `(minimum ${MIN_TRADING_DAYS_FOR_MOMENTUM}) — too new to evaluate, scoring neutral with disclosure`
+      );
+    }
     return {
       ticker,
       returns: {
