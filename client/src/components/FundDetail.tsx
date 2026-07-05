@@ -329,7 +329,7 @@ export function FundDetail({ ticker, onClose }: Props) {
                       ['Fully verified', confidence.ladder.fullyVerified,
                         'Identity and classification both come straight from filed data.'],
                       ['Identified, classification estimated', confidence.ladder.modelClassified,
-                        'We know exactly what it is; the industry label is model-assessed.'],
+                        'We know exactly what it is; the industry label is estimated.'],
                       ['Identified, limited data', confidence.ladder.identityOnly,
                         'We know exactly what it is; deeper financial data isn’t available on our data plan.'],
                       ['Not classifiable by nature', confidence.ladder.opaque,
