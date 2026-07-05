@@ -27,11 +27,71 @@ import {
   CusipCacheRow,
   FigiMappingJob,
   FigiResult,
+  ListingTier,
   PipelineStepResult,
   delay,
 } from './types.js';
 import { supaFetch } from './supabase.js';
 import { searchByName } from './fmp.js';
+
+// ─── A4 Task 1: US-symbol-preferred listing tiers ───────────────────────────
+// When one identifier maps to several listings, prefer:
+//   1. 'us'   — NYSE/Nasdaq listing or ADR
+//   2. 'otc'  — OTC-market ADR (FMP Starter serves these — Tencent TCEHY,
+//               even near-dead SSNLF, verified July 2, 2026)
+//   3. 'home' — home-exchange listing (identity only; FMP Starter cannot
+//               serve it — the .T/.DE/.KS/.SW dead ends from production)
+
+/** Rank for sorting: lower = preferred. */
+function tierRank(tier: ListingTier): number {
+  return tier === 'us' ? 0 : tier === 'otc' ? 1 : 2;
+}
+
+/**
+ * OpenFIGI exchCode values for the NYSE/Nasdaq venue family plus the 'US'
+ * composite. Other short U-prefixed codes are treated as US-market but
+ * OTC-tier; PQ/PK are OTC Markets codes.
+ *
+ * NOTE (A4 Task 1): this set could not be verified against live OpenFIGI
+ * responses during implementation (network policy blocks the API from the
+ * build environment). Any resolved symbol whose exchCode falls outside all
+ * known sets is logged loudly below so the first production run confirms
+ * or corrects the mapping.
+ */
+const FIGI_US_MAJOR_EXCH = new Set(['US', 'UN', 'UW', 'UQ', 'UR', 'UA', 'UP']);
+const FIGI_OTC_EXCH = new Set(['PQ', 'PK', 'UV']);
+
+/** Derive the listing tier of an OpenFIGI result. */
+function figiTier(d: FigiResult): ListingTier {
+  const ex = (d.exchCode || '').toUpperCase();
+  if (FIGI_US_MAJOR_EXCH.has(ex)) return 'us';
+  if (FIGI_OTC_EXCH.has(ex)) return 'otc';
+  // U-prefixed 1–2 char codes are US venues we haven't cataloged: treat as
+  // US-market but OTC-tier (still FMP-servable), and log for verification.
+  if (/^U[A-Z]?$/.test(ex)) {
+    console.log(`[cusip] Listing-tier note: uncataloged US-family exchCode "${ex}" (ticker ${d.ticker}) → tier 'otc'`);
+    return 'otc';
+  }
+  // An ADR trades in the US by definition, whatever venue code it carries.
+  const secType = `${d.securityType || ''} ${d.securityType2 || ''}`.toUpperCase();
+  if (secType.includes('ADR')) {
+    console.log(`[cusip] Listing-tier note: ADR with non-US exchCode "${ex}" (ticker ${d.ticker}) → tier 'otc'`);
+    return 'otc';
+  }
+  return 'home';
+}
+
+/**
+ * Derive the listing tier of an FMP search result from its exchange name.
+ * FMP uses NYSE / NASDAQ / AMEX for the majors and OTC-flavored names
+ * ("Other OTC", "OTC", PNK/OTCQX/OTCQB) for the OTC markets.
+ */
+function fmpExchangeTier(exchangeShortName: string | null | undefined): ListingTier {
+  const ex = (exchangeShortName || '').toUpperCase();
+  if (ex === 'NYSE' || ex === 'NASDAQ' || ex === 'AMEX') return 'us';
+  if (ex.includes('OTC') || ex === 'PNK') return 'otc';
+  return 'home';
+}
 
 // ─── Supabase Cache Functions ─────────────────────────────────────────────
 
@@ -67,6 +127,8 @@ export async function cusipCacheLookup(
       securityType: row.security_type,
       resolved: row.resolved,
       warning: null,
+      // A4 Task 1: tier travels with the cached resolution ('us'/'otc'/'home')
+      listingTier: (row.listing_tier as ListingTier | null) ?? null,
     });
   }
 
@@ -96,6 +158,7 @@ export async function cusipCacheSave(
       name: r.name,
       security_type: r.securityType,
       resolved: r.resolved,
+      listing_tier: r.listingTier ?? null,
     }));
   if (rows.length === 0) return;
 
@@ -271,6 +334,7 @@ export async function resolveCusips(
                   securityType: isinResult.securityType || newResolutions[idx].securityType,
                   resolved: true,
                   warning: 'Resolved via ISIN fallback',
+                  listingTier: isinResult.listingTier ?? null,
                 };
                 isinResolved++;
               }
@@ -368,13 +432,13 @@ async function tryFmpSearchFallback(
       const results = await searchByName(searchQuery, 3);
 
       if (results.length > 0) {
-        // Prefer US-listed result
-        const usResult = results.find(r =>
-          r.exchangeShortName === 'NYSE' ||
-          r.exchangeShortName === 'NASDAQ' ||
-          r.exchangeShortName === 'AMEX'
+        // A4 Task 1: rank by listing tier (us > otc > home) instead of the
+        // old NYSE/Nasdaq-or-first rule. A home-exchange name match is kept
+        // as identity only — its tier flags it as not FMP-enrichable.
+        const ranked = [...results].sort(
+          (a, b) => tierRank(fmpExchangeTier(a.exchangeShortName)) - tierRank(fmpExchangeTier(b.exchangeShortName))
         );
-        const bestResult = usResult || results[0];
+        const bestResult = ranked[0];
 
         // Update the resolution in-place (it's the same object in allResolutions)
         const idx = allResolutions.findIndex(r => r.cusip === resolution.cusip);
@@ -385,6 +449,7 @@ async function tryFmpSearchFallback(
             name: bestResult.name || allResolutions[idx].name,
             resolved: true,
             warning: 'Resolved via FMP search fallback',
+            listingTier: fmpExchangeTier(bestResult.exchangeShortName),
           };
           fmpResolved++;
         }
@@ -579,11 +644,16 @@ function parseOpenFigiResponse(
       continue;
     }
 
-    // Prefer US-listed equities; fall back to first result
-    const bestMatch =
-      data.find(d => d.exchCode === 'US' && d.marketSector === 'Equity') ||
-      data.find(d => d.exchCode === 'US') ||
-      data[0];
+    // A4 Task 1: rank candidates by listing tier (us > otc > home), then
+    // prefer Equity within a tier (preserves the old US-equity-first rule).
+    // A home-exchange match is still accepted — it is a real identity —
+    // but its tier marks it as not FMP-enrichable.
+    const ranked = [...data].sort(
+      (a, b) =>
+        tierRank(figiTier(a)) - tierRank(figiTier(b)) ||
+        (a.marketSector === 'Equity' ? 0 : 1) - (b.marketSector === 'Equity' ? 0 : 1)
+    );
+    const bestMatch = ranked[0];
 
     const ticker = bestMatch.ticker || null;
 
@@ -595,6 +665,7 @@ function parseOpenFigiResponse(
       // Only mark as resolved if we actually got a usable ticker
       resolved: ticker !== null,
       warning: ticker ? null : 'OpenFIGI matched but no ticker returned',
+      listingTier: ticker ? figiTier(bestMatch) : null,
     });
   }
 
