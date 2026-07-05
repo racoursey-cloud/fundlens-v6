@@ -5,8 +5,12 @@
  *   1. Profile — display name, email (read-only)
  *   2. Scoring Preferences — risk tolerance + factor weights (read-only summary)
  *   3. Fund List — ~18 funds in TerrAscend 401(k) menu, enable/disable
- *   4. Pipeline — admin-only pipeline controls (moved from top-level nav)
- *   5. About — version, help link placeholder
+ *   4. About — version, help link placeholder
+ *
+ * v8 A0 item 2: the Analysis section (duplicate pipeline trigger) is retired —
+ * the header button and the Pipeline tab are the two trigger points, one
+ * label ("Refresh Analysis"). The section was also never admin-gated, so
+ * every user saw a button the server 403s for them; retiring it closes that.
  *
  * Session 11 deliverable. Destination: client/src/pages/Settings.tsx
  * References: v5.1 SettingsTab.jsx, Spec §6.4–§6.5
@@ -18,11 +22,8 @@ import {
   fetchProfile,
   fetchFunds,
   updateProfile,
-  fetchPipelineStatus,
-  triggerPipeline,
   type UserProfile,
   type Fund,
-  type PipelineRun,
 } from '../api';
 import { theme } from '../theme';
 
@@ -87,15 +88,8 @@ export function Settings() {
   });
   const [riskTolerance, setRiskTolerance] = useState<number>(4.0);
 
-  // Pipeline state
-  const [pipelineStatus, setPipelineStatus] = useState<{
-    latestRun: PipelineRun | null;
-    isRunning: boolean;
-  } | null>(null);
-  const [pipelineTriggering, setPipelineTriggering] = useState(false);
-
   useEffect(() => {
-    Promise.all([fetchProfile(), fetchFunds(), fetchPipelineStatus()]).then(([pRes, fRes, psRes]) => {
+    Promise.all([fetchProfile(), fetchFunds()]).then(([pRes, fRes]) => {
       if (pRes.data?.profile) {
         setProfile(pRes.data.profile);
         setDisplayName(pRes.data.profile.display_name ?? '');
@@ -108,7 +102,6 @@ export function Settings() {
         setRiskTolerance(pRes.data.profile.risk_tolerance);
       }
       if (fRes.data?.funds) setFunds(fRes.data.funds);
-      if (psRes.data) setPipelineStatus(psRes.data);
       setLoading(false);
     });
   }, []);
@@ -145,20 +138,6 @@ export function Settings() {
     if (res.data?.profile) setProfile(res.data.profile);
     setNameSaving(false);
     showToast('Display name updated');
-  };
-
-  const handleTriggerPipeline = async () => {
-    setPipelineTriggering(true);
-    const res = await triggerPipeline();
-    setPipelineTriggering(false);
-    if (res.error) {
-      showToast(`Error: ${res.error}`);
-    } else {
-      showToast('Analysis started');
-      // Refresh status
-      const psRes = await fetchPipelineStatus();
-      if (psRes.data) setPipelineStatus(psRes.data);
-    }
   };
 
   if (loading) {
@@ -434,51 +413,7 @@ export function Settings() {
 
       <Divider />
 
-      {/* ═══ SECTION 4 — ANALYSIS (admin) ═══ */}
-      <section style={{ marginBottom: 32 }}>
-        <SectionHeader>Analysis</SectionHeader>
-        <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {pipelineStatus && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 13, color: theme.colors.textMuted }}>Status</span>
-              <span style={{
-                fontSize: 13, fontWeight: 600,
-                color: pipelineStatus.isRunning ? theme.colors.warning : theme.colors.success,
-              }}>
-                {pipelineStatus.isRunning ? 'Running' : 'Idle'}
-              </span>
-            </div>
-          )}
-          {pipelineStatus?.latestRun && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 13, color: theme.colors.textMuted }}>Last Run</span>
-              <span style={{ fontSize: 12, fontFamily: theme.fonts.mono, color: theme.colors.textDim }}>
-                {pipelineStatus.latestRun.completed_at
-                  ? new Date(pipelineStatus.latestRun.completed_at).toLocaleString()
-                  : 'In progress'}
-              </span>
-            </div>
-          )}
-          <button
-            onClick={handleTriggerPipeline}
-            disabled={pipelineTriggering || pipelineStatus?.isRunning}
-            style={{
-              marginTop: 4, padding: '10px 16px', borderRadius: 6,
-              border: 'none', background: theme.colors.accentBlue,
-              color: '#fff', fontSize: 13, fontWeight: 600,
-              cursor: pipelineTriggering ? 'wait' : 'pointer',
-              opacity: (pipelineTriggering || pipelineStatus?.isRunning) ? 0.5 : 1,
-              transition: 'opacity 0.15s',
-            }}
-          >
-            {pipelineTriggering ? 'Starting…' : 'Refresh Analysis'}
-          </button>
-        </div>
-      </section>
-
-      <Divider />
-
-      {/* ═══ SECTION 5 — ABOUT ═══ */}
+      {/* ═══ SECTION 4 — ABOUT ═══ */}
       <section>
         <SectionHeader>About</SectionHeader>
         <div style={{ fontSize: 13, color: theme.colors.textMuted, lineHeight: 1.6 }}>

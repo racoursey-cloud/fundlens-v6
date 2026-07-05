@@ -5,7 +5,8 @@
  * system health, and controls for triggering/retrying runs.
  *
  * Features:
- *   - "Run Pipeline Now" button with status indicator
+ *   - "Refresh Analysis" button with status indicator (v8 A0 item 2: one
+ *     label across both trigger points — header and this tab)
  *   - Pipeline run history with status, duration, fund counts
  *   - Auto-refresh while pipeline is running (10s polling)
  *   - "Retry Failed" button for failed runs
@@ -339,7 +340,7 @@ export function Pipeline() {
               transition: 'background 0.15s ease',
             }}
           >
-            {isRunning ? 'Pipeline Running...' : 'Run Pipeline Now'}
+            {isRunning ? 'Analyzing…' : 'Refresh Analysis'}
           </button>
         </div>
       </div>
@@ -459,7 +460,7 @@ export function Pipeline() {
             color: theme.colors.textDim,
             fontSize: '14px',
           }}>
-            No pipeline runs yet. Click "Run Pipeline Now" to score your funds.
+            No pipeline runs yet. Click "Refresh Analysis" to score your funds.
           </div>
         ) : (
           <div>
