@@ -142,6 +142,21 @@ export async function fetchEdgarHoldings(
       }
     }
 
+    // ── A4 SEDOL instrumentation (Robert, July 5) ─────────────────────────
+    // Measures whether OTHER funds' filings carry SEDOLs the pipeline was
+    // ignoring — the direct test of whether VFWAX/VWIGX's residual 10–14%
+    // resolution gap is SEDOL-only rows. One line per fund with SEDOLs.
+    const withSedol = result.holdings.filter(h => h.sedol);
+    if (withSedol.length > 0) {
+      const sedolOnly = withSedol.filter(
+        h => !h.isin && (h.cusip === '' || h.cusip.trim().toUpperCase() === 'N/A')
+      );
+      console.log(
+        `[edgar] ${ticker}: A4 SEDOL instrumentation — ${withSedol.length} rows carry SEDOLs, ` +
+        `${sedolOnly.length} are SEDOL-only identities (no CUSIP, no ISIN)`
+      );
+    }
+
     return {
       success: true,
       data: result,
@@ -704,10 +719,19 @@ function parseHoldingElement(
   // no-CUSIP row landed "structurally unresolvable" (VFWAX showed 71.4% on
   // the first A4 run) and, pre-A4, attribute-form holdings like Bank of
   // China had no ISIN path at all — the root of the fuzzy-name misresolve.
+  const identifiersNode = getChild(item, 'identifiers');
   const isin =
     getTextValue(item, 'isin') ||
-    getAttrValue(getChild(item, 'identifiers'), 'isin', 'value') ||
+    getAttrValue(identifiersNode, 'isin', 'value') ||
     null;
+  // A4 QFVRX fix (shape verified against Robert's July 5 paste from the
+  // actual Pear Tree Polaris filing): some filers provide NO ISIN anywhere —
+  // equities carry a Bloomberg-format ticker and a SEDOL under <other>:
+  //   <identifiers><ticker value="1299 HK"/>
+  //     <other otherDesc="SEDOL" value="B4TX8S1"/></identifiers>
+  // The desc match is case-insensitive; multiple <other> entries are scanned.
+  const sedol = getOtherIdentifier(identifiersNode, /sedol/i);
+  const identifierTicker = getAttrValue(identifiersNode, 'ticker', 'value');
   const lei = getTextValue(item, 'lei') || null;
 
   // Value in USD
@@ -766,6 +790,8 @@ function parseHoldingElement(
     name,
     cusip,
     isin,
+    sedol,
+    identifierTicker,
     lei,
     title,
     valueUsd,
@@ -849,6 +875,34 @@ function getTextValue(
   }
 
   if (typeof field === 'string') return field.trim();
+  return null;
+}
+
+/**
+ * Get an identifier from <identifiers><other otherDesc="…" value="…"/>
+ * children whose description matches the pattern (A4 QFVRX fix). There can
+ * be several <other> entries; each is scanned. Value read from the
+ * attribute first, element text as fallback.
+ */
+function getOtherIdentifier(
+  identifiers: Record<string, unknown> | null,
+  descPattern: RegExp
+): string | null {
+  if (!identifiers) return null;
+  const others = identifiers['other'];
+  if (!Array.isArray(others)) return null;
+  for (const raw of others) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const node = raw as Record<string, unknown>;
+    const attrs = (node['$'] || {}) as Record<string, unknown>;
+    const desc = typeof attrs['otherDesc'] === 'string' ? (attrs['otherDesc'] as string) : '';
+    if (!descPattern.test(desc)) continue;
+    const val = attrs['value'];
+    if (typeof val === 'string' && val.trim()) return val.trim();
+    if (typeof node['_'] === 'string' && (node['_'] as string).trim()) {
+      return (node['_'] as string).trim();
+    }
+  }
   return null;
 }
 

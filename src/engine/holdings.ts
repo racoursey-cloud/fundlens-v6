@@ -69,6 +69,9 @@ function isPlaceholderCusip(cusip: string | null | undefined): boolean {
 function resolutionIdFor(h: EdgarHolding): string {
   if (!isPlaceholderCusip(h.cusip)) return h.cusip;
   if (h.isin) return `ISIN:${h.isin}`;
+  // A4 QFVRX fix: SEDOL-only filers (no CUSIP, no ISIN anywhere in the
+  // filing) — routed to OpenFIGI ID_SEDOL in cusip.ts
+  if (h.sedol) return `SEDOL:${h.sedol}`;
   return `NAME:${(h.name || '').trim().toUpperCase()}`;
 }
 
@@ -91,7 +94,10 @@ const DEBT_ASSET_CATS = new Set(['DBT', 'STIV', 'LON', 'ABS-MBS', 'ABS-O', 'ABS-
 function isStructurallyUnresolvable(h: EdgarHolding): boolean {
   const ac = (h.assetCategory || '').toUpperCase();
   if (DERIVATIVE_ASSET_CATS.has(ac)) return true;
-  return isPlaceholderCusip(h.cusip) && !h.isin;
+  // A4 QFVRX fix: SEDOL joins the resolvable-identifier set — QFVRX's
+  // equities carry SEDOLs only and showed 88.6% "unresolvable" on the
+  // July 5 run against a 66.3% July 2 resolution baseline.
+  return isPlaceholderCusip(h.cusip) && !h.isin && !h.sedol;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -250,6 +256,8 @@ export async function runHoldingsPipeline(
         name: holding.name,
         cusip: holding.cusip,
         isin: holding.isin ?? null,
+        sedol: holding.sedol ?? null,
+        identifierTicker: holding.identifierTicker ?? null,
         ticker,
         // A4 Task 1: symbol class travels with the holding so enrichment
         // steps can skip 'home' listings (identity only, not FMP-servable)
@@ -578,7 +586,9 @@ function deduplicateHoldings(holdings: EdgarHolding[]): EdgarHolding[] {
     const key = isPlaceholderCusip(holding.cusip)
       ? (holding.isin
           ? `isin:${holding.isin}`
-          : `name:${(holding.name || '').trim().toUpperCase()}`)
+          : holding.sedol
+            ? `sedol:${holding.sedol}`
+            : `name:${(holding.name || '').trim().toUpperCase()}`)
       : holding.cusip;
     const existing = map.get(key);
     if (existing) {

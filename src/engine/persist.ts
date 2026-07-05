@@ -184,8 +184,9 @@ export async function persistPipelineResults(
       fund_id: fund.id,
       name: holding.name,
       cusip: holding.cusip,
-      // Transient — merge key only; stripped before insert (no DB column)
+      // Transient — merge key only; stripped before insert (no DB columns)
       isin: holding.isin ?? null,
+      sedol: holding.sedol ?? null,
       ticker: holding.ticker,
       pct_of_nav: holding.pctOfNav,
       value_usd: holding.valueUsd,
@@ -223,11 +224,16 @@ export async function persistPipelineResults(
     const byKey = new Map<string, typeof mappedRows[number]>();
     for (const row of mappedRows) {
       const placeholder = isPlaceholderCusip(row.cusip);
-      // A4 first-run fix: ISIN before name for placeholder rows — distinct
-      // bond maturities sharing an issuer name must never collapse
-      // (DRRYX's Brazil/Mexico sovereigns, July 5 run).
+      // A4 first-run fix: real identity before name for placeholder rows —
+      // distinct securities sharing an issuer name must never collapse
+      // (DRRYX's Brazil/Mexico sovereigns, July 5 run). A4 QFVRX fix:
+      // SEDOL joins the chain for filers that provide no ISIN.
       const key = placeholder
-        ? (row.isin ? `isin:${row.isin}` : `name:${row.name.trim().toUpperCase()}`)
+        ? (row.isin
+            ? `isin:${row.isin}`
+            : row.sedol
+              ? `sedol:${row.sedol}`
+              : `name:${row.name.trim().toUpperCase()}`)
         : row.cusip;
       const existing = byKey.get(key);
       if (existing) {
@@ -252,16 +258,17 @@ export async function persistPipelineResults(
           ...row,
           // Stored key for placeholder rows: the ISIN itself when present
           // (12 chars — cannot collide with a 9-char CUSIP, and obvious in
-          // Supabase), else the A2.3 name-hash synthetic.
+          // Supabase), else the SEDOL prefixed for visibility (A4 QFVRX
+          // fix; raw SEDOLs are 7 chars), else the A2.3 name-hash synthetic.
           cusip: placeholder
-            ? (row.isin || syntheticCusipForName(row.name))
+            ? (row.isin || (row.sedol ? `SEDOL:${row.sedol}` : syntheticCusipForName(row.name)))
             : row.cusip,
         });
       }
     }
-    // Strip the transient isin before insert — holdings_cache has no such
-    // column and PostgREST rejects unknown fields.
-    const rows = Array.from(byKey.values()).map(({ isin: _isin, ...row }) => row);
+    // Strip the transient identity fields before insert — holdings_cache
+    // has no such columns and PostgREST rejects unknown fields.
+    const rows = Array.from(byKey.values()).map(({ isin: _isin, sedol: _sedol, ...row }) => row);
     if (rows.length < mappedRows.length) {
       console.log(
         `[persist] Holdings ${ticker}: merged ${mappedRows.length - rows.length} duplicate-CUSIP lots before insert`
