@@ -90,6 +90,16 @@ export interface MutualFundTickerEntry {
 
 // ─── CUSIP Resolution Types ─────────────────────────────────────────────────
 
+/**
+ * Listing tier of a resolved symbol (A4 Task 1). Preference order when one
+ * identifier maps to several listings:
+ *   'us'   — NYSE/Nasdaq listing or ADR (fully enrichable via FMP)
+ *   'otc'  — OTC-market ADR (FMP Starter serves profiles for these)
+ *   'home' — home-exchange listing, kept as identity only; FMP Starter
+ *            cannot serve it, so enrichment steps must skip it
+ */
+export type ListingTier = 'us' | 'otc' | 'home';
+
 /** OpenFIGI mapping job — one per CUSIP or ISIN in a batch POST */
 export interface FigiMappingJob {
   idType: 'ID_CUSIP' | 'ID_ISIN';
@@ -119,6 +129,9 @@ export interface CusipResolution {
   resolved: boolean;
   /** Warning message if resolution failed */
   warning: string | null;
+  /** Symbol class of the resolved ticker (A4 Task 1). Optional: absent on
+   *  rows cached before A4 and on unresolved entries. */
+  listingTier?: ListingTier | null;
 }
 
 // ─── Holdings Pipeline Types ────────────────────────────────────────────────
@@ -245,6 +258,8 @@ export interface CusipCacheRow {
   security_type: string | null;
   resolved: boolean;
   resolved_at: string;
+  /** us | otc | home | null — symbol class (A4 Task 1 migration) */
+  listing_tier?: string | null;
 }
 
 /** Row in the `pipeline_runs` table — tracks pipeline execution history */
