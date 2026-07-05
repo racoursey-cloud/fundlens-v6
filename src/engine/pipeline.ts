@@ -49,13 +49,14 @@ import { getHeadlines } from './rss.js';
 import { fetchMacroSnapshot } from './fred.js';
 import { generateMacroThesis, MacroThesis } from './thesis.js';
 import { scorePositioning, PositioningResult } from './positioning.js';
-import { classifyHoldingSectors } from './classify.js';
+import { classifyHoldingSectors, classifyHoldingIndustries } from './classify.js';
 import { fetchMoneyMarketData } from './edgar.js';
 import {
   getFmpCache, saveFmpCache,
   getTiingoPriceCache, saveTiingoPriceCache,
   getFinnhubFeeCache, saveFinnhubFeeCache,
   getSectorClassifications, saveSectorClassifications, sectorCacheKey,
+  getIndustryClassifications, saveIndustryClassifications,
 } from './cache.js';
 import type { SectorAssetType } from './cache.js';
 
@@ -593,6 +594,88 @@ export async function runFullPipeline(
       `[pipeline] Final-pass classification: ${finalPassClassified} → Fixed Income, ${finalPassOther} → Other ` +
       `(0 remaining Unclassified)`
     );
+  }
+
+  // ── Step 5f (A4 Task 5): Haiku industry fallback on the pinned FMP menu ──
+  // Holdings FMP couldn't serve an industry for (home-exchange-only foreign
+  // names — the smallest slice of weight) are classified by Haiku against
+  // the SAME 159-industry menu, so the whole dataset speaks one taxonomy.
+  // Cache: (holding name, asset type), 15-day TTL — the A3 keying scheme.
+  {
+    const needIndustry: ResolvedHolding[] = [];
+    for (const [, holdings] of fundHoldings) {
+      for (const h of holdings) {
+        if (!h.industry && h.name && deriveAssetType(h) === 'equity') {
+          needIndustry.push(h);
+        }
+      }
+    }
+
+    if (needIndustry.length > 0) {
+      // Dedupe: one representative per (name, asset type)
+      const industryReps = new Map<string, ResolvedHolding>();
+      for (const h of needIndustry) {
+        const key = sectorCacheKey(h.name, deriveAssetType(h));
+        if (!industryReps.has(key)) industryReps.set(key, h);
+      }
+
+      // Batch-check the industry cache
+      const keyToIndustry = new Map<string, string>();
+      let industryCacheHits = 0;
+      try {
+        const cachedIndustries = await getIndustryClassifications(
+          [...industryReps.values()].map(h => ({ holdingName: h.name, assetType: deriveAssetType(h) }))
+        );
+        for (const [key, industry] of cachedIndustries) {
+          keyToIndustry.set(key, industry);
+          industryCacheHits++;
+        }
+        console.log(`[pipeline] A4 Task 5: industry cache — ${industryCacheHits}/${industryReps.size} holdings from cache`);
+      } catch {
+        console.warn('[pipeline] Industry cache lookup failed, classifying all via Claude');
+      }
+
+      // Classify the uncached representatives via Haiku (sequential, 1.2s)
+      const uncachedReps = [...industryReps.entries()]
+        .filter(([key]) => !keyToIndustry.has(key))
+        .map(([, h]) => h);
+      if (uncachedReps.length > 0) {
+        progress(5, `Classifying ${uncachedReps.length} holdings into industries via Claude (${industryCacheHits} cached)`);
+        try {
+          await classifyHoldingIndustries(uncachedReps);
+
+          const newIndustries: Array<{ holdingName: string; assetType: SectorAssetType; industry: string }> = [];
+          for (const h of uncachedReps) {
+            if (h.industry) {
+              const assetType = deriveAssetType(h);
+              keyToIndustry.set(sectorCacheKey(h.name, assetType), h.industry);
+              // 'Other' rows are cached too — no re-asking Haiku every run
+              newIndustries.push({ holdingName: h.name, assetType, industry: h.industry });
+            }
+          }
+          if (newIndustries.length > 0) {
+            saveIndustryClassifications(newIndustries).catch(cacheErr => {
+              console.warn(`[pipeline] Industry cache save failed: ${cacheErr}`);
+            });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push({ fund: 'ALL', step: 'industry-classification', error: msg });
+        }
+      }
+
+      // Apply industries to ALL matching holdings across ALL funds.
+      // 'Other' = fell off the menu after the retry: counts as unclassified,
+      // so industrySource stays null (July 2 decision applied to industries).
+      for (const h of needIndustry) {
+        if (h.industry) continue; // representative, already set
+        const industry = keyToIndustry.get(sectorCacheKey(h.name, deriveAssetType(h)));
+        if (industry) {
+          h.industry = industry;
+          h.industrySource = industry === 'Other' ? null : 'haiku';
+        }
+      }
+    }
   }
 
   // ── Step 5e (A4 Task 3): FMP-sector vs existing-label disagreement count ──
