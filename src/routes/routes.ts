@@ -77,11 +77,40 @@ const helpChatRateLimit = rateLimit({
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
-// ─── SESSION 0 SECURITY: Admin-only middleware ────────────────────────────
+// ─── Admin-only middleware (A5 Task 4) ────────────────────────────────────
+// Admin identity is the is_admin flag on user_profiles (a5_task4 migration),
+// checked in the database with a 60-second in-memory cache so it doesn't add
+// a query to every click. ADMIN_EMAILS (constants.ts, frozen) remains as a
+// read-only fallback: a missed migration cannot lock Robert out.
 
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  const { userEmail } = req as AuthenticatedRequest;
-  if (!userEmail || !ADMIN_EMAILS.includes(userEmail)) {
+const ADMIN_CACHE_TTL_MS = 60_000;
+const adminCache = new Map<string, { isAdmin: boolean; checkedAt: number }>();
+
+async function isAdminUser(userId: string, userEmail: string | null): Promise<boolean> {
+  const cached = adminCache.get(userId);
+  if (cached && Date.now() - cached.checkedAt < ADMIN_CACHE_TTL_MS) {
+    return cached.isAdmin;
+  }
+
+  let isAdmin = false;
+  const { data } = await supaFetch<{ is_admin?: boolean }>('user_profiles', {
+    params: { id: `eq.${userId}`, select: 'is_admin' },
+    single: true,
+  });
+  if (data?.is_admin === true) {
+    isAdmin = true;
+  } else if (userEmail && ADMIN_EMAILS.includes(userEmail)) {
+    // Fallback only — keeps Robert in if the migration hasn't run yet
+    isAdmin = true;
+  }
+
+  adminCache.set(userId, { isAdmin, checkedAt: Date.now() });
+  return isAdmin;
+}
+
+async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const { userId, userEmail } = req as AuthenticatedRequest;
+  if (!userId || !(await isAdminUser(userId, userEmail))) {
     res.status(403).json({ error: 'Admin access required for this operation.' });
     return;
   }
@@ -749,7 +778,7 @@ router.post('/api/pipeline/retry', requireAuth, requireAdmin, pipelineRateLimit,
  * Export the pipeline log for a specific run as plain text.
  * Useful for troubleshooting — can be copy/pasted to share.
  */
-router.get('/api/pipeline/log/:runId', requireAuth, async (req: Request, res: Response) => {
+router.get('/api/pipeline/log/:runId', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const { runId } = req.params;
 
   const { data: run, error } = await supaFetch<Record<string, unknown>>('pipeline_runs', {
@@ -787,7 +816,7 @@ router.get('/api/pipeline/log/:runId', requireAuth, async (req: Request, res: Re
  * Returns the last 10 pipeline runs with outcome summaries.
  * Used by the monitoring UI to show a run timeline.
  */
-router.get('/api/pipeline/history', requireAuth, async (req: Request, res: Response) => {
+router.get('/api/pipeline/history', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const limit = parseInt(req.query.limit as string) || 10;
 
   const { getPipelineHistory } = await import('../engine/monitor.js');
@@ -959,7 +988,7 @@ router.get('/api/thesis/latest', requireAuth, async (req: Request, res: Response
  * details about score freshness, pipeline success, and thesis state.
  * The UI shows this as a colored indicator in the Pipeline Status area.
  */
-router.get('/api/monitor/health', requireAuth, async (req: Request, res: Response) => {
+router.get('/api/monitor/health', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const { getSystemHealth } = await import('../engine/monitor.js');
   const report = await getSystemHealth();
   res.json(report);
@@ -973,7 +1002,7 @@ router.get('/api/monitor/health', requireAuth, async (req: Request, res: Respons
  * coverage gaps, holdings sector coverage, and error details from
  * the latest pipeline run. Used for debugging and tuning.
  */
-router.get('/api/monitor/data-quality', requireAuth, async (req: Request, res: Response) => {
+router.get('/api/monitor/data-quality', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const { getDataQualityMetrics } = await import('../engine/monitor.js');
   const report = await getDataQualityMetrics();
   res.json(report);
@@ -985,7 +1014,7 @@ router.get('/api/monitor/data-quality', requireAuth, async (req: Request, res: R
  * run (A3 Task 5). Read-only — Robert's diagnostic instrument on the
  * Pipeline tab. Failures sort first.
  */
-router.get('/api/dossiers/latest', requireAuth, async (_req: Request, res: Response) => {
+router.get('/api/dossiers/latest', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   const { data: latestRun } = await supaFetch<PipelineRunRow>('pipeline_runs', {
     params: {
       status: 'eq.completed',
@@ -1026,7 +1055,7 @@ router.get('/api/dossiers/latest', requireAuth, async (_req: Request, res: Respo
  * Shows whether pipeline and Brief delivery jobs are currently running
  * and their schedule. Useful for debugging "why didn't my scores update?"
  */
-router.get('/api/monitor/cron', requireAuth, async (req: Request, res: Response) => {
+router.get('/api/monitor/cron', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const { getCronStatus } = await import('../engine/cron.js');
   const status = getCronStatus();
   res.json(status);
