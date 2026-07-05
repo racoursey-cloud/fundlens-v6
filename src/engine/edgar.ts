@@ -249,6 +249,15 @@ const TICKER_OVERRIDES: ReadonlyMap<string, MutualFundTickerEntry> = new Map([
   // Fidelity Government Cash Reserves — CIK 278001 (Fidelity Phillips Street Trust)
   // In SEC ticker file for NPORT-P but also needed for N-MFP3 lookups.
   ['FDRXX', { cik: 278001, seriesId: 'S000007149', classId: 'C000019553', symbol: 'FDRXX' }],
+
+  // Cullen Emerging Markets High Dividend R6 — CIK 1109957 (Cullen Funds
+  // Trust). v8 A0 item 3 (Fund #23): R6 class launched Aug 2025, absent from
+  // company_tickers_mf.json (verified July 5, 2026 — the known R6 pattern
+  // above); identifiers from EDGAR's NPORT-P primary docs, filing monthly.
+  // Rail note: FMP does not carry the CEMEX symbol at all (/stable/profile
+  // returns an empty array) — this fund's prices ride the Tiingo rail alone,
+  // no FMP fallback (Tiingo resolves CEMEX to "Cullen Emerging", NMFQS).
+  ['CEMEX', { cik: 1109957, seriesId: 'S000038162', classId: '', symbol: 'CEMEX' }],
 ]);
 
 /**
