@@ -67,7 +67,10 @@ import type { SectorAssetType } from './cache.js';
 
 const DEBT_ASSET_CATS = new Set(['DBT', 'STIV', 'LON', 'ABS-MBS', 'ABS-O', 'ABS-CBDO']);
 const ALWAYS_DEBT_ISSUER_CATS = new Set(['UST', 'USGA', 'MUN', 'SOV', 'ABS', 'AGEN', 'AGNCY']);
-const DERIVATIVE_ASSET_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DO']);
+// A4 Task 6: 'DCR' (credit derivative) added — observed in DRRYX's actual
+// filing (July 5 evidence); the NPORT code in the wild differs from the
+// 'DC' the original sets assumed. Both are kept.
+const DERIVATIVE_ASSET_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DCR', 'DO']);
 
 function deriveAssetType(h: ResolvedHolding): SectorAssetType {
   if (h.isDebt) return 'debt';
