@@ -442,9 +442,11 @@ export function FundLens() {
 
                     {/* A5 Task 3, Decision 1 (Option C): the two-line trust
                         statement — credential first, disclosure second, zero
-                        apology. Line 2's "model-assessed" is the placeholder
-                        vocabulary until Task 7's measured agreement rate
-                        finalizes Decision 2. */}
+                        apology. Line 2's "estimated" is Decision 2's RATIFIED
+                        vocabulary (Robert, July 5, 2026), chosen from the
+                        Task 7 benchmark: 400 out-of-sample FMP-labeled
+                        equities, sector-level agreement 87.8%, industry-level
+                        56.0%. */}
                     {explorerData.confidence && (
                       <div style={{ marginTop: 8 }}>
                         <div style={{ fontSize: 12.5, color: theme.colors.text }}>
@@ -452,7 +454,7 @@ export function FundLens() {
                         </div>
                         <div style={{ fontSize: 12, color: theme.colors.textMuted, marginTop: 2 }}>
                           Classifications from filed data: {Math.round(explorerData.confidence.filedClassifiedPct)}%
-                          {explorerData.confidence.modelClassifiedPct >= 0.5 && ' · the rest model-assessed'}
+                          {explorerData.confidence.modelClassifiedPct >= 0.5 && ' · the rest estimated'}
                         </div>
                         {explorerData.confidence.asOf && (
                           <div style={{ fontSize: 11, color: theme.colors.textDim, marginTop: 2 }}>
