@@ -72,6 +72,28 @@ function resolutionIdFor(h: EdgarHolding): string {
   return `NAME:${(h.name || '').trim().toUpperCase()}`;
 }
 
+// ─── Structurally unresolvable holdings (A4 Task 6) ────────────────────────
+// The pinned test (Robert, July 5, 2026, from the DRRYX/PRPFX filing
+// evidence): derivative asset category OR no identifier at all. Asset
+// category alone CANNOT define it — PRPFX's bullion files as EC and STIV.
+// These rows are kept and displayed (Principle 1) but never sent through
+// resolution — no FMP name-search on "GOLD BULLION" — and the Dossier
+// excludes them from the resolvable-NAV denominator.
+// 'DCR' (credit derivative) observed in DRRYX's actual filing July 5 —
+// the older sets elsewhere use 'DC'; both are included here.
+
+const DERIVATIVE_ASSET_CATS = new Set(['DIR', 'DFE', 'DE', 'DC', 'DCR', 'DO']);
+
+/** Mirrors classify.ts/pipeline.ts debt signals — used only for the
+ *  FMP-ISIN skip below, where a bond can never yield a company profile. */
+const DEBT_ASSET_CATS = new Set(['DBT', 'STIV', 'LON', 'ABS-MBS', 'ABS-O', 'ABS-CBDO']);
+
+function isStructurallyUnresolvable(h: EdgarHolding): boolean {
+  const ac = (h.assetCategory || '').toUpperCase();
+  if (DERIVATIVE_ASSET_CATS.has(ac)) return true;
+  return isPlaceholderCusip(h.cusip) && !h.isin;
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -143,8 +165,19 @@ export async function runHoldingsPipeline(
     // in a fund shared ONE resolution slot and ONE cusip_cache row — the
     // main reason international funds resolved so few holdings (VFWAX was
     // 68/400 on July 2).
-    const resolveIds = included.map(h => resolutionIdFor(h));
-    const placeholderCount = included.filter(h => isPlaceholderCusip(h.cusip)).length;
+    // A4 Task 6: structurally unresolvable rows (derivatives, no-identifier
+    // bullion/sweeps) skip resolution entirely — kept for display and the
+    // Dossier, never sent to OpenFIGI or FMP.
+    const resolvable = included.filter(h => !isStructurallyUnresolvable(h));
+    const unresolvableCount = included.length - resolvable.length;
+    if (unresolvableCount > 0) {
+      console.log(
+        `[holdings] A4 Task 6: ${unresolvableCount} structurally unresolvable holdings kept but skipping resolution`
+      );
+    }
+
+    const resolveIds = resolvable.map(h => resolutionIdFor(h));
+    const placeholderCount = resolvable.filter(h => isPlaceholderCusip(h.cusip)).length;
     console.log(
       `[holdings] Resolving ${resolveIds.length} holdings via OpenFIGI` +
       (placeholderCount > 0 ? ` (${placeholderCount} placeholder-CUSIP → ISIN/name identity)` : '')
@@ -153,15 +186,23 @@ export async function runHoldingsPipeline(
     // BUG-3 fix: ISIN retry map — now only for REAL CUSIPs that fail the
     // ID_CUSIP lookup (placeholder-CUSIP holdings resolve via ISIN directly
     // in cusip.ts). The name map feeds the FMP search fallback for all ids.
+    // A4 Task 6 (Robert-approved): debt-flagged ISIN holdings skip the PAID
+    // FMP-ISIN step — a bond never yields a company profile; EDGAR metadata
+    // already identifies it. The free batched OpenFIGI path still runs.
     const isinMap = new Map<string, string>();
     const nameMap = new Map<string, string>();
-    for (const h of included) {
+    const fmpIsinSkipIds = new Set<string>();
+    for (const h of resolvable) {
       const id = resolutionIdFor(h);
       if (!isPlaceholderCusip(h.cusip) && h.isin) {
         isinMap.set(id, h.isin);
       }
       if (h.name) {
         nameMap.set(id, h.name);
+      }
+      const ac = (h.assetCategory || '').toUpperCase();
+      if (h.isDebt || DEBT_ASSET_CATS.has(ac)) {
+        fmpIsinSkipIds.add(id);
       }
     }
     if (isinMap.size > 0) {
@@ -174,7 +215,8 @@ export async function runHoldingsPipeline(
       cacheLookup,
       cacheSave,
       isinMap,
-      nameMap
+      nameMap,
+      fmpIsinSkipIds
     );
 
     if (!cusipResult.success || !cusipResult.data) {
@@ -196,8 +238,11 @@ export async function runHoldingsPipeline(
       // A3 Task 2: look up by the same per-holding identity used to resolve
       const resolution = cusipMap.get(resolutionIdFor(holding));
       const ticker = resolution?.resolved ? resolution.ticker : null;
+      const structUnresolvable = isStructurallyUnresolvable(holding);
 
-      if (!ticker) {
+      // A4 Task 6: structurally unresolvable rows were never attempted —
+      // they are not resolution FAILURES and don't belong in that list.
+      if (!ticker && !structUnresolvable) {
         unresolvedCusips.push(resolutionIdFor(holding));
       }
 
@@ -222,6 +267,9 @@ export async function runHoldingsPipeline(
         debtIsDefault: holding.debtIsDefault,
         debtInArrears: holding.debtInArrears,
         isInvestmentCompany: holding.isInvestmentCompany,
+        // A4 Task 6: kept + displayed, excluded from the resolvable
+        // denominator in the Dossier
+        structurallyUnresolvable: structUnresolvable,
       });
     }
 
