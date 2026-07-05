@@ -47,7 +47,10 @@ export interface PersistResult {
  */
 function isPlaceholderCusip(cusip: string): boolean {
   const c = cusip.trim().toUpperCase();
-  return c === 'N/A' || /^0+$/.test(c);
+  // A4 first-run fix: '' is the parser's placeholder for kept no-CUSIP rows
+  // (A4 Task 6). Without this, every kept row in a fund shared the merge
+  // key "" and collapsed into one blob — part of DRRYX's 49 merged lots.
+  return c === '' || c === 'N/A' || /^0+$/.test(c);
 }
 
 /**
@@ -181,6 +184,8 @@ export async function persistPipelineResults(
       fund_id: fund.id,
       name: holding.name,
       cusip: holding.cusip,
+      // Transient — merge key only; stripped before insert (no DB column)
+      isin: holding.isin ?? null,
       ticker: holding.ticker,
       pct_of_nav: holding.pctOfNav,
       value_usd: holding.valueUsd,
@@ -218,7 +223,12 @@ export async function persistPipelineResults(
     const byKey = new Map<string, typeof mappedRows[number]>();
     for (const row of mappedRows) {
       const placeholder = isPlaceholderCusip(row.cusip);
-      const key = placeholder ? `name:${row.name.trim().toUpperCase()}` : row.cusip;
+      // A4 first-run fix: ISIN before name for placeholder rows — distinct
+      // bond maturities sharing an issuer name must never collapse
+      // (DRRYX's Brazil/Mexico sovereigns, July 5 run).
+      const key = placeholder
+        ? (row.isin ? `isin:${row.isin}` : `name:${row.name.trim().toUpperCase()}`)
+        : row.cusip;
       const existing = byKey.get(key);
       if (existing) {
         existing.pct_of_nav += row.pct_of_nav;
@@ -240,11 +250,18 @@ export async function persistPipelineResults(
       } else {
         byKey.set(key, {
           ...row,
-          cusip: placeholder ? syntheticCusipForName(row.name) : row.cusip,
+          // Stored key for placeholder rows: the ISIN itself when present
+          // (12 chars — cannot collide with a 9-char CUSIP, and obvious in
+          // Supabase), else the A2.3 name-hash synthetic.
+          cusip: placeholder
+            ? (row.isin || syntheticCusipForName(row.name))
+            : row.cusip,
         });
       }
     }
-    const rows = Array.from(byKey.values());
+    // Strip the transient isin before insert — holdings_cache has no such
+    // column and PostgREST rejects unknown fields.
+    const rows = Array.from(byKey.values()).map(({ isin: _isin, ...row }) => row);
     if (rows.length < mappedRows.length) {
       console.log(
         `[persist] Holdings ${ticker}: merged ${mappedRows.length - rows.length} duplicate-CUSIP lots before insert`

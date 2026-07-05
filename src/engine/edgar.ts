@@ -696,7 +696,18 @@ function parseHoldingElement(
 
   const name = getTextValue(item, 'name') || '';
   const title = getTextValue(item, 'title') || name;
-  const isin = getTextValue(item, 'isin') || null;
+  // A4 first-run fix (Bug 1, July 5, 2026): NPORT-P carries the ISIN in two
+  // shapes — a plain text element (<isin>US…</isin>, some filers) or the
+  // schema's standard ATTRIBUTE form under <identifiers>
+  // (<identifiers><isin value="…"/></identifiers>). getTextValue only reads
+  // element text, so attribute-form ISINs were silently lost: every kept
+  // no-CUSIP row landed "structurally unresolvable" (VFWAX showed 71.4% on
+  // the first A4 run) and, pre-A4, attribute-form holdings like Bank of
+  // China had no ISIN path at all — the root of the fuzzy-name misresolve.
+  const isin =
+    getTextValue(item, 'isin') ||
+    getAttrValue(getChild(item, 'identifiers'), 'isin', 'value') ||
+    null;
   const lei = getTextValue(item, 'lei') || null;
 
   // Value in USD
@@ -839,6 +850,27 @@ function getTextValue(
 
   if (typeof field === 'string') return field.trim();
   return null;
+}
+
+/**
+ * Get an attribute value from a child element (A4 first-run fix, Bug 1).
+ * Handles the NPORT-P identifier form <identifiers><isin value="…"/>:
+ * xml2js puts attributes under the '$' key, which getTextValue never reads.
+ */
+function getAttrValue(
+  node: Record<string, unknown> | null,
+  childName: string,
+  attrName: string
+): string | null {
+  if (!node) return null;
+  const child = node[childName];
+  if (!Array.isArray(child) || child.length === 0) return null;
+  const first = child[0];
+  if (typeof first !== 'object' || first === null) return null;
+  const attrs = (first as Record<string, unknown>)['$'];
+  if (typeof attrs !== 'object' || attrs === null) return null;
+  const val = (attrs as Record<string, unknown>)[attrName];
+  return typeof val === 'string' ? val.trim() : null;
 }
 
 /** Try multiple nested paths to find a text value. */
