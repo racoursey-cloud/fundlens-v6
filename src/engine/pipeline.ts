@@ -36,7 +36,7 @@ import { computeDossier } from './dossier.js';
 import type { FundDossier, DossierInput } from './dossier.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
-import { FmpRatios, FmpKeyMetrics } from './fmp.js';
+import { FmpRatios, FmpKeyMetrics, FmpProfile } from './fmp.js';
 import { supaUpdate } from './supabase.js';
 import { fetchExpenseRatio, fetchFinnhubExpenseRatio, KNOWN_EXPENSE_RATIOS } from './finnhub.js';
 import { fetchTiingoPrices, convertTiingoPricesToFmpFormat, TiingoDailyPrice } from './tiingo.js';
@@ -79,6 +79,31 @@ function deriveAssetType(h: ResolvedHolding): SectorAssetType {
   if (ac === 'EC') return 'equity';
   if (h.ticker) return 'equity';
   return 'other';
+}
+
+// ─── A4 Task 3: FMP sector label → FundLens sector taxonomy ────────────────
+// FMP uses a Morningstar-style naming; this maps its labels onto the sector
+// list classify.ts/thesis.ts share. Only clean, unambiguous mappings — a
+// label outside this map is never used as a classification signal.
+const FMP_SECTOR_MAP: Record<string, string> = {
+  'technology': 'Technology',
+  'healthcare': 'Healthcare',
+  'financial services': 'Financials',
+  'financial': 'Financials',
+  'consumer cyclical': 'Consumer Discretionary',
+  'consumer defensive': 'Consumer Staples',
+  'communication services': 'Communication Services',
+  'energy': 'Energy',
+  'industrials': 'Industrials',
+  'basic materials': 'Materials',
+  'real estate': 'Real Estate',
+  'utilities': 'Utilities',
+};
+
+/** Map an FMP sector label to our taxonomy, or null when not cleanly mappable. */
+function mapFmpSector(fmpSector: string | null | undefined): string | null {
+  if (!fmpSector) return null;
+  return FMP_SECTOR_MAP[fmpSector.trim().toLowerCase()] ?? null;
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -190,28 +215,45 @@ export async function runFullPipeline(
 
   progress(3, `Holdings fetched for ${fundHoldings.size}/${scorableFunds.length} funds`);
 
-  // ── Step 4: Fetch company fundamentals from FMP (with cache) ──
+  // ── Step 4: Fetch company fundamentals + profiles from FMP (with cache) ──
   // Session 10: Pre-fetch all unique tickers from Supabase cache in ONE query.
   // Only hit FMP for cache misses. Save misses to cache for next run.
+  // A4 Task 3: the company profile (industry, exchange, averageVolume) joins
+  // the bundle — a cache-miss ticker now costs 3 sequential calls instead
+  // of 2, same pacing, cached 7 days like the rest of the row.
   progress(4, 'Fetching company fundamentals from FMP');
 
-  // Collect unique tickers across all funds
+  // Collect unique tickers across all funds.
+  // A4 Task 1: 'home'-tier symbols are identity only — FMP Starter cannot
+  // serve them (the .T/.DE/.KS dead ends verified July 2) — so they are
+  // excluded from FMP enrichment instead of burning requests on dead ends.
   const allTickers = new Set<string>();
+  let homeTierSkipped = 0;
   for (const holdings of fundHoldings.values()) {
     for (const h of holdings) {
-      if (h.ticker) allTickers.add(h.ticker);
+      if (!h.ticker) continue;
+      if (h.listingTier === 'home') {
+        homeTierSkipped++;
+        continue;
+      }
+      allTickers.add(h.ticker);
     }
+  }
+  if (homeTierSkipped > 0) {
+    console.log(
+      `[pipeline] A4 Task 1: ${homeTierSkipped} home-exchange holdings excluded from FMP enrichment (identity only)`
+    );
   }
 
   const allTickerArray = Array.from(allTickers);
-  const fundamentals = new Map<string, { ratios: FmpRatios | null; keyMetrics: FmpKeyMetrics | null }>();
+  const fundamentals = new Map<string, { ratios: FmpRatios | null; keyMetrics: FmpKeyMetrics | null; profile: FmpProfile | null }>();
 
   // Step 4a: Batch-check FMP cache (single Supabase query for all tickers)
   let fmpCacheHits = 0;
   try {
     const cached = await getFmpCache(allTickerArray);
     for (const [ticker, entry] of cached) {
-      fundamentals.set(ticker, { ratios: entry.ratios, keyMetrics: entry.keyMetrics });
+      fundamentals.set(ticker, { ratios: entry.ratios, keyMetrics: entry.keyMetrics, profile: entry.profile ?? null });
       fmpCacheHits++;
     }
     console.log(`[pipeline] FMP cache: ${fmpCacheHits}/${allTickerArray.length} tickers from cache`);
@@ -221,6 +263,7 @@ export async function runFullPipeline(
 
   // Step 4b: Fetch cache misses from FMP API (sequential with delays)
   const fmpMisses = allTickerArray.filter(t => !fundamentals.has(t));
+  const fmpMissSet = new Set(fmpMisses);
   let fetchedCount = 0;
 
   if (fmpMisses.length > 0) {
@@ -229,21 +272,65 @@ export async function runFullPipeline(
 
   for (const ticker of fmpMisses) {
     try {
+      // A4 Task 3: profile first (industry harvest), then the bundle
+      const profile = await fetchProfile(ticker);
+      await delay(PIPELINE.API_CALL_DELAY_MS);
       const bundle = await fetchFundamentalsBundle(ticker);
-      fundamentals.set(ticker, bundle);
+      fundamentals.set(ticker, { ...bundle, profile });
 
       // Save to cache for next run (fire-and-forget — don't block pipeline)
-      saveFmpCache(ticker, bundle.ratios, bundle.keyMetrics).catch(cacheErr => {
+      saveFmpCache(ticker, bundle.ratios, bundle.keyMetrics, profile).catch(cacheErr => {
         console.warn(`[pipeline] FMP cache save failed for ${ticker}: ${cacheErr}`);
       });
     } catch (err) {
-      fundamentals.set(ticker, { ratios: null, keyMetrics: null });
+      fundamentals.set(ticker, { ratios: null, keyMetrics: null, profile: null });
     }
     fetchedCount++;
     if (fetchedCount % 25 === 0) {
       progress(4, `Fundamentals: ${fetchedCount}/${fmpMisses.length} API calls`);
     }
     await delay(PIPELINE.API_CALL_DELAY_MS);
+  }
+
+  // Step 4c (A4 Task 3): pre-A4 cache rows carry fundamentals but no
+  // profile. Backfill with a profile-only fetch (1 call each) so industry
+  // lands on the first post-deploy run without refetching fundamentals.
+  const profileBackfill = allTickerArray.filter(t => {
+    const entry = fundamentals.get(t);
+    return entry && !entry.profile && !fmpMissSet.has(t);
+  });
+  if (profileBackfill.length > 0) {
+    progress(4, `Backfilling ${profileBackfill.length} company profiles (industry) into the FMP cache`);
+    for (const ticker of profileBackfill) {
+      try {
+        const profile = await fetchProfile(ticker);
+        const entry = fundamentals.get(ticker)!;
+        entry.profile = profile;
+        if (profile) {
+          saveFmpCache(ticker, entry.ratios, entry.keyMetrics, profile).catch(cacheErr => {
+            console.warn(`[pipeline] FMP profile backfill save failed for ${ticker}: ${cacheErr}`);
+          });
+        }
+      } catch {
+        // Best-effort: a missing profile just means no industry tag this run
+      }
+      await delay(PIPELINE.API_CALL_DELAY_MS);
+    }
+  }
+
+  // Step 4d (A4 Task 3): harvest profile fields onto every enrichable holding
+  for (const [, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (!h.ticker || h.listingTier === 'home') continue;
+      const prof = fundamentals.get(h.ticker)?.profile;
+      if (!prof) continue;
+      h.industry = prof.industry || null;
+      h.industrySource = prof.industry ? 'fmp' : null;
+      h.isAdr = prof.isAdr ?? null;
+      h.exchange = prof.exchangeShortName || prof.exchange || null;
+      h.averageVolume = prof.averageVolume ?? null;
+      h.fmpSector = prof.sector || null;
+    }
   }
 
   // ── Step 5: Classify holdings into sectors via Claude Haiku (with cache) ──
@@ -308,6 +395,30 @@ export async function runFullPipeline(
 
       h.sector = cachedSector;
     }
+  }
+
+  // 5b-ii (A4 Task 3, Robert-approved policy July 5): FMP's sector fills
+  // gaps ONLY — an equity holding still unclassified after the cache check
+  // takes a cleanly-mapped FMP sector as a real signal before falling to
+  // Haiku (real filed data beats a model guess, and it saves Haiku calls).
+  // Existing labels are NEVER overwritten. Restricted to equity holdings so
+  // an issuer's profile can't mislabel a same-named bond (A3 Task 1 lesson).
+  let fmpSectorFilled = 0;
+  for (const [, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (h.sector || !h.fmpSector) continue;
+      if (deriveAssetType(h) !== 'equity') continue;
+      const mapped = mapFmpSector(h.fmpSector);
+      if (mapped) {
+        h.sector = mapped;
+        fmpSectorFilled++;
+      }
+    }
+  }
+  if (fmpSectorFilled > 0) {
+    console.log(
+      `[pipeline] A4 Task 3: FMP sector filled ${fmpSectorFilled} unclassified equity holdings (real signal, pre-Haiku)`
+    );
   }
 
   // 5c: Classify remaining uncached holdings via Claude Haiku
@@ -444,6 +555,40 @@ export async function runFullPipeline(
       `[pipeline] Final-pass classification: ${finalPassClassified} → Fixed Income, ${finalPassOther} → Other ` +
       `(0 remaining Unclassified)`
     );
+  }
+
+  // ── Step 5e (A4 Task 3): FMP-sector vs existing-label disagreement count ──
+  // Report ONLY — never acted on (Robert, July 5: a large number is a
+  // finding to discuss, not a queue of silent corrections). Compares FMP's
+  // mapped sector against the final label for equity holdings that have
+  // both; last-resort 'Other' rows are excluded (they carry no real label).
+  let fmpSectorAgree = 0;
+  let fmpSectorDisagree = 0;
+  const fmpDisagreeExamples: string[] = [];
+  for (const [fundTicker, holdings] of fundHoldings) {
+    for (const h of holdings) {
+      if (!h.fmpSector || !h.sector || h.sector === 'Other') continue;
+      if (deriveAssetType(h) !== 'equity') continue;
+      const mapped = mapFmpSector(h.fmpSector);
+      if (!mapped) continue;
+      if (mapped === h.sector) {
+        fmpSectorAgree++;
+      } else {
+        fmpSectorDisagree++;
+        if (fmpDisagreeExamples.length < 10) {
+          fmpDisagreeExamples.push(`${fundTicker}/${h.ticker || h.name}: FMP=${mapped} vs existing=${h.sector}`);
+        }
+      }
+    }
+  }
+  if (fmpSectorAgree + fmpSectorDisagree > 0) {
+    console.log(
+      `[pipeline] A4 Task 3 sector comparison: ${fmpSectorAgree} agree, ${fmpSectorDisagree} disagree ` +
+      `of ${fmpSectorAgree + fmpSectorDisagree} comparable equity holdings (report-only, nothing changed)`
+    );
+    if (fmpDisagreeExamples.length > 0) {
+      console.log(`[pipeline] A4 Task 3 disagreement examples: ${fmpDisagreeExamples.join(' · ')}`);
+    }
   }
 
   // ── Step 6: Score Holdings Quality factor ──
