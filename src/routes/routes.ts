@@ -1124,6 +1124,18 @@ router.post('/api/benchmark/classification', requireAuth, requireAdmin, async (r
 });
 
 /**
+ * GET /api/benchmark/status
+ * v8 A0 (Gap 4): admin-only benchmark visibility — running state and the
+ * last run's outcome (finished when, success/failed, summary, whether the
+ * report email actually sent). The harness stays: v8 A3's Sonnet 5
+ * acceptance gate reuses it, so this endpoint is not temporary.
+ */
+router.get('/api/benchmark/status', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  const { getBenchmarkStatus } = await import('../engine/benchmark.js');
+  res.json(getBenchmarkStatus());
+});
+
+/**
  * POST /api/help/reload
  * Admin-only: Reload the help agent prompt from disk.
  * Call this after editing help-agent.md without restarting the server.
