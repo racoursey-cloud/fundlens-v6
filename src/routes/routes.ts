@@ -1094,6 +1094,27 @@ router.post('/api/help/chat', requireAuth, helpChatRateLimit, async (req: Reques
 });
 
 /**
+ * POST /api/benchmark/classification
+ * A5 Task 7 (TEMPORARY — removed once the report is filed): admin-only
+ * trigger for the Haiku classification benchmark. Returns 202 immediately;
+ * the report arrives by admin email a few minutes later. Read-only —
+ * touches no fund data, writes nothing.
+ */
+router.post('/api/benchmark/classification', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const { startClassificationBenchmark } = await import('../engine/benchmark.js');
+  const sampleTarget = parseInt(req.query.sample as string) || 400;
+  const status = startClassificationBenchmark(sampleTarget);
+
+  if (!status.started) {
+    res.status(409).json({ error: status.reason });
+    return;
+  }
+  res.status(202).json({
+    message: 'Benchmark started — the report will arrive by email in a few minutes.',
+  });
+});
+
+/**
  * POST /api/help/reload
  * Admin-only: Reload the help agent prompt from disk.
  * Call this after editing help-agent.md without restarting the server.
