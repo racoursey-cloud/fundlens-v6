@@ -281,6 +281,22 @@ export const fetchLatestDossiers = () =>
 export const runClassificationBenchmark = () =>
   apiFetch<{ message: string }>('/api/benchmark/classification', { method: 'POST' });
 
+// v8 A0 (Gap 4): benchmark visibility — running state and the last run's
+// outcome, so completion no longer exists only as an email. (The harness
+// itself is not temporary: v8 A3's Sonnet 5 acceptance gate reuses it.)
+export interface BenchmarkRunStatus {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  outcome: 'success' | 'failed' | null;
+  summary: string | null;
+  /** Did the report/failure email actually send? */
+  emailed: boolean | null;
+}
+
+export const getBenchmarkStatus = () =>
+  apiFetch<BenchmarkRunStatus>('/api/benchmark/status');
+
 // Help Agent
 export interface HelpMessage {
   role: 'user' | 'assistant';
