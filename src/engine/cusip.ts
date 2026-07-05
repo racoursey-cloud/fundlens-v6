@@ -5,11 +5,13 @@
  * via the OpenFIGI API. Tickers are what FMP needs to fetch company
  * fundamentals (income statements, balance sheets, ratios, etc.).
  *
- * Fallback chain (spec §4.6):
+ * Fallback chain (spec §4.6; A4 Task 2 added the FMP ISIN step):
  *   1. Supabase cusip_cache (persistent, avoids redundant API calls)
- *   2. OpenFIGI v3 API (batch, 100 per request)
- *   3. FMP search-by-name (for CUSIPs that OpenFIGI can't resolve)
- *   4. Supabase manual entry (manual overrides always win)
+ *   2. FMP search-by-ISIN — foreign-ISIN holdings only (FMP sometimes
+ *      stores the home-listing ISIN that SEC filings carry)
+ *   3. OpenFIGI v3 API (batch, 100 per request)
+ *   4. FMP search-by-name (for ids that OpenFIGI can't resolve)
+ *   5. Supabase manual entry (manual overrides always win)
  *
  * OpenFIGI v3 API:
  * - POST https://api.openfigi.com/v3/mapping
@@ -32,7 +34,7 @@ import {
   delay,
 } from './types.js';
 import { supaFetch } from './supabase.js';
-import { searchByName } from './fmp.js';
+import { searchByIsin, searchByName } from './fmp.js';
 
 // ─── A4 Task 1: US-symbol-preferred listing tiers ───────────────────────────
 // When one identifier maps to several listings, prefer:
@@ -235,8 +237,76 @@ export async function resolveCusips(
     const isinIds = uncached.filter(id => id.startsWith('ISIN:'));
     const nameIds = uncached.filter(id => id.startsWith('NAME:'));
 
-    if (realCusips.length > 0) {
-      const batches = chunkArray(realCusips, OPENFIGI.BATCH_SIZE);
+    // ── Step 2-pre (A4 Task 2): direct ISIN-to-FMP lookup for foreign holdings ──
+    // FMP profiles sometimes store the home-listing ISIN (Samsung's
+    // KR7005930003 — the identifier class SEC filings carry), so a filing
+    // ISIN can match an FMP-covered symbol directly, skipping OpenFIGI.
+    // US-ISIN holdings keep the batched OpenFIGI path (already resolving
+    // 98.9–100% for domestic funds at 100 ids per request).
+    //
+    // Only 'us'/'otc' tier answers are accepted here: those are the symbols
+    // FMP Starter can enrich. A home-exchange-only answer falls through to
+    // OpenFIGI, which can still surface a US listing (Tencent-class: FMP
+    // stores the ADR's ISIN, so the filing's HK ISIN misses here and the
+    // OTC ADR is found via OpenFIGI + Task 1 ranking).
+    const resolvedByFmpIsin = new Set<string>();
+    const fmpIsinCandidates: Array<{ id: string; isin: string }> = [];
+    for (const id of isinIds) {
+      const isin = id.slice('ISIN:'.length);
+      if (!isin.toUpperCase().startsWith('US')) fmpIsinCandidates.push({ id, isin });
+    }
+    for (const id of realCusips) {
+      const isin = isinMap?.get(id);
+      if (isin && !isin.toUpperCase().startsWith('US')) fmpIsinCandidates.push({ id, isin });
+    }
+
+    if (fmpIsinCandidates.length > 0) {
+      console.log(
+        `[cusip] ${fmpIsinCandidates.length} foreign-ISIN holdings trying FMP ISIN search first (sequential, ${PIPELINE.API_CALL_DELAY_MS}ms pacing)`
+      );
+      for (const { id, isin } of fmpIsinCandidates) {
+        try {
+          await delay(PIPELINE.API_CALL_DELAY_MS);
+          const results = await searchByIsin(isin);
+          if (results.length === 0) continue;
+
+          const ranked = [...results].sort(
+            (a, b) =>
+              tierRank(fmpExchangeTier(a.exchangeShortName || a.exchange)) -
+              tierRank(fmpExchangeTier(b.exchangeShortName || b.exchange))
+          );
+          const best = ranked[0];
+          const tier = fmpExchangeTier(best.exchangeShortName || best.exchange);
+          if (!best.symbol || tier === 'home') continue;
+
+          newResolutions.push({
+            cusip: id,
+            ticker: best.symbol,
+            name: best.name || null,
+            securityType: null,
+            resolved: true,
+            warning: 'Resolved via FMP ISIN search',
+            listingTier: tier,
+          });
+          resolvedByFmpIsin.add(id);
+        } catch {
+          // Best-effort — a failed search falls through to OpenFIGI
+          console.warn(`[cusip] FMP ISIN search failed for ${isin}`);
+        }
+      }
+      if (resolvedByFmpIsin.size > 0) {
+        console.log(
+          `[cusip] FMP ISIN search resolved ${resolvedByFmpIsin.size}/${fmpIsinCandidates.length} foreign holdings directly`
+        );
+      }
+    }
+
+    // Ids resolved by FMP ISIN search skip the OpenFIGI steps below.
+    const realCusipsRemaining = realCusips.filter(id => !resolvedByFmpIsin.has(id));
+    const isinIdsRemaining = isinIds.filter(id => !resolvedByFmpIsin.has(id));
+
+    if (realCusipsRemaining.length > 0) {
+      const batches = chunkArray(realCusipsRemaining, OPENFIGI.BATCH_SIZE);
 
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
@@ -254,10 +324,11 @@ export async function resolveCusips(
       }
     }
 
-    // ── Step 2a-ISIN: direct ISIN resolution for placeholder-CUSIP holdings ──
-    if (isinIds.length > 0) {
-      console.log(`[cusip] ${isinIds.length} placeholder-CUSIP holdings resolving via ID_ISIN`);
-      const isinBatches = chunkArray(isinIds, OPENFIGI.BATCH_SIZE);
+    // ── Step 2a-ISIN: OpenFIGI ISIN resolution for placeholder-CUSIP holdings ──
+    // (A4 Task 2: only those the FMP ISIN search above did not resolve)
+    if (isinIdsRemaining.length > 0) {
+      console.log(`[cusip] ${isinIdsRemaining.length} placeholder-CUSIP holdings resolving via ID_ISIN`);
+      const isinBatches = chunkArray(isinIdsRemaining, OPENFIGI.BATCH_SIZE);
 
       for (let i = 0; i < isinBatches.length; i++) {
         const batch = isinBatches[i];
