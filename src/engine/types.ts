@@ -231,8 +231,10 @@ export interface HoldingsPipelineResult {
     holdingsTotal: number;
     /** Cumulative weight of included holdings in whole-percent units (e.g. 65 = 65%) */
     weightCovered: number;
-    /** Which cutoff was hit: "weight" (65%) or "count" (50) */
-    cutoffReason: 'weight' | 'count';
+    /** A5 Task 1: 'complete' = every filing row examined (the coverage cutoff
+     *  is retired). 'weight'/'count' remain only so pre-A5 persisted data
+     *  stays typed. */
+    cutoffReason: 'weight' | 'count' | 'complete';
   };
   /** Fund-of-funds detection */
   fundOfFunds: {
