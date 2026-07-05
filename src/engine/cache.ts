@@ -22,7 +22,7 @@
  */
 
 import { supaFetch } from './supabase.js';
-import { FmpRatios, FmpKeyMetrics } from './fmp.js';
+import { FmpRatios, FmpKeyMetrics, FmpProfile } from './fmp.js';
 import { TiingoDailyPrice } from './tiingo.js';
 
 // ─── TTL Constants ─────────────────────────────────────────────────────────
@@ -45,6 +45,10 @@ function inList(items: string[]): string {
 export interface FmpCacheEntry {
   ratios: FmpRatios | null;
   keyMetrics: FmpKeyMetrics | null;
+  /** A4 Task 3: company profile (industry, exchange, volume). Null on rows
+   *  cached before A4 — the pipeline backfills those with a profile-only
+   *  fetch instead of treating the whole row as a miss. */
+  profile?: FmpProfile | null;
 }
 
 /**
@@ -65,6 +69,7 @@ export async function getFmpCache(
       ticker: string;
       ratios: FmpRatios | null;
       key_metrics: FmpKeyMetrics | null;
+      profile: FmpProfile | null;
       cached_at: string;
     }>>('fmp_cache', {
       params: {
@@ -80,6 +85,7 @@ export async function getFmpCache(
       result.set(row.ticker.toUpperCase(), {
         ratios: row.ratios,
         keyMetrics: row.key_metrics,
+        profile: row.profile ?? null,
       });
     }
   }
@@ -93,7 +99,8 @@ export async function getFmpCache(
 export async function saveFmpCache(
   ticker: string,
   ratios: FmpRatios | null,
-  keyMetrics: FmpKeyMetrics | null
+  keyMetrics: FmpKeyMetrics | null,
+  profile: FmpProfile | null = null
 ): Promise<void> {
   await supaFetch('fmp_cache', {
     method: 'POST',
@@ -101,6 +108,7 @@ export async function saveFmpCache(
       ticker: ticker.toUpperCase(),
       ratios: ratios,
       key_metrics: keyMetrics,
+      profile: profile,
       cached_at: new Date().toISOString(),
     },
     upsert: true,
