@@ -15,12 +15,14 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { Navigate } from 'react-router-dom';
 import {
   fetchPipelineStatus,
   triggerPipeline,
   retryPipeline,
   fetchSystemHealth,
   fetchLatestDossiers,
+  fetchProfile,
   type PipelineRun,
   type FundDossierRow,
 } from '../api';
@@ -106,6 +108,15 @@ function StatCard({ label, value, color }: { label: string; value: string | numb
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export function Pipeline() {
+  // A5 Task 4: admin gate — non-admin accounts get a clean redirect home.
+  // null = still checking; false = redirect; true = render the cockpit.
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  useEffect(() => {
+    fetchProfile().then(res => {
+      setIsAdmin(res.data?.profile?.is_admin === true);
+    });
+  }, []);
+
   const [latestRun, setLatestRun] = useState<PipelineRun | null>(null);
   const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -203,6 +214,14 @@ export function Pipeline() {
       setTimeout(() => loadStatus(), 2000);
     }
   };
+
+  // ── A5 Task 4: admin gate ──────────────────────────────────────────────
+  if (isAdmin === false) {
+    return <Navigate to="/" replace />;
+  }
+  if (isAdmin === null) {
+    return null; // still checking — brief blank beats a flash of the cockpit
+  }
 
   // ── Loading state ──────────────────────────────────────────────────────
   if (loading) {
