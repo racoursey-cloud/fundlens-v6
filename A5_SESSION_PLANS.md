@@ -78,7 +78,13 @@ VFWAX's graded number (`resolved_of_resolvable_pct`, 89.4% on the July 5 baselin
 
 Examined ≥99.5% for every non-money-market fund (note: funds with short/overlay legs, e.g. DRRYX at ~−0.46%, land at ~99.5 rather than 100.0 because negative legs are excluded from the ratios — that is A4's ratified treatment, disclosed in the same table). No rate-limit hits (guaranteed by pacing). Migrations: none for Task 1.
 
-**STOP — awaiting Robert's approval of: the 7 commits above, the 120-minute stale timer, the 60–100-minute first-run expectation, and remedy (b) for the weekly FMP re-fetch night.**
+## Optional seventh commit — identifier-type instrumentation for Task 6 (the A4 carry-over)
+
+A4 left one investigation open: the `<identifiers><other>` elements in NPORT-P filings. The parser currently reads only entries whose description matches "SEDOL" and **silently ignores every other identifier type filers put there** — we have never taken a census of what else is in that element across the 22 funds. Task 6's residual report must "name the identifier types present on failing rows," and this is the same census. Proposal: one small logging addition in `edgar.ts` (mirroring A4's own SEDOL-instrumentation pattern) that logs each *unrecognized* `otherDesc` value once per value per fund, so the first full-examination run produces the complete identifier-type census in its log. Report-only output; no behavior change; the findings feed Task 6 and scope A6.
+
+**STOP — awaiting Robert's approval of: the six commits above (seven with the identifier-type instrumentation), the 120-minute stale timer, the 60–100-minute first-run expectation, and remedy (b) for the weekly FMP re-fetch night.**
+
+*(Reviewer note, reconciled 2026-07-05: an earlier draft said "7 commits" against a six-commit list — arithmetic slip, now corrected; the optional instrumentation commit above is counted separately and explicitly.)*
 
 ---
 
@@ -180,6 +186,7 @@ Magic-link sign-in (`client/src/auth.ts → signInWithOtp`) **creates a brand-ne
 
 - **Migration `a5_task4_user_profiles_admin.sql`:** `ALTER TABLE user_profiles ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT false;` then `UPDATE user_profiles SET is_admin = true WHERE email = 'racoursey@gmail.com';` Run before merging dependent code (PR states order).
 - **Server (`routes.ts`):** `requireAdmin` becomes a database check on `user_profiles.is_admin` (60-second in-memory cache so it doesn't add a query to every click). `ADMIN_EMAILS` in `constants.ts` is **not touched** (frozen file); it remains as a read-only fallback inside `requireAdmin` so a missed migration cannot lock Robert out. Newly gated endpoints: `GET /api/pipeline/history`, `GET /api/pipeline/log/:runId`, `GET /api/dossiers/latest`, `GET /api/monitor/health`, `GET /api/monitor/data-quality`, `GET /api/monitor/cron` (plus the already-gated `run`, `retry`, `help/reload`). **Stays logged-in-only: `GET /api/pipeline/status`** — the every-user header badge depends on it and it exposes only run timestamps/counts (discovery #3). `POST /api/pipeline/abort` stays as is (it can only mark runs aborted; sendBeacon can't carry auth headers — documented limitation, unchanged).
+- **`POST /api/pipeline/abort` — the one door deliberately left unlocked** (reviewer-confirmed, on the record): any logged-in user can mark a running pipeline as aborted, because the browser-close beacon that calls it cannot carry login credentials. What it can do is limited — mark a run failed, never read or delete data — and with signup closed to the allowlist the population who could misuse it is Robert's own coworkers. Accepted as a documented limitation; if it is ever abused, the fix is to drop the beacon path and accept slightly staler "running" rows.
 - **`GET /api/profile`** response already returns the whole profile row, so `is_admin` rides along automatically once the column exists; the client `UserProfile` type gains the field.
 - **Client:** `/pipeline` route wrapped so non-admins get a clean redirect home (check inside the Pipeline page or a small AdminRoute wrapper — I'll propose the wrapper in the PR). "Pipeline" appears in the `AppShell` nav tabs only when `is_admin` — the cockpit stops being findable-by-accident-only. The header's "Refresh Analysis" button also hides for non-admins (today it 403s when clicked — dead UI for them).
 
@@ -220,13 +227,22 @@ Cost: per the July 5 quantification, roughly $0.20 → $0.50/month. All calls re
 
 > Write for a smart coworker who does not work in finance. Dollars, not basis points ("costs about $45 a year on a $10,000 balance," never "45bps"). "What your money owns," not "portfolio exposure." If a term would send a normal person to Google — duration, overweight, cyclical, headwind — either drop it or explain it in the same breath, once. Short sentences. Concrete nouns: company names, dollar amounts, plain verbs. Never apologize for data and never dress it up; say what is known, what is estimated, and what it costs.
 
+**Sonnet 5 mechanics (added after review, verified against the current API reference — this closes the max_tokens question):**
+
+1. **Thinking is on by default.** On `claude-sonnet-5`, a call that doesn't mention thinking runs with "adaptive thinking" — the model reasons privately before writing, and those reasoning tokens **count against the call's `max_tokens` ceiling**. Our prose calls have ceilings tuned for the old models (thesis 4,000; fund summaries 4,096). Left alone, the prose could silently truncate mid-sentence. **The plan: keep thinking ON (it should improve the thesis) and raise the ceilings** — thesis 4,000 → 12,000 and fund summaries 4,096 → 12,000, with the Brief's ceiling raised proportionally if it moves. Both files already read only the response's text blocks, so thinking output cannot leak into what users see — verified in the code.
+2. **The new tokenizer produces ~30% more tokens for the same text.** Another reason the raised ceilings are needed, and why per-call costs shift even at the same per-token price.
+3. **No temperature-style parameters.** Sonnet 5 rejects requests that set sampling parameters. The thesis and fund-summary calls set none (verified); the Brief call will be checked for them before it moves, and any found are removed.
+4. **Pricing is introductory through August 31, 2026** ($2 in / $10 out per million tokens), then rises to the standard $3/$15. The ~$0.50/month estimate is at intro pricing; expect roughly ~$0.75/month from September. Still immaterial, stated for honest budgeting.
+
 Acceptance is literally the Robert-ear test on one regenerated thesis and one fund summary. Commits: `constants.ts` (new constant only), `thesis.ts`, `fund-summaries.ts`, `brief-engine.ts` (if ratified), `editorial-policy.md` — one file per commit.
 
 ---
 
 # Task 6 — The A6 dossier (report-only; approach)
 
-No code. After the full-examination run lands, the PR gets: per-fund unresolved holdings by count and weight (VFWAX and VWIGX especially, naming the identifier types on failing rows — the A4 SEDOL instrumentation in `edgar.ts` already logs exactly this), whether the deferred Bloomberg-ticker hint (`identifierTicker`, already parsed and stored) would plausibly close the gaps, a recommended A6 scope, and the confidence-profile actuals per fund as A6's baseline table.
+No code. After the full-examination run lands, the PR gets: per-fund unresolved holdings by count and weight (VFWAX and VWIGX especially, naming the identifier types on failing rows — the A4 SEDOL instrumentation in `edgar.ts` already logs SEDOLs, and Task 1's optional seventh commit extends it to every `otherDesc` value), whether the deferred Bloomberg-ticker hint (`identifierTicker`, already parsed and stored) would plausibly close the gaps, a recommended A6 scope, and the confidence-profile actuals per fund as A6's baseline table.
+
+**A4 carry-over placed on the record (review item, 2026-07-05):** the open investigation of the `<identifiers><other>` element — what identifier types beyond SEDOL filers actually put there — **lives here, in Task 6**, fed by the Task 1 instrumentation. It is explicitly in A5's scope as a report finding; acting on whatever it reveals (new resolution paths for new identifier types) is A6 scope. It is not silently dropped.
 
 # Task 7 — Haiku classification benchmark (report-only; approach)
 
