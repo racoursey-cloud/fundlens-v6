@@ -249,6 +249,7 @@ export async function runHoldingsPipeline(
       resolvedHoldings.push({
         name: holding.name,
         cusip: holding.cusip,
+        isin: holding.isin ?? null,
         ticker,
         // A4 Task 1: symbol class travels with the holding so enrichment
         // steps can skip 'home' listings (identity only, not FMP-servable)
@@ -568,10 +569,16 @@ function deduplicateHoldings(holdings: EdgarHolding[]): EdgarHolding[] {
 
   for (const holding of holdings) {
     // A3 Task 2: a placeholder CUSIP ("N/A") identifies nothing — merge those
-    // rows by holding name so distinct foreign companies never collapse
-    // (mirrors the A2.3 persist fix).
+    // rows by a real identity so distinct securities never collapse.
+    // A4 first-run fix: ISIN before name. Same-issuer sovereign bonds
+    // (multiple Brazil/Mexico maturities sharing one <name>) are DISTINCT
+    // securities with distinct ISINs — name-only keying collapsed them
+    // (verified in DRRYX's July 5 run). Genuine multi-lot duplicates share
+    // an ISIN and still merge.
     const key = isPlaceholderCusip(holding.cusip)
-      ? `name:${(holding.name || '').trim().toUpperCase()}`
+      ? (holding.isin
+          ? `isin:${holding.isin}`
+          : `name:${(holding.name || '').trim().toUpperCase()}`)
       : holding.cusip;
     const existing = map.get(key);
     if (existing) {
