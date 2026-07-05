@@ -129,6 +129,17 @@ export function FundDetail({ ticker, onClose }: Props) {
     return typeof d.summary === 'string' ? d.summary : null;
   }, [score]);
 
+  // v8 A0 item 3: momentum's synthetic-neutral flag, server-set in
+  // factor_details.momentum.isFallback — true when the fund lacks the
+  // 240 trading days of NAV history for a real momentum score (Option C,
+  // July 5, 2026) and is shown as neutral instead of scored on noise.
+  const momentumTooNew = useMemo(() => {
+    if (!score?.factor_details) return false;
+    const d = score.factor_details as Record<string, unknown>;
+    const m = d.momentum as Record<string, unknown> | undefined;
+    return m?.isFallback === true;
+  }, [score]);
+
   // A5 Task 3: server-computed confidence ladder from factor_details.
   // Null for money markets and rows persisted before A5 (Principle 3 —
   // the client displays, never computes, trust numbers).
@@ -271,6 +282,16 @@ export function FundDetail({ ticker, onClose }: Props) {
                             transition: 'width 0.3s ease',
                           }} />
                         </div>
+                        {key === 'momentum' && momentumTooNew && (
+                          <p style={{
+                            fontSize: 11, lineHeight: 1.5, margin: '4px 0 0',
+                            color: theme.colors.textDim, fontFamily: theme.fonts.body,
+                          }}>
+                            Too new to evaluate — this fund doesn't have enough price
+                            history yet (about a year is needed), so its recent-performance
+                            score is shown as neutral.
+                          </p>
+                        )}
                       </div>
                     );
                   })}
