@@ -416,6 +416,30 @@ export function extractExpenseRatio(data: Record<string, unknown>): number | nul
 }
 
 /**
+ * Search FMP by ISIN (A4 Task 2).
+ *
+ * FMP profiles are inconsistent about which ISIN they store — Samsung's
+ * carries the Korean home-listing ISIN (KR7005930003), the exact identifier
+ * class that appears in SEC fund filings. So a filing ISIN can match an
+ * FMP-covered symbol DIRECTLY, skipping OpenFIGI entirely.
+ *
+ * Endpoint literal lives here (like '/etf-info' above) because constants.ts
+ * is frozen per CLAUDE.md hard rules.
+ *
+ * @param isin 12-character ISIN from the SEC filing
+ * @returns Array of matches (symbol/name/exchange), empty when FMP has none
+ */
+export async function searchByIsin(
+  isin: string
+): Promise<Array<{ symbol: string; name: string; exchangeShortName?: string; exchange?: string }>> {
+  const data = await fmpFetch<Array<{ symbol: string; name: string; exchangeShortName?: string; exchange?: string }>>(
+    '/search-isin',
+    { isin }
+  );
+  return data || [];
+}
+
+/**
  * Search FMP by name. Useful for resolving sub-fund tickers
  * (the fund-of-funds look-through from Session 2).
  */
