@@ -333,6 +333,41 @@ export async function runFullPipeline(
     }
   }
 
+  // ── Step 4e (A4 Task 4): liquidity firewall — classification vs prices ──
+  // Thin OTC tickers are good for classification and poisonous for prices
+  // (SSNLF: average volume ~11 shares/day, verified July 2, 2026). A holding
+  // below the threshold contributes classification data ONLY: any future
+  // per-holding price fetch (the Pulse layer, Founding §3 Layer 2) must
+  // check momentumEligible first. No current code path fetches holding-level
+  // prices — the Momentum factor consumes fund NAV and is unchanged here.
+  //
+  // Verdicts: true/false only for FMP-enriched holdings. Identity-only
+  // ('home' tier), unresolved, and never-profiled holdings stay null
+  // ("not applicable"). A profile with MISSING volume counts as below the
+  // line — a silent gap must not pass as healthy (Principle 1).
+  //
+  // Threshold per A4 Task 4: 10,000 shares/day. Known refinement on record
+  // (Robert, July 5, 2026): shares/day treats a $5 stock and a $500 stock
+  // very differently — dollar volume may be the better yardstick when the
+  // Pulse layer consumes these flags. See the A4 Task 7 report.
+  const MOMENTUM_MIN_AVG_VOLUME = 10_000;
+  for (const [fundTicker, holdings] of fundHoldings) {
+    let firewalledWeight = 0;
+    for (const h of holdings) {
+      if (!h.ticker || h.listingTier === 'home') continue;
+      const prof = fundamentals.get(h.ticker)?.profile;
+      if (!prof) continue;
+      h.momentumEligible = (prof.averageVolume ?? 0) >= MOMENTUM_MIN_AVG_VOLUME;
+      if (!h.momentumEligible) firewalledWeight += h.pctOfNav;
+    }
+    if (firewalledWeight > 0) {
+      console.log(
+        `[pipeline] A4 Task 4: ${fundTicker} — ${firewalledWeight.toFixed(1)}% of NAV firewalled ` +
+        `(classification only; too thin for price series)`
+      );
+    }
+  }
+
   // ── Step 5: Classify holdings into sectors via Claude Haiku (with cache) ──
   // Session 10: Collect ALL unique holding names across ALL funds, batch-check
   // sector_classifications cache, then only classify uncached holdings.
