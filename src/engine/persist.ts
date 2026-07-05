@@ -106,6 +106,43 @@ export async function persistPipelineResults(
   // ── 1. Write fund scores ──────────────────────────────────────────────
   // One row per fund, with all four factor scores + default composite.
 
+  // A5 Task 3: server-computed confidence object, embedded into each fund's
+  // factor_details so the client displays trust data without computing any
+  // (Principle 3 — one source of truth). Built from the same Dossier the
+  // run graded; the unidentified remainder is derived here, once. Money
+  // markets carry null — no N-PORT holdings exist to profile.
+  const dossierByTicker = new Map(
+    (result.dossiers ?? []).map(d => [d.ticker, d])
+  );
+  const confidenceFor = (ticker: string) => {
+    const d = dossierByTicker.get(ticker);
+    if (!d || d.isMoneyMarket) return null;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const remainder = r2(Math.max(
+      0,
+      100 - d.confFullyVerifiedPct - d.confModelClassifiedPct
+        - d.confIdentityOnlyPct - d.confOpaquePct
+    ));
+    return {
+      /** Line 1: % of the fund's value whose securities are identity-verified */
+      identifiedPct: d.navResolvedPct,
+      /** Line 2: classification provenance — filed data vs model-assessed */
+      filedClassifiedPct: d.confFullyVerifiedPct,
+      modelClassifiedPct: d.confModelClassifiedPct,
+      /** Fund detail: the full four-rung ladder (% of positive NAV) */
+      ladder: {
+        fullyVerified: d.confFullyVerifiedPct,
+        modelClassified: d.confModelClassifiedPct,
+        identityOnly: d.confIdentityOnlyPct,
+        opaque: d.confOpaquePct,
+        shortOverlay: d.shortOverlayWeightPct,
+        remainder,
+      },
+      /** Principle 4: the filing's report date */
+      asOf: d.reportDate,
+    };
+  };
+
   for (const fundScore of result.scoring.funds) {
     // Find the fund's UUID
     const fund = funds.find(f => f.ticker === fundScore.ticker);
@@ -136,6 +173,8 @@ export async function persistPipelineResults(
         ...fundScore.factorDetails,
         fallbackCount: fundScore.fallbackCount,
         summary: fundSummaries?.[fundScore.ticker] ?? null,
+        // A5 Task 3: the user-facing trust data (null for money markets)
+        confidence: confidenceFor(fundScore.ticker),
       },
       scored_at: new Date().toISOString(),
     };
