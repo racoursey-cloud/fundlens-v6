@@ -241,6 +241,16 @@ export interface FundDossierRow {
   nav_resolved_pct: number;
   classified_pct: number;
   weight_covered_pct: number;
+  /** A4 Task 6 v2 metrics — undefined/0 on rows written before the
+   *  a4_task6_dossier_v2 migration */
+  resolvable_pct?: number;
+  resolved_of_resolvable_pct?: number;
+  unresolvable_weight_pct?: number;
+  short_overlay_weight_pct?: number;
+  momentum_firewalled_weight_pct?: number;
+  industry_fmp_pct?: number;
+  industry_haiku_pct?: number;
+  industry_none_pct?: number;
   holdings_included: number;
   holdings_total: number;
   lookthrough_detected: boolean;
