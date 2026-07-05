@@ -1,6 +1,6 @@
 # FundLens v7 — Founding Document
 
-**Date:** July 1, 2026
+**Date:** July 1, 2026 (amended July 2, 2026 — §3 threshold clarification, §5 ratifications, §6 statuses)
 **Owner:** Robert Coursey (racoursey-cloud)
 **Status:** Authoritative. Every v7 session cites this document. Supersedes FUNDLENS_SPEC.md as product direction; the old spec remains the math reference for any parked engine that returns.
 
@@ -50,9 +50,9 @@ PARKED   scoring · allocation · tiers · Briefs · regime engine
 ### Layer 0 — Acquisition (the Fund Dossier)
 A single entry point, `acquireFund(ticker)`, orchestrating the existing engine files (edgar, cusip, fmp, tiingo, finnhub, holdings) and returning a **Dossier**: identity (SEC-verified name, CIK, series ID), expenses (net ER, 12b-1, source), holdings (resolved tickers, weights, as-of date), classifications, 12 months of NAV history, and a **Coverage Scorecard**.
 
-**Draft pass thresholds (Robert approves/adjusts in Session A2):**
+**Pass thresholds (ratified July 1, 2026; clarified July 2, 2026):**
 - ≥ 90% of NAV resolved to identified securities
-- ≥ 95% of resolved NAV classified (sector level)
+- ≥ 95% of resolved NAV classified (sector level; the last-resort "Other" label counts as *unclassified* for this gate — ratified July 2, 2026)
 - ≥ 240 trading days of NAV history
 - Expense ratio present with a named source
 - Special cases: money market funds pass on identity + expenses + NAV alone (no N-PORT holdings); fund-of-funds pass via look-through coverage of underlying funds.
@@ -96,19 +96,21 @@ Scoring/allocation/tiers/Briefs, and the regime/pivot engine. The regime engine 
 
 ## 5. Open Decisions (Robert)
 
-1. **Dossier pass thresholds** — **RATIFIED July 1, 2026:** 90% of NAV resolved / 95% of resolved NAV classified, per §3 Layer 0.
+1. **Dossier pass thresholds** — **RATIFIED July 1, 2026:** 90% of NAV resolved / 95% of resolved NAV classified, per §3 Layer 0. **Clarified July 2, 2026:** last-resort "Other" counts as unclassified for the 95% gate.
 2. **Brief cadence** — **RATIFIED July 1, 2026: daily automatic Brief generation killed** (implemented in A2 — Stabilization; post-pipeline regeneration calls removed). The monthly email delivery cadence and on-demand generation remain.
 3. **Commit-rule amendment** — approve the bulk-move exception in §2.
 4. **Theme taxonomy** — reviewed and approved in its own session before Layer 1 work begins.
+5. **Sector taxonomy anchor** — **RATIFIED July 2, 2026:** classification follows GICS placement where it and colloquial usage diverge (Alphabet and Meta are Communication Services); the placement is pinned in the classification prompt, not left to model discretion.
 
 ---
 
 ## 6. Build Order
 
 - **A1 — Clean Slate:** delete dead code, archive root docs, commit this document. (Merged.)
-- **A2 — Stabilization:** July 1 field findings — kill daily Brief generation, loud API failure alerts, ×100 inflation trace, client allocation re-port, supaFetch/persist fixes. (This assignment; replaces the original A2.)
-- **A3 — Dossier Contract + Scorecard:** DOSSIER_CONTRACT.md, `acquireFund()` refactor behind existing pipeline, admin scoreboard endpoint + minimal view.
-- **A4–A9 — Coverage passes:** fund-by-fund until 22/22 pass or are explained. Problem children (fund-of-funds, money markets, international-heavy) get dedicated sessions.
+- **A2 — Stabilization:** July 1 field findings — kill daily Brief generation, loud API failure alerts, ×100 inflation trace, client allocation re-port, supaFetch/persist fixes. (Merged, including A2.3 placeholder-CUSIP fix, July 2.)
+- **A3 — Scoring Integrity + Dossier Contract:** sector-cache poisoning fix, per-holding resolution identity, look-through correction, Dossier + gate + Fund Data Quality scoreboard. (Merged July 2, 2026 — PR #6.)
+- **A4 — Company-Level Industry Classification:** first coverage pass — international resolution (ISIN-first, US-symbol preference), FMP industry harvest, Dossier v2 (resolvable-NAV grading) proposal. Defined in `A4_COMPANY_LEVEL_CLASSIFICATION.md`.
+- **A5–A9 — Coverage passes:** fund-by-fund until 22/22 pass or are explained. Problem children (fund-of-funds, money markets, international-heavy) get dedicated sessions.
 - **A10 — Theme taxonomy + classification pass.**
 - **A11 — Pulse:** returns-based verification module + divergence flags.
 - **A12+ — Explorer upgrades:** fund cards, fee X-ray, overlap detector.
