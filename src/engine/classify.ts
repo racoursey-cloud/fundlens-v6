@@ -19,6 +19,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { CLAUDE, PIPELINE } from './constants.js';
 import { ResolvedHolding, delay } from './types.js';
 import { alertClaudeApiFailure } from './admin-alert.js';
+import { FMP_INDUSTRIES, FMP_INDUSTRY_SET } from './industries.js';
 
 // ─── Standard Sectors ───────────────────────────────────────────────────────
 // Must match the sectors in thesis.ts for alignment scoring to work.
@@ -367,10 +368,18 @@ async function classifyBatch(
 
   const sectorList = VALID_SECTORS.join(', ');
 
+  // A4 Task 5 — GICS pin (ratified July 2, 2026, Founding §5 decision 5):
+  // classification follows GICS placement where it and colloquial usage
+  // diverge. The post-wipe run landed there by Haiku's own judgment, but
+  // unpinned discretion can drift — so the placement is stated explicitly.
+  const gicsPin =
+    ' Sector placements follow GICS where GICS and colloquial usage diverge: ' +
+    'Alphabet (Google) and Meta Platforms are Communication Services, not Technology.';
+
   const response = await client.messages.create({
     model: CLAUDE.CLASSIFICATION_MODEL,
     max_tokens: 1000,
-    system: `You are a financial sector classifier. Classify each holding into exactly one sector from this list: ${sectorList}. Respond with ONLY a JSON object mapping the key (ticker or name) to sector. No explanation.`,
+    system: `You are a financial sector classifier. Classify each holding into exactly one sector from this list: ${sectorList}.${gicsPin} Respond with ONLY a JSON object mapping the key (ticker or name) to sector. No explanation.`,
     messages: [
       {
         role: 'user',
@@ -497,4 +506,161 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
     chunks.push(arr.slice(i, i + size));
   }
   return chunks;
+}
+
+// ─── Industry Classification (A4 Task 5) ────────────────────────────────────
+// For holdings with no FMP-served industry (home-exchange-only foreign
+// names), Claude Haiku classifies against the SAME pinned 159-industry FMP
+// menu (industries.ts) so the whole dataset speaks one taxonomy.
+//
+// MANDATORY: same rules as sectors — sequential, 1.2s delays, never
+// Promise.all(). A response outside the menu is retried ONCE, then falls
+// to 'Other' with industrySource null — 'Other' counts as UNCLASSIFIED in
+// the Dossier coverage metric (July 2 decision).
+
+/**
+ * Classify holdings into fine-grained industries via Claude Haiku.
+ * Modifies holdings in place (sets .industry and .industrySource).
+ *
+ * The caller pre-filters (equity holdings with a name and no industry)
+ * and deduplicates — one representative per (name, asset type).
+ */
+export async function classifyHoldingIndustries(
+  holdings: ResolvedHolding[]
+): Promise<void> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY environment variable is not set');
+  }
+  if (holdings.length === 0) return;
+
+  console.log(`[classify] A4 Task 5: classifying ${holdings.length} holdings into industries via Claude Haiku`);
+
+  const client = new Anthropic({ apiKey });
+
+  // Attempt 0 = first pass; attempt 1 = the single retry for responses
+  // that came back outside the menu.
+  let pending = [...holdings];
+  for (let attempt = 0; attempt < 2 && pending.length > 0; attempt++) {
+    const outsideMenu: ResolvedHolding[] = [];
+    const batches = chunkArray(pending, 25);
+
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      console.log(`[classify] Industry batch ${i + 1}/${batches.length} (${batch.length} holdings${attempt === 1 ? ', retry' : ''})`);
+
+      try {
+        const classifications = await classifyIndustryBatch(client, batch);
+
+        for (const holding of batch) {
+          const key = holding.ticker || holding.name;
+          const industry = classifications.get(key) ?? classifications.get(holding.name);
+          if (industry && FMP_INDUSTRY_SET.has(industry)) {
+            holding.industry = industry;
+            holding.industrySource = 'haiku';
+          } else {
+            // Outside the menu (or missing from the response) — queue for
+            // the single retry
+            outsideMenu.push(holding);
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[classify] Industry batch ${i + 1} failed: ${msg}`);
+        // API failure is not an out-of-menu response: no retry spam, leave
+        // industry null (counts as 'none' provenance) and alert loudly
+        // (A2 Task 3, Principle 1).
+        alertClaudeApiFailure('Industry classification', msg).catch(() => {});
+      }
+
+      // MANDATORY: 1.2s delay between Claude calls
+      if (i < batches.length - 1 || (attempt === 0 && outsideMenu.length > 0)) {
+        await delay(PIPELINE.CLAUDE_CALL_DELAY_MS);
+      }
+    }
+
+    if (attempt === 0 && outsideMenu.length > 0) {
+      console.log(`[classify] ${outsideMenu.length} industry responses outside the menu — retrying once`);
+    }
+    pending = outsideMenu;
+  }
+
+  // Still outside the menu after the single retry → 'Other'.
+  // industrySource stays null: 'Other' counts as unclassified (July 2
+  // decision), so it must not read as Haiku-classified weight.
+  for (const holding of pending) {
+    holding.industry = 'Other';
+    holding.industrySource = null;
+  }
+  if (pending.length > 0) {
+    console.log(`[classify] ${pending.length} holdings fell to industry 'Other' after retry (counts as unclassified)`);
+  }
+
+  const classified = holdings.filter(h => h.industrySource === 'haiku').length;
+  console.log(`[classify] Industry done: ${classified}/${holdings.length} classified on the menu`);
+}
+
+/**
+ * Send one batch of holdings to Claude Haiku for industry classification.
+ * Returns a Map of ticker/name → industry (unvalidated — caller checks
+ * against FMP_INDUSTRY_SET).
+ */
+async function classifyIndustryBatch(
+  client: Anthropic,
+  holdings: ResolvedHolding[]
+): Promise<Map<string, string>> {
+  const holdingsList = holdings
+    .map(h => {
+      const key = sanitizeHoldingText(h.ticker || h.name);
+      const label = h.ticker ? sanitizeHoldingText(h.name) : '(classify by name)';
+      return `- ${key}: ${label}`;
+    })
+    .join('\n');
+
+  const industryMenu = FMP_INDUSTRIES.join('; ');
+
+  const response = await client.messages.create({
+    model: CLAUDE.CLASSIFICATION_MODEL,
+    max_tokens: 1500,
+    system:
+      `You are a financial industry classifier. Classify each company into exactly one industry ` +
+      `from this menu, using the industry name EXACTLY as written:\n${industryMenu}\n` +
+      `Respond with ONLY a JSON object mapping the key (ticker or name) to industry. No explanation.`,
+    messages: [
+      {
+        role: 'user',
+        content: `Classify these companies:\n${holdingsList}\n\nRespond as JSON: {"KEY": "Industry", ...} where KEY is the identifier before the colon on each line.`,
+      },
+    ],
+  });
+
+  const text = response.content
+    .filter(block => block.type === 'text')
+    .map(block => (block.type === 'text' ? block.text : ''))
+    .join('');
+
+  const result = new Map<string, string>();
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === 'string') {
+          result.set(key, value.trim());
+        }
+      }
+    }
+  } catch {
+    console.error('[classify] Failed to parse Haiku industry response as JSON');
+  }
+
+  // Also map by name for holdings whose key was the ticker
+  for (const h of holdings) {
+    const viaTicker = h.ticker ? result.get(h.ticker) : undefined;
+    if (viaTicker && !result.has(h.name)) {
+      result.set(h.name, viaTicker);
+    }
+  }
+
+  return result;
 }
