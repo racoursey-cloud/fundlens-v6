@@ -24,8 +24,10 @@ import {
   fetchLatestDossiers,
   fetchProfile,
   runClassificationBenchmark,
+  getBenchmarkStatus,
   type PipelineRun,
   type FundDossierRow,
+  type BenchmarkRunStatus,
 } from '../api';
 import { theme } from '../theme';
 
@@ -159,11 +161,39 @@ export function Pipeline() {
     }
   }, []);
 
+  // ── v8 A0 (Gap 4): benchmark visibility ────────────────────────────────
+  // Completion used to exist only as an email; now the tab shows running
+  // state and the last outcome, polled while a benchmark is in flight.
+  const [benchStatus, setBenchStatus] = useState<BenchmarkRunStatus | null>(null);
+  const benchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadBenchStatus = useCallback(async () => {
+    const { data } = await getBenchmarkStatus();
+    if (data) setBenchStatus(data);
+  }, []);
+
+  useEffect(() => {
+    if (benchStatus?.running) {
+      benchPollRef.current = setInterval(() => {
+        loadBenchStatus();
+      }, 10000);
+    } else if (benchPollRef.current) {
+      clearInterval(benchPollRef.current);
+      benchPollRef.current = null;
+    }
+    return () => {
+      if (benchPollRef.current) {
+        clearInterval(benchPollRef.current);
+      }
+    };
+  }, [benchStatus?.running, loadBenchStatus]);
+
   // ── Initial load ───────────────────────────────────────────────────────
   useEffect(() => {
     loadStatus();
     loadHealth();
-  }, [loadStatus, loadHealth]);
+    loadBenchStatus();
+  }, [loadStatus, loadHealth, loadBenchStatus]);
 
   // Dossiers: load on mount and refresh whenever a run finishes
   useEffect(() => {
@@ -211,6 +241,8 @@ export function Pipeline() {
       setActionError(error);
     } else {
       setActionMsg(data?.message ?? 'Benchmark started');
+      // Pick up the running state promptly; the poll takes over from there
+      setTimeout(() => loadBenchStatus(), 1000);
     }
   };
 
@@ -337,6 +369,39 @@ export function Pipeline() {
           color: theme.colors.success,
         }}>
           {actionMsg}
+        </div>
+      )}
+
+      {/* v8 A0 (Gap 4): benchmark status — running state or last outcome */}
+      {benchStatus && (benchStatus.running || benchStatus.finishedAt) && (
+        <div style={{
+          background: theme.colors.surface,
+          border: `1px solid ${theme.colors.border}`,
+          borderRadius: theme.radii.md,
+          padding: '10px 16px',
+          marginBottom: '16px',
+          fontSize: '13px',
+          color: theme.colors.textMuted,
+        }}>
+          {benchStatus.running ? (
+            <>Classification benchmark running{benchStatus.startedAt ? ` since ${fmtDateTime(benchStatus.startedAt)}` : ''}…</>
+          ) : (
+            <>
+              Last benchmark: {benchStatus.finishedAt ? fmtDateTime(benchStatus.finishedAt) : '—'} —{' '}
+              <span style={{ color: benchStatus.outcome === 'success' ? theme.colors.success : theme.colors.error, fontWeight: 600 }}>
+                {benchStatus.outcome === 'success' ? 'completed' : 'failed'}
+              </span>
+              {benchStatus.emailed === false && (
+                <span style={{ color: theme.colors.error }}> · report email did not send — results are in the server log</span>
+              )}
+              {benchStatus.emailed === true && <span> · report emailed</span>}
+              {benchStatus.outcome === 'success' && benchStatus.summary && (
+                <div style={{ marginTop: '6px', whiteSpace: 'pre-wrap', fontFamily: theme.fonts.mono, fontSize: '12px' }}>
+                  {benchStatus.summary}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
