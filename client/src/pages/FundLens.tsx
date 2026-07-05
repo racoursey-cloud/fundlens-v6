@@ -124,9 +124,27 @@ interface HoldingData {
   sector: string | null;
 }
 
+// A5 Task 3: server-computed confidence object (persist.ts). The client
+// displays it verbatim — no trust math happens here (Principle 3).
+interface ConfidenceData {
+  identifiedPct: number;
+  filedClassifiedPct: number;
+  modelClassifiedPct: number;
+  ladder: {
+    fullyVerified: number;
+    modelClassified: number;
+    identityOnly: number;
+    opaque: number;
+    shortOverlay: number;
+    remainder: number;
+  };
+  asOf: string | null;
+}
+
 interface FundExplorerData {
   sectors: SectorData[];
   holdings: HoldingData[];
+  confidence: ConfidenceData | null;
 }
 
 function extractExplorerData(score: FundScore): FundExplorerData {
@@ -175,7 +193,11 @@ function extractExplorerData(score: FundScore): FundExplorerData {
     }
   }
 
-  return { sectors, holdings };
+  // A5 Task 3: confidence rides in factor_details, computed server-side.
+  // Null for money markets and for rows persisted before A5.
+  const confidence = (details?.confidence as ConfidenceData | null | undefined) ?? null;
+
+  return { sectors, holdings, confidence };
 }
 
 // ─── Spinner ─────────────────────────────────────────────────────────────────
@@ -305,6 +327,10 @@ export function FundLens() {
         <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: '4px 0 0' }}>
           {rankedScores.length} funds in your 401(k) plan — click any fund to look inside
         </p>
+        {/* A5 Task 3: ambient trust line — one quiet sentence, no percentages */}
+        <p style={{ fontSize: 12, color: theme.colors.textDim, margin: '4px 0 0' }}>
+          Holdings data from the latest SEC filings · {rankedScores.length} funds · updated nightly
+        </p>
       </div>
 
       {/* Fund list */}
@@ -413,6 +439,28 @@ export function FundLens() {
                     <span style={{
                       marginLeft: 10, fontSize: 13, color: theme.colors.textMuted,
                     }}>{name}</span>
+
+                    {/* A5 Task 3, Decision 1 (Option C): the two-line trust
+                        statement — credential first, disclosure second, zero
+                        apology. Line 2's "model-assessed" is the placeholder
+                        vocabulary until Task 7's measured agreement rate
+                        finalizes Decision 2. */}
+                    {explorerData.confidence && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ fontSize: 12.5, color: theme.colors.text }}>
+                          Holdings identified: {Math.round(explorerData.confidence.identifiedPct)}% of this fund&apos;s value
+                        </div>
+                        <div style={{ fontSize: 12, color: theme.colors.textMuted, marginTop: 2 }}>
+                          Classifications from filed data: {Math.round(explorerData.confidence.filedClassifiedPct)}%
+                          {explorerData.confidence.modelClassifiedPct >= 0.5 && ' · the rest model-assessed'}
+                        </div>
+                        {explorerData.confidence.asOf && (
+                          <div style={{ fontSize: 11, color: theme.colors.textDim, marginTop: 2 }}>
+                            From the fund&apos;s SEC filing dated {new Date(explorerData.confidence.asOf + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {isMobile ? (
