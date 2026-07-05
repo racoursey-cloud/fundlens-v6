@@ -242,16 +242,21 @@ export async function resolveCusips(
     );
 
     // ── Step 2: Resolve uncached ids via OpenFIGI in batches ──
-    // A3 Task 2: ids arrive in three classes (built in holdings.ts):
+    // A3 Task 2 (+ A4 QFVRX fix): ids arrive in four classes (holdings.ts):
     //   real 9-char CUSIP → OpenFIGI ID_CUSIP (unchanged behavior)
     //   "ISIN:<isin>"     → OpenFIGI ID_ISIN directly — the filing's CUSIP
     //                       field was a placeholder ("N/A"), the ISIN is the
     //                       holding's real identifier
+    //   "SEDOL:<sedol>"   → OpenFIGI ID_SEDOL — SEDOL-only filers (QFVRX's
+    //                       Pear Tree Polaris provides no ISIN anywhere)
     //   "NAME:<key>"      → no identifier exists; FMP name fallback only
     const newResolutions: CusipResolution[] = [];
 
-    const realCusips = uncached.filter(id => !id.startsWith('ISIN:') && !id.startsWith('NAME:'));
+    const realCusips = uncached.filter(
+      id => !id.startsWith('ISIN:') && !id.startsWith('SEDOL:') && !id.startsWith('NAME:')
+    );
     const isinIds = uncached.filter(id => id.startsWith('ISIN:'));
+    const sedolIds = uncached.filter(id => id.startsWith('SEDOL:'));
     const nameIds = uncached.filter(id => id.startsWith('NAME:'));
 
     // ── Step 2-pre (A4 Task 2): direct ISIN-to-FMP lookup for foreign holdings ──
@@ -352,12 +357,35 @@ export async function resolveCusips(
       for (let i = 0; i < isinBatches.length; i++) {
         const batch = isinBatches[i];
         await delay(PIPELINE.API_CALL_DELAY_MS);
-        const results = await callOpenFigiByIsin(
+        const results = await callOpenFigiById(
+          'ID_ISIN',
           batch.map(id => id.slice('ISIN:'.length)),
           apiKey
         );
         // Re-key each result to its full "ISIN:" id (the call returns raw ISINs;
         // results are index-matched to the request)
+        for (let j = 0; j < batch.length; j++) {
+          const r = results[j];
+          if (r) newResolutions.push({ ...r, cusip: batch[j] });
+        }
+      }
+    }
+
+    // ── Step 2a-SEDOL (A4 QFVRX fix): OpenFIGI SEDOL resolution ──
+    // Same free, batched machinery as the ISIN path; Task 1 tier ranking
+    // applies via parseOpenFigiResponse. No FMP quota impact.
+    if (sedolIds.length > 0) {
+      console.log(`[cusip] ${sedolIds.length} SEDOL-identified holdings resolving via ID_SEDOL`);
+      const sedolBatches = chunkArray(sedolIds, OPENFIGI.BATCH_SIZE);
+
+      for (let i = 0; i < sedolBatches.length; i++) {
+        const batch = sedolBatches[i];
+        await delay(PIPELINE.API_CALL_DELAY_MS);
+        const results = await callOpenFigiById(
+          'ID_SEDOL',
+          batch.map(id => id.slice('SEDOL:'.length)),
+          apiKey
+        );
         for (let j = 0; j < batch.length; j++) {
           const r = results[j];
           if (r) newResolutions.push({ ...r, cusip: batch[j] });
@@ -405,7 +433,8 @@ export async function resolveCusips(
             isin: isinMap.get(r.cusip)!,
           }));
 
-          const isinResults = await callOpenFigiByIsin(
+          const isinResults = await callOpenFigiById(
+            'ID_ISIN',
             isinCusipPairs.map(p => p.isin),
             apiKey
           );
@@ -611,17 +640,19 @@ async function callOpenFigi(
 }
 
 /**
- * Call the OpenFIGI v3 mapping API using ISINs instead of CUSIPs (BUG-3).
- * International securities often have ISINs that resolve when CUSIPs fail.
+ * Call the OpenFIGI v3 mapping API by a non-CUSIP id type (BUG-3, extended
+ * by the A4 QFVRX fix). International securities often have ISINs (or, for
+ * SEDOL-only filers, SEDOLs) that resolve when CUSIPs fail or don't exist.
  * Same API, different idType.
  */
-async function callOpenFigiByIsin(
-  isins: string[],
+async function callOpenFigiById(
+  idType: 'ID_ISIN' | 'ID_SEDOL',
+  values: string[],
   apiKey: string
 ): Promise<CusipResolution[]> {
-  const jobs: FigiMappingJob[] = isins.map(isin => ({
-    idType: 'ID_ISIN',
-    idValue: isin,
+  const jobs: FigiMappingJob[] = values.map(value => ({
+    idType,
+    idValue: value,
   }));
 
   const headers: Record<string, string> = {
@@ -639,7 +670,7 @@ async function callOpenFigiByIsin(
 
   if (!response.ok) {
     if (response.status === 429) {
-      console.warn('[cusip] OpenFIGI rate limit hit on ISIN batch, waiting 10s...');
+      console.warn(`[cusip] OpenFIGI rate limit hit on ${idType} batch, waiting 10s...`);
       await delay(10_000);
       const retryResponse = await fetch(OPENFIGI.BASE_URL, {
         method: 'POST',
@@ -647,31 +678,31 @@ async function callOpenFigiByIsin(
         body: JSON.stringify(jobs),
       });
       if (!retryResponse.ok) {
-        console.warn(`[cusip] OpenFIGI ISIN retry failed with HTTP ${retryResponse.status}`);
-        return isins.map(isin => ({
-          cusip: isin, // placeholder — caller maps back via CUSIP
+        console.warn(`[cusip] OpenFIGI ${idType} retry failed with HTTP ${retryResponse.status}`);
+        return values.map(value => ({
+          cusip: value, // placeholder — caller maps back to the full id
           ticker: null,
           name: null,
           securityType: null,
           resolved: false,
-          warning: `OpenFIGI ISIN retry failed: HTTP ${retryResponse.status}`,
+          warning: `OpenFIGI ${idType} retry failed: HTTP ${retryResponse.status}`,
         }));
       }
-      return parseOpenFigiResponse(isins, await retryResponse.json());
+      return parseOpenFigiResponse(values, await retryResponse.json());
     }
-    console.warn(`[cusip] OpenFIGI ISIN batch failed with HTTP ${response.status}`);
-    return isins.map(isin => ({
-      cusip: isin,
+    console.warn(`[cusip] OpenFIGI ${idType} batch failed with HTTP ${response.status}`);
+    return values.map(value => ({
+      cusip: value,
       ticker: null,
       name: null,
       securityType: null,
       resolved: false,
-      warning: `OpenFIGI ISIN failed: HTTP ${response.status}`,
+      warning: `OpenFIGI ${idType} failed: HTTP ${response.status}`,
     }));
   }
 
   const responseData = await response.json();
-  return parseOpenFigiResponse(isins, responseData);
+  return parseOpenFigiResponse(values, responseData);
 }
 
 /**
