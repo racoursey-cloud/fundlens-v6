@@ -191,6 +191,10 @@ export interface ResolvedHolding {
   averageVolume?: number | null;
   /** False = below the liquidity firewall: classification only (A4 Task 4) */
   momentumEligible?: boolean | null;
+  /** A4 Task 6: true = derivative category OR no CUSIP and no ISIN — the
+   *  holding is kept and displayed but never sent through resolution, and
+   *  it is excluded from the resolvable-NAV denominator in the Dossier. */
+  structurallyUnresolvable?: boolean;
 }
 
 /** Result of the holdings pipeline for a single fund */
