@@ -291,12 +291,23 @@ export async function persistPipelineResults(
       console.warn(`[persist] Holdings ${ticker}: failed to delete stale rows — ${deleteError}`);
     }
 
-    const { error } = await supaInsert('holdings_cache', rows, { upsert: true });
-
-    if (!error) {
-      holdingsWritten += rows.length;
-    } else {
-      errors.push(`Holdings ${ticker}: batch upsert failed — ${error}`);
+    // A5 Task 1: insert in chunks of 500. A full-examination fund (VFWAX:
+    // ~3,900 rows) would otherwise ride in one ~1.5MB request — chunking is
+    // cheap insurance against body-size limits. The delete above already
+    // cleared the fund, so per-chunk upserts cannot collide.
+    let fundInsertFailed = false;
+    for (let i = 0; i < rows.length; i += 500) {
+      const chunk = rows.slice(i, i + 500);
+      const { error } = await supaInsert('holdings_cache', chunk, { upsert: true });
+      if (!error) {
+        holdingsWritten += chunk.length;
+      } else {
+        fundInsertFailed = true;
+        errors.push(`Holdings ${ticker}: batch upsert failed (rows ${i + 1}–${i + chunk.length}) — ${error}`);
+      }
+    }
+    if (fundInsertFailed) {
+      console.warn(`[persist] Holdings ${ticker}: one or more insert chunks failed — see errors`);
     }
   }
 
