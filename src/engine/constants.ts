@@ -147,6 +147,14 @@ export const CLAUDE = {
   THESIS_MODEL: 'claude-sonnet-4-6',
   /** Model for Investment Brief writing — Opus for natural voice and stronger reasoning (spec §4.2) */
   BRIEF_MODEL: 'claude-opus-4-6',
+  /** A5 Task 5 (ratified July 5, 2026): ALL user-facing prose — thesis, fund
+   *  summaries, Investment Brief — moves to this model. NEW constant; the
+   *  frozen THESIS_MODEL/BRIEF_MODEL above stay in place, merely no longer
+   *  referenced. Classification stays on CLASSIFICATION_MODEL untouched.
+   *  Sonnet 5 notes: thinking is on by default and counts against
+   *  max_tokens (prose calls raise their ceilings accordingly), and the
+   *  model rejects temperature-style sampling parameters. */
+  PROSE_MODEL: 'claude-sonnet-5',
   /** Minimum delay between sequential Claude API calls (milliseconds) */
   CALL_DELAY_MS: 1200,
   /** All Claude calls route through this proxy endpoint */
