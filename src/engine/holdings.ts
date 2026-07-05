@@ -1,14 +1,15 @@
 /**
  * FundLens v6 — Holdings Pipeline Orchestrator
  *
- * Ties together EDGAR (fetch holdings) + FMP CUSIP resolution and
- * applies the dynamic coverage cutoff and fund-of-funds look-through.
+ * Ties together EDGAR (fetch holdings) + FMP CUSIP resolution and the
+ * fund-of-funds look-through.
  *
- * Coverage cutoff (from Master Reference §4):
- *   Walk down holdings by weight (largest first).
- *   Stop when cumulative weight reaches 65% OR 50 holdings, whichever first.
- *   - Concentrated active funds may hit 65% with ~20 holdings
- *   - Broad index funds will cap at 50 holdings (~55-60% coverage)
+ * Full examination (A5 Task 1, ratified July 5, 2026): the coverage cutoff
+ * is retired. Every filing row that survives parsing enters the pipeline at
+ * its true weight — no 95%-of-NAV termination, no 400-holding cap. The
+ * product statement this enables, without qualifiers: "We processed every
+ * holding your fund reported." Coverage stats are kept (weightCovered now
+ * computes to ~100% naturally; cutoffReason is 'complete').
  *
  * Fund-of-funds look-through:
  *   If a holding is itself an investment company (another fund), we recursively
@@ -19,7 +20,7 @@
  * Session 2 deliverable. References: Master Reference §4, §8 steps 2-3.
  */
 
-import { HOLDINGS_COVERAGE, PIPELINE } from './constants.js';
+import { PIPELINE } from './constants.js';
 import { fetchEdgarHoldings } from './edgar.js';
 import { resolveCusips } from './cusip.js';
 import { searchByName } from './fmp.js';
@@ -108,7 +109,7 @@ function isStructurallyUnresolvable(h: EdgarHolding): boolean {
  * Steps:
  * 1. Fetch all holdings from EDGAR NPORT-P filing
  * 2. Detect fund-of-funds and recursively look through sub-funds
- * 3. Apply the 65%/50-holding coverage cutoff
+ * 3. Include every holding at true weight (A5 Task 1 — cutoff retired)
  * 4. Resolve CUSIPs to tickers via FMP
  * 5. Return the ready-to-score holdings array
  *
@@ -156,13 +157,13 @@ export async function runHoldingsPipeline(
       );
     }
 
-    // ── Step 3: Apply coverage cutoff ──
-    const { included, coverage } = applyCoverageCutoff(expandedHoldings);
+    // ── Step 3: Full examination (A5 Task 1) — include every holding ──
+    const { included, coverage } = includeAllHoldings(expandedHoldings);
     // A2 Task 4: NPORT-P pctVal is already in whole-percent units (95.03 = 95.03%),
     // so weightCovered must not be multiplied by 100 for display.
     console.log(
-      `[holdings] Cutoff applied: ${coverage.holdingsIncluded}/${coverage.holdingsTotal} holdings, ` +
-        `${coverage.weightCovered.toFixed(1)}% coverage (${coverage.cutoffReason})`
+      `[holdings] Full examination: ${coverage.holdingsIncluded}/${coverage.holdingsTotal} holdings, ` +
+        `${coverage.weightCovered.toFixed(1)}% of NAV (${coverage.cutoffReason})`
     );
 
     // ── Step 4: Resolve holdings to tickers ──
@@ -324,42 +325,22 @@ export async function runHoldingsPipeline(
   }
 }
 
-// ─── Coverage Cutoff ────────────────────────────────────────────────────────
+// ─── Full Examination (A5 Task 1) ───────────────────────────────────────────
 
 /**
- * Apply the dynamic coverage cutoff from Master Reference §4:
- *   Walk down holdings by weight (largest first).
- *   Stop when cumulative weight reaches 65% OR 50 holdings, whichever first.
- *
- * Returns the included holdings and coverage statistics.
+ * Include EVERY holding at its true weight — the coverage cutoff is retired
+ * (Robert, July 5, 2026). Holdings stay sorted largest-first so downstream
+ * "top holdings" ordering is unchanged. weightCovered is the natural sum of
+ * all filing weights (~100%, minus any net short/overlay legs, which sort
+ * last and are excluded from the Dossier's ratios per A4 Task 6).
  */
-function applyCoverageCutoff(holdings: EdgarHolding[]): {
+function includeAllHoldings(holdings: EdgarHolding[]): {
   included: EdgarHolding[];
   coverage: HoldingsPipelineResult['coverage'];
 } {
   // Sort by percentage of NAV descending (largest positions first)
-  const sorted = [...holdings].sort((a, b) => b.pctOfNav - a.pctOfNav);
-
-  const included: EdgarHolding[] = [];
-  let cumulativeWeight = 0;
-  let cutoffReason: 'weight' | 'count' = 'count';
-
-  for (const holding of sorted) {
-    // Check count cutoff
-    if (included.length >= HOLDINGS_COVERAGE.MAX_HOLDINGS) {
-      cutoffReason = 'count';
-      break;
-    }
-
-    included.push(holding);
-    cumulativeWeight += holding.pctOfNav;
-
-    // Check weight cutoff
-    if (cumulativeWeight >= HOLDINGS_COVERAGE.TARGET_WEIGHT_PCT) {
-      cutoffReason = 'weight';
-      break;
-    }
-  }
+  const included = [...holdings].sort((a, b) => b.pctOfNav - a.pctOfNav);
+  const cumulativeWeight = included.reduce((sum, h) => sum + h.pctOfNav, 0);
 
   return {
     included,
@@ -367,7 +348,7 @@ function applyCoverageCutoff(holdings: EdgarHolding[]): {
       holdingsIncluded: included.length,
       holdingsTotal: holdings.length,
       weightCovered: cumulativeWeight,
-      cutoffReason,
+      cutoffReason: 'complete',
     },
   };
 }
