@@ -46,8 +46,13 @@ import type { ResolvedHolding } from './types.js';
 /** Bump when the Dossier's fields or their meanings change.
  *  v2 (A4 Task 6): grading moves to resolvable NAV. The v1 gate conflated
  *  three facts and failed seven funds on denominator artifacts alone —
- *  PRPFX's "missing" 34% is its bullion, working as designed. */
-export const DOSSIER_VERSION = 2;
+ *  PRPFX's "missing" 34% is its bullion, working as designed.
+ *  v3 (A5 Task 2, ratified July 5, 2026): the confidence profile — four
+ *  per-fund rungs rolled up from per-holding facts A4 already stores.
+ *  Coverage is total (A5 Task 1); certainty still varies, and the ladder
+ *  states it: fully verified / model-classified / identity only / opaque.
+ *  Rungs + short overlay + the derived unidentified remainder ≈ 100. */
+export const DOSSIER_VERSION = 3;
 
 /** Ratified pass thresholds (July 1, 2026). NOT tunable without Robert. */
 export const DOSSIER_THRESHOLDS = {
@@ -88,6 +93,19 @@ export interface FundDossier {
   industryFmpPct: number;
   industryHaikuPct: number;
   industryNonePct: number;
+  // ── v3 confidence profile (A5 Task 2) — % of positive NAV per rung.
+  //    Pinned mapping (first match wins, evaluated in this order):
+  //    opaque → fully verified → identity only → model-classified.
+  //    The unidentified remainder is DERIVED (100 − rungs − overlay), not
+  //    stored — displayed honestly as "not identified this run".
+  /** Rung: filed data end to end (FMP-enriched equity; filing-identified debt/inv-co) */
+  confFullyVerifiedPct: number;
+  /** Rung: certain identity, Haiku-sourced classification */
+  confModelClassifiedPct: number;
+  /** Rung: known security, unenrichable (home tier / firewalled / no industry) */
+  confIdentityOnlyPct: number;
+  /** Rung: structurally opaque by nature (bullion, derivatives, cash/repo, no-id) */
+  confOpaquePct: number;
   holdingsIncluded: number;
   holdingsTotal: number;
   lookthroughDetected: boolean;
@@ -171,7 +189,7 @@ export function computeDossier(input: DossierInput): FundDossier {
     isMoneyMarket: input.isMoneyMarket,
   };
 
-  // v2 zero-filled metrics for the special-case branches below
+  // v2/v3 zero-filled metrics for the special-case branches below
   const v2Zeros = {
     resolvablePct: 0,
     resolvedOfResolvablePct: 0,
@@ -181,6 +199,10 @@ export function computeDossier(input: DossierInput): FundDossier {
     industryFmpPct: 0,
     industryHaikuPct: 0,
     industryNonePct: 0,
+    confFullyVerifiedPct: 0,
+    confModelClassifiedPct: 0,
+    confIdentityOnlyPct: 0,
+    confOpaquePct: 0,
   };
 
   // Money market special case (Founding §3): no N-PORT holdings exist;
@@ -222,6 +244,11 @@ export function computeDossier(input: DossierInput): FundDossier {
   let firewalledWeight = 0;   // A4 Task 4: momentum_eligible === false
   let industryFmpWeight = 0;  // A4 Task 3 provenance shares
   let industryHaikuWeight = 0;
+  // A5 Task 2: confidence rungs (positive weight; first match wins)
+  let confFullyVerified = 0;
+  let confModelClassified = 0;
+  let confIdentityOnly = 0;
+  let confOpaque = 0;
 
   for (const h of input.holdings) {
     if (h.pctOfNav < 0) {
@@ -243,6 +270,21 @@ export function computeDossier(input: DossierInput): FundDossier {
     if (h.momentumEligible === false) firewalledWeight += h.pctOfNav;
     if (h.industrySource === 'fmp') industryFmpWeight += h.pctOfNav;
     else if (h.industrySource === 'haiku') industryHaikuWeight += h.pctOfNav;
+
+    // ── A5 Task 2: confidence rung, per the ratified pin (July 5, 2026).
+    // Evaluated top-down, first match wins. Anything matching no rung is
+    // the unidentified remainder — has an identifier, resolution failed —
+    // derived at display time as 100 − rungs − overlay, never hidden.
+    if (h.structurallyUnresolvable) {
+      confOpaque += h.pctOfNav;                     // opaque by nature
+    } else if ((h.ticker && h.industrySource === 'fmp') || isIdentifiedWithoutTicker(h)) {
+      confFullyVerified += h.pctOfNav;              // filed data end to end
+      // (bonds count as fully verified — the filing itself declares them)
+    } else if (h.ticker && (h.listingTier === 'home' || h.momentumEligible === false || !h.industrySource)) {
+      confIdentityOnly += h.pctOfNav;               // known, unenrichable
+    } else if (h.ticker && h.industrySource === 'haiku') {
+      confModelClassified += h.pctOfNav;            // certain identity, model label
+    }
   }
 
   const pctOf = (part: number, whole: number): number =>
@@ -294,6 +336,10 @@ export function computeDossier(input: DossierInput): FundDossier {
     industryFmpPct,
     industryHaikuPct,
     industryNonePct,
+    confFullyVerifiedPct: pctOf(confFullyVerified, examinedPos),
+    confModelClassifiedPct: pctOf(confModelClassified, examinedPos),
+    confIdentityOnlyPct: pctOf(confIdentityOnly, examinedPos),
+    confOpaquePct: pctOf(confOpaque, examinedPos),
     passesGate: failReasons.length === 0,
     failReasons,
   };

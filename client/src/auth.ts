@@ -51,6 +51,12 @@ export async function signInWithMagicLink(
     options: {
       // Where Supabase redirects after clicking the magic link
       emailRedirectTo: `${window.location.origin}/auth/callback`,
+      // A5 Task 4 / Decision 3 (ratified July 5, 2026): magic links sign in
+      // EXISTING accounts only — an unknown email creates nothing. This is
+      // what auto-provisioned the July 5 ghost account (a typo'd address
+      // became a shell user). New users are added by Robert in the Supabase
+      // dashboard (Authentication → Users → Invite user).
+      shouldCreateUser: false,
     },
   });
 

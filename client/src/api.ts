@@ -64,6 +64,10 @@ export interface UserProfile {
   selected_fund_ids: string[];
   last_brief_sent_at: string | null;
   briefs_enabled: boolean;
+  /** A5 Task 4: true only for admin accounts — gates the Pipeline nav link,
+   *  the Refresh Analysis button, and the /pipeline page. Optional because
+   *  rows predating the a5_task4 migration lack the column. */
+  is_admin?: boolean;
 }
 
 export interface PipelineRun {
@@ -271,6 +275,11 @@ export const fetchLatestDossiers = () =>
     runId: string | null;
     completedAt: string | null;
   }>('/api/dossiers/latest');
+
+// A5 Task 7 (temporary): admin-only classification benchmark trigger.
+// The report arrives by admin email; this just kicks it off.
+export const runClassificationBenchmark = () =>
+  apiFetch<{ message: string }>('/api/benchmark/classification', { method: 'POST' });
 
 // Help Agent
 export interface HelpMessage {

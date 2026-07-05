@@ -6,7 +6,11 @@
  * pipeline runs skip redundant external API calls.
  *
  * TTL summary:
- *   fmp_cache              → 7 days   (fundamentals change quarterly at most)
+ *   fmp_cache              → 30 days  (A5 Decision 4, Robert-ratified July 5,
+ *                            2026: was 7 — fundamentals change quarterly at
+ *                            most, and at full-examination volume the weekly
+ *                            all-at-once re-fetch made one night in seven run
+ *                            ~40+ minutes for no data gain)
  *   tiingo_price_cache     → 1 day    (prices stale after market close)
  *   finnhub_fee_cache      → 90 days  (fee structures rarely change)
  *   sector_classifications → 15 days  (sector labels stable)
@@ -40,7 +44,7 @@ function inList(items: string[]): string {
   return items.map(t => `"${t}"`).join(',');
 }
 
-// ─── FMP Fundamentals Cache (7-day TTL) ────────────────────────────────────
+// ─── FMP Fundamentals Cache (30-day TTL, A5 Decision 4) ────────────────────
 
 export interface FmpCacheEntry {
   ratios: FmpRatios | null;
@@ -54,7 +58,7 @@ export interface FmpCacheEntry {
 /**
  * Batch-fetch cached FMP fundamentals for multiple tickers.
  * Returns a map of ticker → { ratios, keyMetrics } for cache hits only.
- * Stale entries (>7 days) are excluded.
+ * Stale entries (>30 days) are excluded (A5 Decision 4).
  */
 export async function getFmpCache(
   tickers: string[]
@@ -81,7 +85,7 @@ export async function getFmpCache(
     if (error || !data) continue;
 
     for (const row of data) {
-      if (isStale(row.cached_at, 7)) continue;
+      if (isStale(row.cached_at, 30)) continue;
       result.set(row.ticker.toUpperCase(), {
         ratios: row.ratios,
         keyMetrics: row.key_metrics,

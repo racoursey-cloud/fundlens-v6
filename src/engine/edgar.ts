@@ -31,6 +31,34 @@ import {
 // within a single pipeline run. Cleared on server restart.
 let tickerLookupCache: Map<string, MutualFundTickerEntry> | null = null;
 
+// ─── A5 Task 1: <identifiers><other> census collector ──────────────────────
+// Filled during each NPORT-P parse (reset in parseNportXml), read by
+// fetchEdgarHoldings immediately after — the fund pipeline is strictly
+// sequential, so no two parses interleave. Keyed by the otherDesc value
+// (uppercased); SEDOL is excluded (already consumed by the parser).
+let lastParseOtherCensus = new Map<string, { rows: number; weight: number; firstName: string }>();
+
+function recordOtherIdentifiers(
+  identifiers: Record<string, unknown> | null,
+  holdingName: string,
+  pctOfNav: number
+): void {
+  if (!identifiers) return;
+  const others = identifiers['other'];
+  if (!Array.isArray(others)) return;
+  for (const raw of others) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const attrs = ((raw as Record<string, unknown>)['$'] || {}) as Record<string, unknown>;
+    const desc = typeof attrs['otherDesc'] === 'string' ? (attrs['otherDesc'] as string).trim() : '';
+    if (!desc || /sedol/i.test(desc)) continue;
+    const key = desc.toUpperCase();
+    const entry = lastParseOtherCensus.get(key) || { rows: 0, weight: 0, firstName: holdingName };
+    entry.rows++;
+    entry.weight += pctOfNav;
+    lastParseOtherCensus.set(key, entry);
+  }
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -140,6 +168,23 @@ export async function fetchEdgarHoldings(
           );
         }
       }
+    }
+
+    // ── A5 Task 1: identifier-type census (the A4 <other>-element carry-over) ──
+    // The parser reads only otherDesc="SEDOL" from <identifiers><other> and
+    // has silently ignored every other identifier type filers put there.
+    // This census logs each non-SEDOL otherDesc value seen (rows + weight +
+    // first holding name) so the first full-examination run produces the
+    // complete picture for Task 6's residual report. Report-only.
+    if (lastParseOtherCensus.size > 0) {
+      const summary = [...lastParseOtherCensus.entries()]
+        .sort((a, b) => b[1].rows - a[1].rows)
+        .map(([desc, e]) =>
+          `"${desc}" ${e.rows} rows/${e.weight.toFixed(2)}% (first: "${e.firstName}")`)
+        .join(' · ');
+      console.log(
+        `[edgar] ${ticker}: A5 identifier census — otherDesc values beyond SEDOL: ${summary}`
+      );
     }
 
     // ── A4 SEDOL instrumentation (Robert, July 5) ─────────────────────────
@@ -549,6 +594,9 @@ async function parseNportXml(
   // Extract filing metadata
   const meta = extractFilingMeta(formData, tickerEntry, filingIndex);
 
+  // A5 Task 1: fresh census per parse (read by fetchEdgarHoldings after)
+  lastParseOtherCensus = new Map();
+
   // Extract all holdings
   const holdings = extractHoldings(formData);
 
@@ -734,6 +782,9 @@ function parseHoldingElement(
   const identifierTicker = getAttrValue(identifiersNode, 'ticker', 'value');
   const lei = getTextValue(item, 'lei') || null;
 
+  // A5 Task 1: census of non-SEDOL <other> identifier types (report-only;
+  // pctOfNav is parsed a few lines below, so record after it exists)
+
   // Value in USD
   const valUsdStr = getTextValue(item, 'valUSD');
   const valueUsd = valUsdStr ? parseFloat(valUsdStr) : 0;
@@ -744,6 +795,8 @@ function parseHoldingElement(
   // display inflation fixed in A2 Task 4. Stored as-is, whole percents.
   const pctValStr = getTextValue(item, 'pctVal');
   const pctOfNav = pctValStr ? parseFloat(pctValStr) : 0;
+
+  recordOtherIdentifiers(identifiersNode, name, pctOfNav);
 
   // Asset category — can be in different locations
   const assetCategory =

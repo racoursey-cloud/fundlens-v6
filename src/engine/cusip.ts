@@ -123,28 +123,36 @@ export async function cusipCacheLookup(
   const result = new Map<string, CusipResolution>();
   if (cusips.length === 0) return result;
 
-  // PostgREST IN filter: cusip=in.(val1,val2,val3)
-  const inFilter = `in.(${cusips.join(',')})`;
-  const { data, error } = await supaFetch<CusipCacheRow[]>('cusip_cache', {
-    params: { cusip: inFilter, select: '*' },
-  });
-
-  if (error || !data) {
-    console.warn(`[cusip] Cache lookup failed: ${error || 'no data'}`);
-    return result;
-  }
-
-  for (const row of data) {
-    result.set(row.cusip, {
-      cusip: row.cusip,
-      ticker: row.ticker,
-      name: row.name,
-      securityType: row.security_type,
-      resolved: row.resolved,
-      warning: null,
-      // A4 Task 1: tier travels with the cached resolution ('us'/'otc'/'home')
-      listingTier: (row.listing_tier as ListingTier | null) ?? null,
+  // A5 Task 1: query in chunks of 200 (the cache.ts pattern). One IN-filter
+  // carrying every identifier worked at ≤400 holdings per fund, but a
+  // full-examination fund (VFWAX: 3,918 rows) produces a ~50KB URL the
+  // database gateway rejects — the cache would silently stop working for
+  // big funds and every night would re-resolve them from scratch.
+  for (let i = 0; i < cusips.length; i += 200) {
+    const batch = cusips.slice(i, i + 200);
+    // PostgREST IN filter: cusip=in.(val1,val2,val3)
+    const inFilter = `in.(${batch.join(',')})`;
+    const { data, error } = await supaFetch<CusipCacheRow[]>('cusip_cache', {
+      params: { cusip: inFilter, select: '*' },
     });
+
+    if (error || !data) {
+      console.warn(`[cusip] Cache lookup failed (batch ${i / 200 + 1}): ${error || 'no data'}`);
+      continue;
+    }
+
+    for (const row of data) {
+      result.set(row.cusip, {
+        cusip: row.cusip,
+        ticker: row.ticker,
+        name: row.name,
+        securityType: row.security_type,
+        resolved: row.resolved,
+        warning: null,
+        // A4 Task 1: tier travels with the cached resolution ('us'/'otc'/'home')
+        listingTier: (row.listing_tier as ListingTier | null) ?? null,
+      });
+    }
   }
 
   return result;

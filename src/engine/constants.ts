@@ -66,21 +66,11 @@ export const DEFAULT_FACTOR_WEIGHTS = {
   positioning: 0.20,
 } as const;
 
-// ─── Holdings Coverage Thresholds ────────────────────────────────────────────
-// Walk down holdings by weight (largest first). Stop when weight threshold hit.
-// Session 25: Raised from 65%/50 to 95%/unlimited to close the "Not Classified"
-// gap in the FundLens donut. The old thresholds left ~35% of NAV unclassified
-// for most funds. Trade-off: more CUSIP resolutions + Claude Haiku calls per
-// pipeline run, but pipeline already takes minutes so the extra time is acceptable.
-// MAX_HOLDINGS raised to 400 as a safety cap.
-export const HOLDINGS_COVERAGE = {
-  /** Stop when cumulative weight reaches this percentage.
-   *  NPORT-P pctVal is reported as whole percentages (e.g. 4.89 = 4.89%),
-   *  so this threshold must also be in whole-percentage units. */
-  TARGET_WEIGHT_PCT: 95,
-  /** Safety cap — process up to 400 holdings per fund to reach TARGET_WEIGHT_PCT */
-  MAX_HOLDINGS: 400,
-} as const;
+// ─── Holdings Coverage ───────────────────────────────────────────────────────
+// A5 Task 1 (ratified July 5, 2026): the coverage cutoff is RETIRED. The old
+// HOLDINGS_COVERAGE constants (95% walk termination / 400-holding cap) are
+// deleted — every filing row enters the pipeline at its true weight. See
+// holdings.ts includeAllHoldings().
 
 // ─── Risk Tolerance (7-Point Kelly-Inspired Scale, Spec §3.4, §6.4) ────────
 // Affects allocation sizing only, NOT scoring. Same scores, different position sizes.
@@ -157,6 +147,14 @@ export const CLAUDE = {
   THESIS_MODEL: 'claude-sonnet-4-6',
   /** Model for Investment Brief writing — Opus for natural voice and stronger reasoning (spec §4.2) */
   BRIEF_MODEL: 'claude-opus-4-6',
+  /** A5 Task 5 (ratified July 5, 2026): ALL user-facing prose — thesis, fund
+   *  summaries, Investment Brief — moves to this model. NEW constant; the
+   *  frozen THESIS_MODEL/BRIEF_MODEL above stay in place, merely no longer
+   *  referenced. Classification stays on CLASSIFICATION_MODEL untouched.
+   *  Sonnet 5 notes: thinking is on by default and counts against
+   *  max_tokens (prose calls raise their ceilings accordingly), and the
+   *  model rejects temperature-style sampling parameters. */
+  PROSE_MODEL: 'claude-sonnet-5',
   /** Minimum delay between sequential Claude API calls (milliseconds) */
   CALL_DELAY_MS: 1200,
   /** All Claude calls route through this proxy endpoint */

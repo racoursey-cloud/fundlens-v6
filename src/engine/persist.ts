@@ -106,6 +106,43 @@ export async function persistPipelineResults(
   // ── 1. Write fund scores ──────────────────────────────────────────────
   // One row per fund, with all four factor scores + default composite.
 
+  // A5 Task 3: server-computed confidence object, embedded into each fund's
+  // factor_details so the client displays trust data without computing any
+  // (Principle 3 — one source of truth). Built from the same Dossier the
+  // run graded; the unidentified remainder is derived here, once. Money
+  // markets carry null — no N-PORT holdings exist to profile.
+  const dossierByTicker = new Map(
+    (result.dossiers ?? []).map(d => [d.ticker, d])
+  );
+  const confidenceFor = (ticker: string) => {
+    const d = dossierByTicker.get(ticker);
+    if (!d || d.isMoneyMarket) return null;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const remainder = r2(Math.max(
+      0,
+      100 - d.confFullyVerifiedPct - d.confModelClassifiedPct
+        - d.confIdentityOnlyPct - d.confOpaquePct
+    ));
+    return {
+      /** Line 1: % of the fund's value whose securities are identity-verified */
+      identifiedPct: d.navResolvedPct,
+      /** Line 2: classification provenance — filed data vs model-assessed */
+      filedClassifiedPct: d.confFullyVerifiedPct,
+      modelClassifiedPct: d.confModelClassifiedPct,
+      /** Fund detail: the full four-rung ladder (% of positive NAV) */
+      ladder: {
+        fullyVerified: d.confFullyVerifiedPct,
+        modelClassified: d.confModelClassifiedPct,
+        identityOnly: d.confIdentityOnlyPct,
+        opaque: d.confOpaquePct,
+        shortOverlay: d.shortOverlayWeightPct,
+        remainder,
+      },
+      /** Principle 4: the filing's report date */
+      asOf: d.reportDate,
+    };
+  };
+
   for (const fundScore of result.scoring.funds) {
     // Find the fund's UUID
     const fund = funds.find(f => f.ticker === fundScore.ticker);
@@ -136,6 +173,8 @@ export async function persistPipelineResults(
         ...fundScore.factorDetails,
         fallbackCount: fundScore.fallbackCount,
         summary: fundSummaries?.[fundScore.ticker] ?? null,
+        // A5 Task 3: the user-facing trust data (null for money markets)
+        confidence: confidenceFor(fundScore.ticker),
       },
       scored_at: new Date().toISOString(),
     };
@@ -291,12 +330,23 @@ export async function persistPipelineResults(
       console.warn(`[persist] Holdings ${ticker}: failed to delete stale rows — ${deleteError}`);
     }
 
-    const { error } = await supaInsert('holdings_cache', rows, { upsert: true });
-
-    if (!error) {
-      holdingsWritten += rows.length;
-    } else {
-      errors.push(`Holdings ${ticker}: batch upsert failed — ${error}`);
+    // A5 Task 1: insert in chunks of 500. A full-examination fund (VFWAX:
+    // ~3,900 rows) would otherwise ride in one ~1.5MB request — chunking is
+    // cheap insurance against body-size limits. The delete above already
+    // cleared the fund, so per-chunk upserts cannot collide.
+    let fundInsertFailed = false;
+    for (let i = 0; i < rows.length; i += 500) {
+      const chunk = rows.slice(i, i + 500);
+      const { error } = await supaInsert('holdings_cache', chunk, { upsert: true });
+      if (!error) {
+        holdingsWritten += chunk.length;
+      } else {
+        fundInsertFailed = true;
+        errors.push(`Holdings ${ticker}: batch upsert failed (rows ${i + 1}–${i + chunk.length}) — ${error}`);
+      }
+    }
+    if (fundInsertFailed) {
+      console.warn(`[persist] Holdings ${ticker}: one or more insert chunks failed — see errors`);
     }
   }
 
@@ -328,6 +378,11 @@ export async function persistPipelineResults(
           industry_fmp_pct: d.industryFmpPct,
           industry_haiku_pct: d.industryHaikuPct,
           industry_none_pct: d.industryNonePct,
+          // A5 Task 2: v3 confidence profile (a5_task2_dossier_v3 migration)
+          conf_fully_verified_pct: d.confFullyVerifiedPct,
+          conf_model_classified_pct: d.confModelClassifiedPct,
+          conf_identity_only_pct: d.confIdentityOnlyPct,
+          conf_opaque_pct: d.confOpaquePct,
           holdings_included: d.holdingsIncluded,
           holdings_total: d.holdingsTotal,
           lookthrough_detected: d.lookthroughDetected,

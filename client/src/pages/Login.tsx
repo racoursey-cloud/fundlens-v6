@@ -42,7 +42,18 @@ export function Login() {
       setStatus('sent');
     } else {
       setStatus('error');
-      setErrorMsg(error || 'Something went wrong. Try again.');
+      // A5 Task 4 / Decision 3: unknown emails no longer create accounts
+      // (shouldCreateUser: false in auth.ts). Supabase reports that as a
+      // signup-not-allowed error — translate it into a polite refusal
+      // instead of a raw error string.
+      const raw = (error || '').toLowerCase();
+      if (raw.includes('signup') || raw.includes('sign up') || raw.includes('otp_disabled') || raw.includes('user not found')) {
+        setErrorMsg(
+          "This email isn't set up for FundLens. If you think it should be, contact Robert."
+        );
+      } else {
+        setErrorMsg(error || 'Something went wrong. Try again.');
+      }
     }
   };
 

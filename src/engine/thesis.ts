@@ -264,9 +264,14 @@ export async function generateMacroThesis(
 
   console.log(`[thesis] Generating macro thesis via Claude Sonnet (${sectorPriors.length} sector priors)...`);
 
+  // A5 Task 5: prose moves to PROSE_MODEL (Sonnet 5). Thinking is on by
+  // default there and counts against max_tokens, and the new tokenizer runs
+  // ~30% more tokens for the same text — ceiling raised 4000 -> 12000 so
+  // the narrative can never silently truncate. Only text blocks are read
+  // below, so thinking output cannot leak into the thesis.
   const response = await client.messages.create({
-    model: CLAUDE.THESIS_MODEL,
-    max_tokens: 4000,
+    model: CLAUDE.PROSE_MODEL,
+    max_tokens: 12000,
     system: systemPrompt,
     messages: [
       { role: 'user', content: userPrompt },
@@ -328,6 +333,14 @@ Voice rules:
 - No hedging for the sake of hedging. If the data says something, say it.
 - Bold sector and asset class names using **markdown bold** on first mention (e.g. **Technology**, **Consumer Staples**). These are the variables being analyzed — they should stand out.
 - Accessibility: If a concept might be over a general reader's head, add a brief parenthetical explainer. Example: "The yield curve inverted (short-term rates above long-term, which historically signals a slowdown)." One clause — orient the reader, don't lecture.
+
+Main Street register (mandatory — A5 Task 5, ratified July 5, 2026):
+- Write for a smart coworker who does not work in finance.
+- Dollars, not basis points: "costs about $45 a year on a $10,000 balance," never "45bps."
+- "What your money owns," not "portfolio exposure."
+- If a term would send a normal person to Google — duration, overweight, cyclical, headwind — either drop it or explain it in the same breath, once.
+- Short sentences. Concrete nouns: company names, dollar amounts, plain verbs.
+- Never apologize for data and never dress it up. Say what is known, what is estimated, and what it costs.
 
 Content rules:
 - Base every claim on specific data points or headlines provided in the input.
@@ -516,7 +529,7 @@ function parseThesisResponse(text: string): MacroThesis {
     macroStance,
     riskFactors,
     generatedAt: new Date().toISOString(),
-    model: CLAUDE.THESIS_MODEL,
+    model: CLAUDE.PROSE_MODEL,
   };
 }
 

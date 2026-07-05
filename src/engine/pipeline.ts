@@ -104,8 +104,9 @@ const FMP_SECTOR_MAP: Record<string, string> = {
   'utilities': 'Utilities',
 };
 
-/** Map an FMP sector label to our taxonomy, or null when not cleanly mappable. */
-function mapFmpSector(fmpSector: string | null | undefined): string | null {
+/** Map an FMP sector label to our taxonomy, or null when not cleanly mappable.
+ *  Exported for the A5 Task 7 benchmark — one mapping, one place (Principle 3). */
+export function mapFmpSector(fmpSector: string | null | undefined): string | null {
   if (!fmpSector) return null;
   return FMP_SECTOR_MAP[fmpSector.trim().toLowerCase()] ?? null;
 }

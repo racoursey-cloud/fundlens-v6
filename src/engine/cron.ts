@@ -197,18 +197,22 @@ async function scheduledBriefDelivery(): Promise<void> {
 /**
  * Check for pipeline runs stuck in "running" status.
  *
- * If a pipeline has been "running" for more than 2 hours, something
- * went wrong (server restart, crash, etc.). Mark it as failed so
- * the next scheduled run can proceed.
+ * If a pipeline has been "running" for more than 120 minutes (A5 Task 1),
+ * something went wrong (server restart, crash, etc.). Mark it as failed so
+ * the next scheduled run can proceed. Long legitimate runs (full-exam first
+ * run, weekly FMP refresh night) stay safely under this line.
  */
 async function cleanupStaleRuns(): Promise<void> {
-  // BUG-12 fix: Pipeline runs in ~70s. 15 minutes is generous but catches stalls
-  // much faster than the previous 2-hour threshold.
-  const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  // A5 Task 1 (Robert-approved July 5, 2026): raised 15 → 120 minutes. The
+  // 15-minute line was tuned for the cached, 400-holding world ("~70s");
+  // full examination makes long runs LEGITIMATE — the first run is forecast
+  // at 60–100 minutes and the weekly FMP-cache-refresh night runs long too.
+  // A run older than 120 minutes is genuinely dead.
+  const staleThresholdAgo = new Date(Date.now() - 120 * 60 * 1000).toISOString();
 
   const { data: staleRuns } = await supaSelect<PipelineRunRow[]>('pipeline_runs', {
     status: 'eq.running',
-    'started_at': `lt.${fifteenMinutesAgo}`,
+    'started_at': `lt.${staleThresholdAgo}`,
   });
 
   if (staleRuns && staleRuns.length > 0) {
@@ -216,7 +220,7 @@ async function cleanupStaleRuns(): Promise<void> {
       console.warn(`[cron] Marking stale pipeline run ${stale.id} as failed (started ${stale.started_at})`);
       await supaUpdate('pipeline_runs', {
         status: 'failed',
-        error_message: 'Marked as failed by stale run cleanup — exceeded 15-minute timeout',
+        error_message: 'Marked as failed by stale run cleanup — exceeded 120-minute timeout',
         completed_at: new Date().toISOString(),
       }, { id: `eq.${stale.id}` });
 

@@ -37,7 +37,15 @@ CRITICAL RULES:
 - Use "you" and "your" naturally — this is their money
 - No filler, no warm-up, no hedging. State the case.
 
-GOOD: "At 0.03% annually, this is one of the cheapest options in your lineup. It holds Apple, Microsoft, NVIDIA — up 12% over six months."
+MAIN STREET REGISTER (mandatory — A5 Task 5, ratified July 5, 2026):
+- Write for a smart coworker who does not work in finance.
+- Dollars, not basis points: "costs about $45 a year on a $10,000 balance," never "0.45%" alone when a dollar figure lands harder — and never "45bps."
+- "What your money owns," not "portfolio exposure."
+- If a term would send a normal person to Google — duration, overweight, cyclical, headwind — either drop it or explain it in the same breath, once.
+- Short sentences. Concrete nouns: company names, dollar amounts, plain verbs.
+- Never apologize for data and never dress it up. Say what is known, what is estimated, and what it costs.
+
+GOOD: "At about $3 a year on a $10,000 balance, this is one of the cheapest options in your lineup. It holds Apple, Microsoft, NVIDIA — up 12% over six months."
 BAD: "This fund scores 87/100 on Cost Efficiency with a Holdings Quality score of 83."`;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -116,9 +124,14 @@ ${fundBlocks.join('\n\n')}`;
       return summaries;
     }
     const client = new Anthropic({ apiKey });
+    // A5 Task 5: user-facing prose moves off Haiku onto PROSE_MODEL
+    // (Sonnet 5) — a voice AND quality upgrade. Thinking is on by default
+    // there and counts against max_tokens; ceiling raised 4096 -> 12000 so
+    // 22 summaries can never silently truncate. Only text blocks are read
+    // below, so thinking output cannot leak into what users see.
     const response = await client.messages.create({
-      model: CLAUDE.CLASSIFICATION_MODEL, // Haiku — fast + cheap
-      max_tokens: 4096,
+      model: CLAUDE.PROSE_MODEL,
+      max_tokens: 12000,
       system: VOICE_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
     });

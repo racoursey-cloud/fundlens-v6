@@ -15,12 +15,15 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { Navigate } from 'react-router-dom';
 import {
   fetchPipelineStatus,
   triggerPipeline,
   retryPipeline,
   fetchSystemHealth,
   fetchLatestDossiers,
+  fetchProfile,
+  runClassificationBenchmark,
   type PipelineRun,
   type FundDossierRow,
 } from '../api';
@@ -106,6 +109,15 @@ function StatCard({ label, value, color }: { label: string; value: string | numb
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export function Pipeline() {
+  // A5 Task 4: admin gate — non-admin accounts get a clean redirect home.
+  // null = still checking; false = redirect; true = render the cockpit.
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  useEffect(() => {
+    fetchProfile().then(res => {
+      setIsAdmin(res.data?.profile?.is_admin === true);
+    });
+  }, []);
+
   const [latestRun, setLatestRun] = useState<PipelineRun | null>(null);
   const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -190,6 +202,18 @@ export function Pipeline() {
     }
   };
 
+  // ── A5 Task 7 (temporary): trigger the classification benchmark ────────
+  const handleBenchmark = async () => {
+    setActionMsg('');
+    setActionError('');
+    const { data, error } = await runClassificationBenchmark();
+    if (error) {
+      setActionError(error);
+    } else {
+      setActionMsg(data?.message ?? 'Benchmark started');
+    }
+  };
+
   // ── Retry failed run ───────────────────────────────────────────────────
   const handleRetry = async (failedRunId: string) => {
     setActionMsg('');
@@ -203,6 +227,14 @@ export function Pipeline() {
       setTimeout(() => loadStatus(), 2000);
     }
   };
+
+  // ── A5 Task 4: admin gate ──────────────────────────────────────────────
+  if (isAdmin === false) {
+    return <Navigate to="/" replace />;
+  }
+  if (isAdmin === null) {
+    return null; // still checking — brief blank beats a flash of the cockpit
+  }
 
   // ── Loading state ──────────────────────────────────────────────────────
   if (loading) {
@@ -237,25 +269,47 @@ export function Pipeline() {
             Score all active 401(k) funds across four factors.
           </p>
         </div>
-        <button
-          onClick={handleRun}
-          disabled={isRunning}
-          style={{
-            padding: '10px 20px',
-            background: isRunning ? theme.colors.border : theme.colors.accentBlue,
-            border: 'none',
-            borderRadius: theme.radii.md,
-            color: theme.colors.white,
-            fontSize: '14px',
-            fontWeight: 500,
-            fontFamily: theme.fonts.body,
-            cursor: isRunning ? 'not-allowed' : 'pointer',
-            flexShrink: 0,
-            transition: 'background 0.15s ease',
-          }}
-        >
-          {isRunning ? 'Pipeline Running...' : 'Run Pipeline Now'}
-        </button>
+        <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
+          {/* A5 Task 7 (temporary): removed once the benchmark report is filed */}
+          <button
+            onClick={handleBenchmark}
+            disabled={isRunning}
+            title="Runs ~400 FMP-labeled equities through the production classification prompts and emails the agreement report. Read-only."
+            style={{
+              padding: '10px 16px',
+              background: 'transparent',
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radii.md,
+              color: theme.colors.textMuted,
+              fontSize: '13px',
+              fontWeight: 500,
+              fontFamily: theme.fonts.body,
+              cursor: isRunning ? 'not-allowed' : 'pointer',
+              opacity: isRunning ? 0.5 : 1,
+            }}
+          >
+            Run Classification Benchmark
+          </button>
+          <button
+            onClick={handleRun}
+            disabled={isRunning}
+            style={{
+              padding: '10px 20px',
+              background: isRunning ? theme.colors.border : theme.colors.accentBlue,
+              border: 'none',
+              borderRadius: theme.radii.md,
+              color: theme.colors.white,
+              fontSize: '14px',
+              fontWeight: 500,
+              fontFamily: theme.fonts.body,
+              cursor: isRunning ? 'not-allowed' : 'pointer',
+              flexShrink: 0,
+              transition: 'background 0.15s ease',
+            }}
+          >
+            {isRunning ? 'Pipeline Running...' : 'Run Pipeline Now'}
+          </button>
+        </div>
       </div>
 
       {/* Feedback messages */}

@@ -16,7 +16,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { fetchPipelineStatus, triggerPipeline, abortPipeline } from '../api';
+import { fetchPipelineStatus, triggerPipeline, abortPipeline, fetchProfile } from '../api';
 import { theme } from '../theme';
 import { PipelineOverlay } from './PipelineOverlay';
 
@@ -28,6 +28,13 @@ const TABS = [
   { path: '/research',  label: 'Research' },
   { path: '/settings',  label: 'Settings' },
   { path: '/help',      label: 'Help' },
+];
+
+// A5 Task 4: the Pipeline tab exists only for admin accounts — the cockpit
+// stops being findable-by-accident-only.
+const ADMIN_TABS = [
+  ...TABS,
+  { path: '/pipeline', label: 'Pipeline' },
 ];
 
 // ─── Source badge (v5.1 pattern) ──────────────────────────────────────────────
@@ -105,6 +112,17 @@ export function AppShell() {
   const [currentStep, setCurrentStep] = useState<number | null>(null);
   const [stepMessage, setStepMessage] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+
+  // A5 Task 4: admin accounts see the Pipeline tab and the Refresh Analysis
+  // button; everyone else sees neither (the run endpoint already 403s them —
+  // the button was dead UI for non-admins).
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    fetchProfile().then(res => {
+      if (res.data?.profile?.is_admin === true) setIsAdmin(true);
+    });
+  }, []);
 
   // Guard: prevents the poll from closing the overlay before the trigger
   // POST has completed and the DB row exists. React 18 can flush renders
@@ -283,8 +301,8 @@ export function AppShell() {
         {/* Spacer */}
         <div style={{ flex: 1 }} />
 
-        {/* Refresh Analysis button */}
-        {!isMobile && (
+        {/* Refresh Analysis button (A5 Task 4: admin-only) */}
+        {!isMobile && isAdmin && (
           <button
             className="fl-run-btn"
             disabled={isRunning}
@@ -331,7 +349,7 @@ export function AppShell() {
           display: 'flex', gap: 0,
           padding: '0 20px', flexShrink: 0,
         }}>
-          {TABS.map(({ path, label }) => {
+          {(isAdmin ? ADMIN_TABS : TABS).map(({ path, label }) => {
             const isActive = path === '/'
               ? location.pathname === '/'
               : location.pathname.startsWith(path);
@@ -378,7 +396,7 @@ export function AppShell() {
           display: 'flex', alignItems: 'center', justifyContent: 'space-around',
           zIndex: 100,
         }}>
-          {TABS.map(({ path, label }) => {
+          {(isAdmin ? ADMIN_TABS : TABS).map(({ path, label }) => {
             const isActive = path === '/'
               ? location.pathname === '/'
               : location.pathname.startsWith(path);

@@ -129,6 +129,23 @@ export function FundDetail({ ticker, onClose }: Props) {
     return typeof d.summary === 'string' ? d.summary : null;
   }, [score]);
 
+  // A5 Task 3: server-computed confidence ladder from factor_details.
+  // Null for money markets and rows persisted before A5 (Principle 3 —
+  // the client displays, never computes, trust numbers).
+  const confidence = useMemo(() => {
+    if (!score?.factor_details) return null;
+    const d = score.factor_details as Record<string, unknown>;
+    const c = d.confidence as {
+      identifiedPct: number;
+      ladder: {
+        fullyVerified: number; modelClassified: number; identityOnly: number;
+        opaque: number; shortOverlay: number; remainder: number;
+      };
+      asOf: string | null;
+    } | null | undefined;
+    return c ?? null;
+  }, [score]);
+
   // ─── Loading / Error / Empty ─────────────────────────────────────────────
 
   if (loading) {
@@ -288,6 +305,70 @@ export function FundDetail({ ticker, onClose }: Props) {
                       </span>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* ═══ A5 Task 3: Data confidence — the four-rung ladder ═══
+                  Plain-English rung names, credential first, the as-of date
+                  (Principle 4). Financial-data depth lives here, deliberately
+                  not on the card (Decision 1's three-altitudes rule). */}
+              {confidence && (
+                <div style={{
+                  marginTop: 14, paddingTop: 12,
+                  borderTop: `1px solid ${theme.colors.border}`,
+                }}>
+                  <div style={{
+                    fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+                    letterSpacing: '0.08em', color: theme.colors.textDim,
+                    marginBottom: 8,
+                  }}>
+                    Data confidence
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {([
+                      ['Fully verified', confidence.ladder.fullyVerified,
+                        'Identity and classification both come straight from filed data.'],
+                      ['Identified, classification estimated', confidence.ladder.modelClassified,
+                        'We know exactly what it is; the industry label is model-assessed.'],
+                      ['Identified, limited data', confidence.ladder.identityOnly,
+                        'We know exactly what it is; deeper financial data isn’t available on our data plan.'],
+                      ['Not classifiable by nature', confidence.ladder.opaque,
+                        'Bullion, cash, and hedging positions — there is nothing further to verify.'],
+                    ] as Array<[string, number, string]>).map(([label, pct, note]) => (
+                      pct >= 0.05 ? (
+                        <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                          <span style={{
+                            fontFamily: theme.fonts.mono, fontSize: 12, fontWeight: 600,
+                            color: theme.colors.text, minWidth: 48, textAlign: 'right',
+                          }}>{pct.toFixed(1)}%</span>
+                          <span style={{ fontSize: 12, color: theme.colors.text }}>{label}</span>
+                          <span style={{ fontSize: 11, color: theme.colors.textDim }}>{note}</span>
+                        </div>
+                      ) : null
+                    ))}
+                    {confidence.ladder.remainder >= 0.05 && (
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                        <span style={{
+                          fontFamily: theme.fonts.mono, fontSize: 12, fontWeight: 600,
+                          color: theme.colors.textMuted, minWidth: 48, textAlign: 'right',
+                        }}>{confidence.ladder.remainder.toFixed(1)}%</span>
+                        <span style={{ fontSize: 12, color: theme.colors.textMuted }}>Not identified this run</span>
+                        <span style={{ fontSize: 11, color: theme.colors.textDim }}>
+                          Reported by the fund; we haven&apos;t yet matched it to a known security.
+                        </span>
+                      </div>
+                    )}
+                    {Math.abs(confidence.ladder.shortOverlay) >= 0.05 && (
+                      <div style={{ fontSize: 11, color: theme.colors.textDim, marginTop: 2 }}>
+                        This fund also reports {Math.abs(confidence.ladder.shortOverlay).toFixed(1)}% in offsetting hedge positions, shown separately.
+                      </div>
+                    )}
+                  </div>
+                  {confidence.asOf && (
+                    <div style={{ fontSize: 11, color: theme.colors.textDim, marginTop: 8 }}>
+                      From the fund&apos;s SEC filing dated {new Date(confidence.asOf + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
