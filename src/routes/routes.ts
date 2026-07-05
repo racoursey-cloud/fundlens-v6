@@ -530,8 +530,10 @@ router.post('/api/pipeline/run', requireAuth, requireAdmin, pipelineRateLimit, a
     const ageMinutes = (Date.now() - startedAt) / 60000;
     console.warn(`[routes] Pipeline blocked: existing run ${running.id} started ${ageMinutes.toFixed(0)}m ago`);
 
-    // If the "running" row is older than 15 minutes, it's stale — mark it failed and proceed
-    if (ageMinutes > 15) {
+    // A5 Task 1: stale threshold raised 15 → 120 minutes to match cron.ts —
+    // full-examination runs legitimately exceed 15 minutes (first run
+    // forecast 60–100 min; weekly FMP-refresh nights run long too).
+    if (ageMinutes > 120) {
       console.warn(`[routes] Stale run detected (${ageMinutes.toFixed(0)}m old) — marking failed`);
       await supaUpdate('pipeline_runs', {
         status: 'failed',
