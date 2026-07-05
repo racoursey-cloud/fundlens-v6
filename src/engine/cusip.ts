@@ -108,6 +108,29 @@ function fmpExchangeTier(exchangeShortName: string | null | undefined): ListingT
   return 'home';
 }
 
+// ─── A6 Task 3: negative-cache hygiene ──────────────────────────────────────
+// July 5, 2026: eleven VWIGX/VFWAX identifiers (Spotify, Tencent, Samsung,
+// L'Oréal…) failed lookup inside one 40-second API-outage window and the
+// failure verdicts were cached forever — cached negatives are never retried,
+// so VWIGX sat wrongly failed at the 90 gate until the rows were hand-purged
+// (PR #14 evidence; all eleven resolved on the first fresh attempt). Two
+// rules close the failure class:
+//   1. A lookup that ERRORS (HTTP failure, thrown search) is a non-answer,
+//      not a "no match" — marked transient and never persisted to cache.
+//   2. A persisted negative (the API answered: nothing found) expires after
+//      NEGATIVE_CACHE_TTL_DAYS and is re-attempted, so any poisoned verdict
+//      that slips past rule 1 heals on its own. Positives never expire.
+const NEGATIVE_CACHE_TTL_DAYS = 7;
+
+/** Warning-text prefix marking a resolution whose chain did not complete
+ *  (transport error, not a real "no match"). Authored and consumed only in
+ *  this file — the persist filter in resolveCusips keys on it. */
+const TRANSIENT_WARNING = 'transient:';
+
+function isTransientFailure(r: CusipResolution): boolean {
+  return !r.resolved && (r.warning?.startsWith(TRANSIENT_WARNING) ?? false);
+}
+
 // ─── Supabase Cache Functions ─────────────────────────────────────────────
 
 /**
@@ -142,6 +165,16 @@ export async function cusipCacheLookup(
     }
 
     for (const row of data) {
+      // A6 Task 3 rule 2: a negative older than the TTL is treated as a
+      // cache miss — the identifier re-enters the resolution chain and the
+      // upsert refreshes the row (a ticker, or a fresh-dated negative).
+      // A missing resolved_at counts as stale; retrying is the safe side.
+      if (!row.resolved) {
+        const ageMs = row.resolved_at
+          ? Date.now() - new Date(row.resolved_at).getTime()
+          : Infinity;
+        if (ageMs > NEGATIVE_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000) continue;
+      }
       result.set(row.cusip, {
         cusip: row.cusip,
         ticker: row.ticker,
@@ -492,9 +525,19 @@ export async function resolveCusips(
       await tryFmpSearchFallback(unresolvedFromFigi, newResolutions, nameMap);
     }
 
-    // ── Step 4: Persist ALL new resolutions to cache (including negatives) ──
-    if (newResolutions.length > 0) {
-      await cacheSave(newResolutions);
+    // ── Step 4: Persist new resolutions to cache (including genuine negatives) ──
+    // A6 Task 3 rule 1: transient failures are non-answers — never persisted,
+    // so a brief API outage cannot freeze a "failed" verdict into the cache
+    // (the July 5 VWIGX/VFWAX poisoning). They re-resolve on the next run.
+    const persistable = newResolutions.filter(r => !isTransientFailure(r));
+    const transientSkipped = newResolutions.length - persistable.length;
+    if (transientSkipped > 0) {
+      console.log(
+        `[cusip] ${transientSkipped} transient lookup failures NOT cached — they retry next run`
+      );
+    }
+    if (persistable.length > 0) {
+      await cacheSave(persistable);
     }
 
     // Merge cached + new into final result map
@@ -582,8 +625,18 @@ async function tryFmpSearchFallback(
         }
       }
     } catch {
-      // FMP search is best-effort — don't fail the whole pipeline
+      // FMP search is best-effort — don't fail the whole pipeline. But a
+      // THROW means the chain did not complete for this row (network/quota,
+      // not "searched and found nothing"), so mark it transient — the
+      // persist filter keeps it out of the cache and it retries next run.
       console.warn(`[cusip] FMP search fallback failed for "${searchQuery}"`);
+      const idx = allResolutions.findIndex(r => r.cusip === resolution.cusip);
+      if (idx >= 0 && !allResolutions[idx].resolved) {
+        allResolutions[idx] = {
+          ...allResolutions[idx],
+          warning: `${TRANSIENT_WARNING} FMP search threw for "${searchQuery}"`,
+        };
+      }
     }
   }
 
@@ -687,25 +740,28 @@ async function callOpenFigiById(
       });
       if (!retryResponse.ok) {
         console.warn(`[cusip] OpenFIGI ${idType} retry failed with HTTP ${retryResponse.status}`);
+        // A6 Task 3: an HTTP failure is a non-answer — transient-marked so
+        // the persist filter keeps it out of the cache (July 5 poisoning).
         return values.map(value => ({
           cusip: value, // placeholder — caller maps back to the full id
           ticker: null,
           name: null,
           securityType: null,
           resolved: false,
-          warning: `OpenFIGI ${idType} retry failed: HTTP ${retryResponse.status}`,
+          warning: `${TRANSIENT_WARNING} OpenFIGI ${idType} retry failed: HTTP ${retryResponse.status}`,
         }));
       }
       return parseOpenFigiResponse(values, await retryResponse.json());
     }
     console.warn(`[cusip] OpenFIGI ${idType} batch failed with HTTP ${response.status}`);
+    // A6 Task 3: same rule — a failed batch is not a "no match" verdict.
     return values.map(value => ({
       cusip: value,
       ticker: null,
       name: null,
       securityType: null,
       resolved: false,
-      warning: `OpenFIGI ${idType} failed: HTTP ${response.status}`,
+      warning: `${TRANSIENT_WARNING} OpenFIGI ${idType} failed: HTTP ${response.status}`,
     }));
   }
 
