@@ -624,11 +624,13 @@ const activePipelineSteps = new Map<string, {
 async function runPipelineAsync(runId: string): Promise<void> {
   // Import dynamically to avoid circular dependencies
   const { persistPipelineResults } = await import('../engine/persist.js');
-  const { runFullPipeline } = await import('../engine/pipeline.js');
+  const { runFullPipeline, PipelineCancelledError } = await import('../engine/pipeline.js');
   // v8 A0 (Gap 5): heartbeat for the web-trigger path — one of the three
-  // runner sites (cron.ts nightly and monitor.ts retry are the others)
-  const { startRunHeartbeat } = await import('../engine/monitor.js');
+  // runner sites (cron.ts nightly and monitor.ts retry are the others).
+  // UI Honesty item 3: the cancel checker rides along at all three sites.
+  const { startRunHeartbeat, makeCancelChecker } = await import('../engine/monitor.js');
   const stopHeartbeat = startRunHeartbeat(runId);
+  const shouldAbort = makeCancelChecker(runId);
 
   try {
     // Get active funds
@@ -658,7 +660,12 @@ async function runPipelineAsync(runId: string): Promise<void> {
     };
 
     // Run the full pipeline
-    const result = await runFullPipeline(funds, onProgress);
+    const result = await runFullPipeline(funds, onProgress, shouldAbort);
+
+    // UI Honesty item 3: checkpoint between the pipeline and the summaries
+    // step — steps 15/16 live in this runner, outside runFullPipeline's
+    // own checkpoints.
+    if (await shouldAbort()) throw new PipelineCancelledError();
 
     // ── Step 15: Generate natural-language fund summaries (editorial voice) ──
     console.log(`[routes] Pipeline ${runId}: starting fund summaries`);
@@ -671,6 +678,10 @@ async function runPipelineAsync(runId: string): Promise<void> {
     } catch (err) {
       console.warn(`[routes] Fund summary generation failed (non-fatal): ${err}`);
     }
+
+    // UI Honesty item 3: last checkpoint before persist — the point of no
+    // return. A cancel landing here means nothing was written this run.
+    if (await shouldAbort()) throw new PipelineCancelledError();
 
     // ── Step 16: Persist results to Supabase ──
     console.log(`[routes] Pipeline ${runId}: starting persist`);
@@ -692,6 +703,19 @@ async function runPipelineAsync(runId: string): Promise<void> {
     // (A2 Task 2). On-demand generation via POST /api/briefs/generate and the
     // monthly checkAndSendBriefs delivery cadence are unaffected.
   } catch (err) {
+    // UI Honesty item 3: a deliberate cancel is not a crash — record it as
+    // "Cancelled by user"; no alarm, no error-state step data.
+    if (err instanceof PipelineCancelledError) {
+      console.log(`[routes] Pipeline run ${runId} cancelled by user — stopped at a checkpoint`);
+      activePipelineSteps.delete(runId);
+      await supaUpdate('pipeline_runs', {
+        status: 'failed',
+        error_message: 'Cancelled by user',
+        completed_at: new Date().toISOString(),
+      }, { id: `eq.${runId}` });
+      return;
+    }
+
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[routes] Pipeline run ${runId} failed: ${msg}`);
     // Keep step data visible briefly so overlay can show the error state
@@ -718,14 +742,22 @@ async function runPipelineAsync(runId: string): Promise<void> {
 
 /**
  * POST /api/pipeline/abort
- * Abort a running pipeline. Called by the client on browser close
- * (beforeunload) to prevent stale "running" rows.
+ * Request cancellation of a running pipeline (UI Honesty item 3).
+ *
+ * This endpoint no longer writes a terminal status. It stamps
+ * cancel_requested_at on the running row; the pipeline process checks the
+ * stamp at its checkpoints, stops itself cleanly, and writes its own
+ * terminal status ("Cancelled by user"). The row keeps status='running'
+ * until the process actually exits, so the already-running guard cannot
+ * wave a second run through mid-wind-down (Task 1, hazard 3).
+ *
+ * Auth: was deliberately unauthenticated for the browser-close sendBeacon;
+ * that beacon is gone (runs survive browser close — Robert's July 6
+ * ruling), so cancel is now admin-only like the run trigger.
  *
  * Body: { runId: string }
  */
-router.post('/api/pipeline/abort', async (req: Request, res: Response) => {
-  // Note: no requireAuth — sendBeacon can't send auth headers.
-  // We only mark runs as aborted, never delete data, so this is safe.
+router.post('/api/pipeline/abort', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const { runId } = req.body || {};
 
   if (!runId || typeof runId !== 'string') {
@@ -733,19 +765,20 @@ router.post('/api/pipeline/abort', async (req: Request, res: Response) => {
     return;
   }
 
-  console.log(`[routes] Pipeline abort requested for run ${runId}`);
+  console.log(`[routes] Pipeline cancel requested for run ${runId}`);
 
-  // Clean up in-memory step data
-  activePipelineSteps.delete(runId);
-
-  // Mark the run as failed in the DB
-  await supaUpdate('pipeline_runs', {
-    status: 'failed',
-    error_message: 'Aborted — user closed browser',
-    completed_at: new Date().toISOString(),
+  // Stamp the cancel request — only on a row that is still running
+  const { data } = await supaUpdate('pipeline_runs', {
+    cancel_requested_at: new Date().toISOString(),
   }, { id: `eq.${runId}`, status: 'eq.running' });
 
-  res.json({ message: 'Pipeline run aborted' });
+  const matched = Array.isArray(data) ? data.length > 0 : !!data;
+  if (!matched) {
+    res.status(409).json({ error: 'No running pipeline with that ID — it may have already finished' });
+    return;
+  }
+
+  res.json({ message: 'Cancel requested — the run stops at its next checkpoint' });
 });
 
 /**
