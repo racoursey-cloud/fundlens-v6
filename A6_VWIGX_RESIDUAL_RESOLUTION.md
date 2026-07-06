@@ -17,7 +17,7 @@ VWIGX is the one fund of 22 that did not clear the 90/95 trust gate after the fi
 
 - **Task 6 and Task 7 reports from A5 are deliberately retired by Robert's decision on 2026-07-05.** They were not abandoned; they were cut out loud. Do not go looking for the A6 dossier that Task 6 would have produced — it does not exist. The evidence-gathering it would have done is now Task 1 of this assignment.
 - The benchmark numbers those reports would have memorialized (87.8% sector / 56.0% industry agreement, 400 out-of-sample equities vs FMP reference labels) are recorded here so they survive the retirement.
-- A6 runs under the v7 charter. The ratified v8 charter (`FUNDLENS_V8_FOUNDING.md`) governs everything after this assignment closes.
+- A6 runs under the v7 charter. The ratified v8 charter (`FUNDLENS_V8_FOUNDING.md`) governs everything after this assignment closes. *(Superseded July 6, 2026: FUNDLENS_V8_CHARTER.md now governs — see the supersession banner on the founding.)*
 
 ## Known baseline (evidence, not to be re-litigated)
 
@@ -86,4 +86,4 @@ House rules apply in full:
 
 ## What comes after
 
-A6 closing = v7 charter fully discharged. Next session opens the v8 A-series under `FUNDLENS_V8_FOUNDING.md`, beginning with the charter commit to the repo if not already landed.
+A6 closing = v7 charter fully discharged. Next session opens the v8 A-series under `FUNDLENS_V8_FOUNDING.md`, beginning with the charter commit to the repo if not already landed. *(Superseded July 6, 2026: FUNDLENS_V8_CHARTER.md now governs — see the supersession banner on the founding.)*
