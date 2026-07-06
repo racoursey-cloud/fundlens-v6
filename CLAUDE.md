@@ -1,6 +1,6 @@
 **The operator, Robert, is not a developer.** He is a capable, careful reviewer who works entirely through browsers — GitHub web UI, Railway, Supabase dashboards. Never assume he can run terminal commands, and never ask him to. Explain everything in plain English; when a technical term is unavoidable, define it in the same sentence.
 
-**Authority:** `FUNDLENS_V7_FOUNDING.md` at the repo root governs all product and architecture decisions. Read it at the start of every session and cite its principles by number. Work only from written assignments (files named `A2_...`, `A3_...`, etc. or pasted assignment text).
+**Authority:** `FUNDLENS_V8_CHARTER.md` at the repo root governs all product and architecture decisions; `FUNDLENS_V7_FOUNDING.md` and `FUNDLENS_V8_FOUNDING.md` are historical records. Read the charter at the start of every session and cite its principles by section number. Work only from written assignments (files named `A1_...`, `A2_...`, etc. or pasted assignment text).
 
 **Scope discipline:** Do exactly what the assignment says — nothing more. If you notice other problems, improvements, or refactoring opportunities, list them at the end of your report as suggestions; never act on them. No "while I'm here" changes, ever.
 

@@ -1,5 +1,7 @@
 # FUNDLENS v8 — FOUNDING DOCUMENT
 
+> **⚠️ SUPERSEDED — July 6, 2026, by `FUNDLENS_V8_CHARTER.md` (the second founding), by Robert's ratification. Retained as historical record; no term below governs except where the new charter carries it forward by name.**
+
 **Drafted:** July 5, 2026 (Fable, from the July 5 strategy session)
 **Status:** RATIFIED — July 5, 2026, by Robert. Amended same day, pre-commit, to reconcile §1 and §7 with the v7 close (A6 completed, 22/22, tag `v7.0.0`, branch `v7-stable`). No ratified term was changed; the amendment is factual reconciliation only.
 **Operator:** Robert Coursey — not a developer, browser-only, plain English throughout.
