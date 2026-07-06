@@ -21,7 +21,7 @@
  */
 
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
-import { runFullPipeline } from './pipeline.js';
+import { runFullPipeline, PipelineCancelledError } from './pipeline.js';
 import { persistPipelineResults } from './persist.js';
 import { getAlertEmailStatus, type AlertEmailStatus } from './admin-alert.js';
 import type { FundRow, PipelineRunRow, FundScoresRow, ThesisCacheRow } from './types.js';
@@ -95,6 +95,47 @@ export function runIsStale(run: PipelineRunRow, nowMs: number = Date.now()): boo
   return nowMs - lastSignMs > RUN_SILENCE_STALE_MS;
 }
 
+// ─── UI Honesty item 3: cooperative cancel ─────────────────────────────────
+
+/** Minimum interval between cancel-stamp reads — checkpoints fire in rapid
+ *  bursts at adjacent step boundaries; don't hammer Supabase for them */
+const CANCEL_CHECK_MIN_INTERVAL_MS = 10 * 1000;
+
+/**
+ * Build the cancel check for a run. THE shared implementation for all three
+ * runner sites (routes.ts trigger, cron.ts nightly, this file's retry) —
+ * passed into runFullPipeline as its shouldAbort hook. Reads the row's
+ * cancel_requested_at, throttled to one read per 10s; between reads it
+ * returns the last answer. Once a cancel is seen it stays seen. A failed
+ * read returns false — never kill a run over a flaky status query.
+ */
+export function makeCancelChecker(runId: string): () => Promise<boolean> {
+  let lastCheckMs = 0;
+  let cancelled = false;
+  return async () => {
+    if (cancelled) return true;
+    const now = Date.now();
+    if (now - lastCheckMs < CANCEL_CHECK_MIN_INTERVAL_MS) return false;
+    lastCheckMs = now;
+    try {
+      const { data } = await supaFetch<Pick<PipelineRunRow, 'cancel_requested_at'>>('pipeline_runs', {
+        params: { id: `eq.${runId}`, select: 'cancel_requested_at', limit: '1' },
+        single: true,
+      });
+      if (data?.cancel_requested_at) {
+        cancelled = true;
+        console.log(
+          `[monitor] Run ${runId}: cancel request detected (stamped ${data.cancel_requested_at}) — ` +
+          `stopping at this checkpoint`
+        );
+      }
+    } catch (err) {
+      console.warn(`[monitor] Cancel check read failed for run ${runId}: ${err}`);
+    }
+    return cancelled;
+  };
+}
+
 // ─── Health Assessment ─────────────────────────────────────────────────────
 
 /**
@@ -161,8 +202,16 @@ export async function getSystemHealth(): Promise<SystemHealthReport> {
     status = 'unhealthy';
     issues.push('No pipeline runs found — run the pipeline to generate scores');
   } else if (latestRun.status === 'failed') {
-    status = 'unhealthy';
-    issues.push(`Last pipeline run failed: ${latestRun.error_message || 'Unknown error'}`);
+    // UI Honesty rider (Fabio, July 6): a deliberate cancel reported as ill
+    // health is a small lie — degraded (scores are older than they'd be),
+    // not unhealthy (nothing is broken).
+    if (latestRun.error_message === 'Cancelled by user') {
+      status = 'degraded';
+      issues.push('Last pipeline run was cancelled by user — scores are from the previous completed run');
+    } else {
+      status = 'unhealthy';
+      issues.push(`Last pipeline run failed: ${latestRun.error_message || 'Unknown error'}`);
+    }
   } else if (latestRun.status === 'running') {
     status = 'degraded';
     issues.push('Pipeline is currently running');
@@ -459,11 +508,23 @@ async function runPipelineInBackground(runId: string): Promise<void> {
       return;
     }
 
-    const result = await runFullPipeline(funds);
+    const result = await runFullPipeline(funds, undefined, makeCancelChecker(runId));
     await persistPipelineResults(runId, result, funds);
 
     console.log(`[monitor] Pipeline run ${runId} completed successfully`);
   } catch (err) {
+    // UI Honesty item 3: a deliberate cancel is not a crash — record it
+    // as "Cancelled by user" and raise no alarm.
+    if (err instanceof PipelineCancelledError) {
+      console.log(`[monitor] Pipeline run ${runId} cancelled by user — stopped at a checkpoint`);
+      await supaUpdate('pipeline_runs', {
+        status: 'failed',
+        error_message: 'Cancelled by user',
+        completed_at: new Date().toISOString(),
+      }, { id: `eq.${runId}` });
+      return;
+    }
+
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[monitor] Pipeline run ${runId} failed: ${msg}`);
 
