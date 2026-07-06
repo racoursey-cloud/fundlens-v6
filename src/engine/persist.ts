@@ -413,9 +413,12 @@ export async function persistPipelineResults(
   }
 
   // ── 4. Update pipeline_runs record ────────────────────────────────────
-  // Mark the run as completed with stats.
-
-  await supaUpdate('pipeline_runs', {
+  // Mark the run as completed with stats — but ONLY if the row still says
+  // 'running'. A run already marked failed (stale-run sweep) or cancelled
+  // must keep its terminal status: only the process that wrote it knows
+  // why, and a finished zombie overwriting failed→completed resurrects a
+  // run the operator was told is dead (UI Honesty Task 1, hazard 1).
+  const { data: completedRows } = await supaUpdate('pipeline_runs', {
     status: 'completed',
     completed_at: new Date().toISOString(),
     funds_processed: result.stats.fundsProcessed,
@@ -424,7 +427,14 @@ export async function persistPipelineResults(
     total_holdings: result.stats.totalHoldingsScored,
     duration_ms: result.stats.durationMs,
     errors: result.stats.errors,
-  }, { id: `eq.${runId}` });
+  }, { id: `eq.${runId}`, status: 'eq.running' });
+
+  if (!completedRows || (Array.isArray(completedRows) && completedRows.length === 0)) {
+    console.warn(
+      `[persist] Run ${runId} is no longer 'running' (marked failed or cancelled ` +
+      `while work continued) — leaving its terminal status untouched`
+    );
+  }
 
   console.log(
     `[persist] Saved: ${scoresWritten} scores, ` +
