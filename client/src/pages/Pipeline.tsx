@@ -822,7 +822,12 @@ export function Pipeline() {
           }}>
             <span>Fund</span>
             <span>Gate</span>
-            <span style={{ textAlign: 'right' }}>Examined</span>
+            {/* UI Honesty item 6: house-tone tooltip — >100% is leverage
+                disclosure, not an error (Robert's July 5–6 ruling) */}
+            <span
+              style={{ textAlign: 'right', cursor: 'help' }}
+              title="Values over 100% mean the fund uses leverage or derivatives; its total positions exceed its net value. All positions were examined."
+            >Examined</span>
             <span style={{ textAlign: 'right' }}>Resolvable</span>
             <span style={{ textAlign: 'right' }}>Resolved</span>
             <span style={{ textAlign: 'right' }}>Classified</span>
@@ -847,6 +852,18 @@ export function Pipeline() {
               : Number(d.nav_resolved_pct);
             // Visible v2 detail: what was excluded and why (Principle 1)
             const v2Notes: string[] = [];
+            // UI Honesty item 6 (refined Path 2, ratified July 5–6): when
+            // gross positions exceed net assets, lead the fine print with
+            // the reconciliation — the SEC Schedule-of-Investments pattern.
+            // The number is never capped; the arithmetic uses the same
+            // fields this fine print already shows.
+            const grossPct = Number(d.weight_covered_pct);
+            if (isV2 && !d.is_money_market && grossPct > 100) {
+              const legsPct = Math.abs(Number(d.short_overlay_weight_pct ?? 0));
+              v2Notes.push(
+                `Gross positions ${grossPct.toFixed(1)}% − offsetting legs ${legsPct.toFixed(1)}% = net ${(grossPct - legsPct).toFixed(1)}%`
+              );
+            }
             if (isV2 && Number(d.unresolvable_weight_pct ?? 0) > 0) {
               v2Notes.push(`${Number(d.unresolvable_weight_pct).toFixed(1)}% structurally unresolvable (bullion, cash/repo, derivatives, no identifier)`);
             }
