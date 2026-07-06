@@ -1,0 +1,12 @@
+-- UI Honesty item 3 (universal cancel): cooperative cancel request.
+-- The cancel endpoint stamps cancel_requested_at on a running row; the
+-- running pipeline checks the stamp at checkpoints (between steps, between
+-- funds) and stops itself cleanly. The row keeps status='running' until the
+-- process actually exits — only the running process writes terminal status,
+-- so the already-running guard never sees a false clear road mid-wind-down.
+-- Nullable, no default, no backfill — rows from before this migration were
+-- never cancel-requested.
+--
+-- To be applied to the production Supabase project by Robert BEFORE the
+-- code PR merges, per charter migrations-before-merges law.
+ALTER TABLE pipeline_runs ADD COLUMN cancel_requested_at timestamptz;

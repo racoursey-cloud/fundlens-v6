@@ -337,6 +337,12 @@ export interface PipelineRunRow {
    *  from before the v8_a0_pipeline_runs_heartbeat migration; the liveness
    *  check falls back to started_at. */
   heartbeat_at?: string | null;
+  /** UI Honesty item 3: cooperative cancel request — stamped by the cancel
+   *  endpoint; the running pipeline checks it at checkpoints and stops
+   *  itself. The row keeps status 'running' until the process actually
+   *  exits. Optional: null/absent on rows from before the
+   *  ui_honesty_cancel_requested migration. */
+  cancel_requested_at?: string | null;
 }
 
 // ─── Scoring Types (Full — Session 3) ───────────────────────────────────────

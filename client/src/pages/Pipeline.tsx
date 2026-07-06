@@ -21,6 +21,7 @@ import {
   fetchPipelineStatus,
   triggerPipeline,
   retryPipeline,
+  abortPipeline,
   fetchSystemHealth,
   fetchLatestDossiers,
   fetchProfile,
@@ -34,8 +35,16 @@ import { theme } from '../theme';
 
 // ─── Status Dot ────────────────────────────────────────────────────────────
 
-function StatusDot({ status }: { status: PipelineRun['status'] }) {
+// UI Honesty item 3: a run recorded as failed with this exact message was a
+// deliberate stop, not a crash — every surface on this page renders it as
+// "cancelled" (neutral), never as an error.
+function isCancelledRun(run: PipelineRun | null | undefined): boolean {
+  return run?.status === 'failed' && run?.error_message === 'Cancelled by user';
+}
+
+function StatusDot({ status, cancelled }: { status: PipelineRun['status']; cancelled?: boolean }) {
   const color =
+    cancelled ? theme.colors.textDim :
     status === 'completed' ? theme.colors.success :
     status === 'running' ? theme.colors.warning :
     theme.colors.error;
@@ -73,6 +82,14 @@ function fmtDuration(ms: number | null): string {
   const min = Math.floor(sec / 60);
   const remSec = Math.round(sec % 60);
   return `${min}m ${remSec}s`;
+}
+
+/** Coarse "Xm ago" for the active-run card (UI Honesty item 4) */
+function fmtAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return 'under a minute ago';
+  const min = Math.round(ms / 60_000);
+  return `${min} minute${min === 1 ? '' : 's'} ago`;
 }
 
 // ─── Stat Card ─────────────────────────────────────────────────────────────
@@ -124,6 +141,14 @@ export function Pipeline() {
   const [latestRun, setLatestRun] = useState<PipelineRun | null>(null);
   const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  // UI Honesty item 4: live-run detail — step data exists only for runs
+  // triggered from the web (the nightly reports none; the card says so)
+  const [currentStep, setCurrentStep] = useState<number | null>(null);
+  const [stepMessage, setStepMessage] = useState<string | null>(null);
+  const [totalSteps, setTotalSteps] = useState<number | null>(null);
+  // UI Honesty item 3: local echo of a just-clicked Cancel, merged with the
+  // server's cancel stamp so a cancel requested from ANY surface shows here
+  const [cancelClicked, setCancelClicked] = useState(false);
   const [healthStatus, setHealthStatus] = useState<string>('');
   const [healthIssues, setHealthIssues] = useState<string[]>([]);
   const [dossiers, setDossiers] = useState<FundDossierRow[]>([]);
@@ -140,6 +165,10 @@ export function Pipeline() {
       setLatestRun(data.latestRun);
       setRecentRuns(data.recentRuns);
       setIsRunning(data.isRunning);
+      setCurrentStep(data.currentStep);
+      setStepMessage(data.stepMessage);
+      setTotalSteps(data.totalSteps);
+      if (!data.isRunning) setCancelClicked(false);
     }
     setLoading(false);
   }, []);
@@ -244,6 +273,24 @@ export function Pipeline() {
       setActionMsg(data?.message ?? 'Benchmark started');
       // Pick up the running state promptly; the poll takes over from there
       setTimeout(() => loadBenchStatus(), 1000);
+    }
+  };
+
+  // ── UI Honesty item 3: cancel the active run, whoever started it ───────
+  const handleCancel = async () => {
+    if (!latestRun || latestRun.status !== 'running') return;
+    setActionMsg('');
+    setActionError('');
+    setCancelClicked(true);
+    const { data, error } = await abortPipeline(latestRun.id);
+    if (error) {
+      // Most likely the run finished in the meantime — the next poll shows
+      // the truth either way
+      setActionError(error);
+      setCancelClicked(false);
+    } else {
+      setActionMsg(data?.message ?? 'Cancel requested');
+      setTimeout(() => loadStatus(), 2000);
     }
   };
 
@@ -373,6 +420,62 @@ export function Pipeline() {
         </div>
       )}
 
+      {/* UI Honesty item 4: the active run, readable here no matter which
+          surface started it — header, this tab, the nightly, or a retry */}
+      {isRunning && latestRun?.status === 'running' && (() => {
+        const cancelPending = cancelClicked || !!latestRun.cancel_requested_at;
+        return (
+          <div style={{
+            background: theme.colors.surface,
+            border: `1px solid ${theme.colors.warning}40`,
+            borderRadius: theme.radii.lg,
+            padding: '16px 20px',
+            marginBottom: '24px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <StatusDot status="running" />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: theme.colors.text }}>
+                  {cancelPending
+                    ? 'Run is stopping — cancel requested'
+                    : 'A run is in progress'}
+                </div>
+                <div style={{ fontSize: '12px', color: theme.colors.textMuted, marginTop: '4px', lineHeight: 1.5 }}>
+                  Started {fmtDateTime(latestRun.started_at)} ({fmtAgo(latestRun.started_at)})
+                  {latestRun.heartbeat_at && <> · last sign of life {fmtAgo(latestRun.heartbeat_at)}</>}
+                  <br />
+                  {cancelPending ? (
+                    <>Stops at its next checkpoint — usually under two minutes; up to ten during a first-time full scan.</>
+                  ) : currentStep != null && totalSteps != null ? (
+                    <>Step {currentStep}/{totalSteps}{stepMessage ? ` — ${stepMessage}` : ''}</>
+                  ) : (
+                    <>No step detail for this run (started by the nightly schedule or a retry) — the heartbeat above confirms it is alive.</>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={handleCancel}
+                disabled={cancelPending}
+                style={{
+                  padding: '8px 16px',
+                  background: 'transparent',
+                  border: `1px solid ${theme.colors.border}`,
+                  borderRadius: theme.radii.md,
+                  color: cancelPending ? theme.colors.textDim : theme.colors.textMuted,
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  fontFamily: theme.fonts.body,
+                  cursor: cancelPending ? 'default' : 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                {cancelPending ? 'Stopping…' : 'Cancel Run'}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* v8 A0 (Gap 4): benchmark status — running state or last outcome */}
       {benchStatus && (benchStatus.running || benchStatus.finishedAt) && (
         <div style={{
@@ -409,7 +512,8 @@ export function Pipeline() {
       {/* Latest Run Stats */}
       {latestRun && (
         <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
-          <StatCard label="Status" value={latestRun.status} color={
+          <StatCard label="Status" value={isCancelledRun(latestRun) ? 'cancelled' : latestRun.status} color={
+            isCancelledRun(latestRun) ? theme.colors.textDim :
             latestRun.status === 'completed' ? theme.colors.success :
             latestRun.status === 'running' ? theme.colors.warning :
             theme.colors.error
@@ -507,8 +611,13 @@ export function Pipeline() {
                   (e.currentTarget as HTMLElement).style.background = 'transparent';
                 }}
               >
-                <StatusDot status={run.status} />
-                <span>{fmtDateTime(run.started_at)}</span>
+                <StatusDot status={run.status} cancelled={isCancelledRun(run)} />
+                <span>
+                  {fmtDateTime(run.started_at)}
+                  {isCancelledRun(run) && (
+                    <span style={{ color: theme.colors.textDim, fontSize: '12px' }}> · cancelled by user</span>
+                  )}
+                </span>
                 <span style={{ fontFamily: theme.fonts.mono }}>
                   <span style={{ color: theme.colors.success }}>{run.funds_succeeded}</span>
                   {run.funds_failed > 0 && (
@@ -559,8 +668,9 @@ export function Pipeline() {
         )}
       </div>
 
-      {/* Error details for latest failed run */}
-      {latestRun?.status === 'failed' && latestRun.error_message && (
+      {/* Error details for latest failed run — a deliberate cancel is not
+          an error and gets no red box (UI Honesty item 3) */}
+      {latestRun?.status === 'failed' && latestRun.error_message && !isCancelledRun(latestRun) && (
         <div style={{
           background: `${theme.colors.error}10`,
           border: `1px solid ${theme.colors.error}30`,
@@ -712,7 +822,12 @@ export function Pipeline() {
           }}>
             <span>Fund</span>
             <span>Gate</span>
-            <span style={{ textAlign: 'right' }}>Examined</span>
+            {/* UI Honesty item 6: house-tone tooltip — >100% is leverage
+                disclosure, not an error (Robert's July 5–6 ruling) */}
+            <span
+              style={{ textAlign: 'right', cursor: 'help' }}
+              title="Values over 100% mean the fund uses leverage or derivatives; its total positions exceed its net value. All positions were examined."
+            >Examined</span>
             <span style={{ textAlign: 'right' }}>Resolvable</span>
             <span style={{ textAlign: 'right' }}>Resolved</span>
             <span style={{ textAlign: 'right' }}>Classified</span>
@@ -737,6 +852,18 @@ export function Pipeline() {
               : Number(d.nav_resolved_pct);
             // Visible v2 detail: what was excluded and why (Principle 1)
             const v2Notes: string[] = [];
+            // UI Honesty item 6 (refined Path 2, ratified July 5–6): when
+            // gross positions exceed net assets, lead the fine print with
+            // the reconciliation — the SEC Schedule-of-Investments pattern.
+            // The number is never capped; the arithmetic uses the same
+            // fields this fine print already shows.
+            const grossPct = Number(d.weight_covered_pct);
+            if (isV2 && !d.is_money_market && grossPct > 100) {
+              const legsPct = Math.abs(Number(d.short_overlay_weight_pct ?? 0));
+              v2Notes.push(
+                `Gross positions ${grossPct.toFixed(1)}% − offsetting legs ${legsPct.toFixed(1)}% = net ${(grossPct - legsPct).toFixed(1)}%`
+              );
+            }
             if (isV2 && Number(d.unresolvable_weight_pct ?? 0) > 0) {
               v2Notes.push(`${Number(d.unresolvable_weight_pct).toFixed(1)}% structurally unresolvable (bullion, cash/repo, derivatives, no identifier)`);
             }

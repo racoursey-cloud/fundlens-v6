@@ -21,7 +21,7 @@
 
 import cron from 'node-cron';
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from './supabase.js';
-import { runFullPipeline } from './pipeline.js';
+import { runFullPipeline, PipelineCancelledError } from './pipeline.js';
 import { persistPipelineResults } from './persist.js';
 import { checkAndSendBriefs } from './brief-scheduler.js';
 import {
@@ -33,7 +33,9 @@ import {
 } from './admin-alert.js';
 // v8 A0 (Gap 5): heartbeat + THE shared liveness rule — cron.ts and
 // routes.ts both import runIsStale; neither carries its own copy anymore.
-import { startRunHeartbeat, runIsStale } from './monitor.js';
+// UI Honesty item 3: makeCancelChecker joins them — the nightly is
+// cancellable from the Pipeline tab like any other run.
+import { startRunHeartbeat, runIsStale, makeCancelChecker } from './monitor.js';
 import type { FundRow, PipelineRunRow } from './types.js';
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -117,8 +119,8 @@ async function scheduledPipelineRun(): Promise<void> {
       return;
     }
 
-    // Run the full pipeline
-    const result = await runFullPipeline(funds);
+    // Run the full pipeline (no progress UI for the nightly; cancellable)
+    const result = await runFullPipeline(funds, undefined, makeCancelChecker(run.id));
 
     // Persist results
     const persistResult = await persistPipelineResults(run.id, result, funds);
@@ -138,6 +140,18 @@ async function scheduledPipelineRun(): Promise<void> {
     // Post-pipeline Brief regeneration removed per Robert's July 1, 2026 decision
     // (A2 Task 2). The 06:00 UTC checkAndSendBriefs delivery cadence is unaffected.
   } catch (err) {
+    // UI Honesty item 3: a deliberate cancel is not a crash — record it as
+    // "Cancelled by user" and send NO failure alert (Fabio condition 1).
+    if (err instanceof PipelineCancelledError) {
+      console.log(`[cron] Pipeline run ${run.id} cancelled by user — stopped at a checkpoint`);
+      await supaUpdate('pipeline_runs', {
+        status: 'failed',
+        error_message: 'Cancelled by user',
+        completed_at: new Date().toISOString(),
+      }, { id: `eq.${run.id}` });
+      return;
+    }
+
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[cron] Pipeline run ${run.id} failed: ${msg}`);
 

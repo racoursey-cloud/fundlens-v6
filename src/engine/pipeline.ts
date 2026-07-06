@@ -116,6 +116,25 @@ export function mapFmpSector(fmpSector: string | null | undefined): string | nul
 /** Progress callback for pipeline status updates */
 export type PipelineProgressCallback = (step: number, total: number, message: string) => void;
 
+/** Cancel check for cooperative cancel (UI Honesty item 3): returns true
+ *  when a cancel has been requested for this run. Callers throttle their
+ *  own DB reads — the pipeline calls this freely at checkpoints. */
+export type PipelineCancelCheck = () => Promise<boolean>;
+
+/**
+ * Thrown at a checkpoint when the run's cancel stamp is set. The three
+ * runner sites (routes.ts, cron.ts, monitor.ts) check for this class FIRST
+ * in their catch blocks and take the cancel path — status 'failed' with
+ * "Cancelled by user", and NO failure-alert email. A deliberate stop must
+ * never read as a crash (UI Honesty Task 2, Fabio condition 1).
+ */
+export class PipelineCancelledError extends Error {
+  constructor() {
+    super('Cancelled by user');
+    this.name = 'PipelineCancelledError';
+  }
+}
+
 /** Complete pipeline result for a single run */
 export interface PipelineResult {
   /** Scored and ranked funds */
@@ -162,7 +181,8 @@ export interface PipelineStats {
  */
 export async function runFullPipeline(
   funds: FundRow[],
-  onProgress?: PipelineProgressCallback
+  onProgress?: PipelineProgressCallback,
+  shouldAbort?: PipelineCancelCheck
 ): Promise<PipelineResult> {
   const TOTAL_STEPS = 16;
   const startedAt = new Date().toISOString();
@@ -173,6 +193,18 @@ export async function runFullPipeline(
   const progress = (step: number, msg: string) => {
     console.log(`[pipeline] Step ${step}/${TOTAL_STEPS}: ${msg}`);
     onProgress?.(step, TOTAL_STEPS, msg);
+  };
+
+  // UI Honesty item 3: cooperative cancel. Checkpoints sit BETWEEN units of
+  // work (steps, funds, per-ticker API iterations) — never inside a Claude
+  // call or a DB write, so a cancel cannot tear anything. Checkpoints must
+  // stay at function scope, OUTSIDE the per-step try blocks, or the cancel
+  // would be swallowed into `errors` and the run would keep going. Measured
+  // worst gap between checkpoints: one classification pass inside
+  // classify.ts (~7 min on a fully cold cache, July 5 full-examination
+  // log); warm-cache runs cancel within ~2 minutes.
+  const checkpoint = async () => {
+    if (shouldAbort && (await shouldAbort())) throw new PipelineCancelledError();
   };
 
   // ── Step 1: Fund list already provided as argument ──
@@ -203,6 +235,7 @@ export async function runFullPipeline(
   const fundMeta = new Map<string, HoldingsPipelineResult>();
 
   for (const fund of scorableFunds) {
+    await checkpoint();
     try {
       const result = await runHoldingsPipeline(fund.ticker, openFigiKey);
       if (result.success && result.data) {
@@ -276,6 +309,7 @@ export async function runFullPipeline(
   }
 
   for (const ticker of fmpMisses) {
+    await checkpoint();
     try {
       // A4 Task 3: profile first (industry harvest), then the bundle
       const profile = await fetchProfile(ticker);
@@ -307,6 +341,7 @@ export async function runFullPipeline(
   if (profileBackfill.length > 0) {
     progress(4, `Backfilling ${profileBackfill.length} company profiles (industry) into the FMP cache`);
     for (const ticker of profileBackfill) {
+      await checkpoint();
       try {
         const profile = await fetchProfile(ticker);
         const entry = fundamentals.get(ticker)!;
@@ -377,6 +412,7 @@ export async function runFullPipeline(
   // Session 10: Collect ALL unique holding names across ALL funds, batch-check
   // sector_classifications cache, then only classify uncached holdings.
   // Saves ~4 Claude Haiku calls per run after the first.
+  await checkpoint();
   progress(5, 'Classifying holdings into sectors');
 
   // 5a: Collect all unique unclassified holdings across all funds.
@@ -641,6 +677,7 @@ export async function runFullPipeline(
         .filter(([key]) => !keyToIndustry.has(key))
         .map(([, h]) => h);
       if (uncachedReps.length > 0) {
+        await checkpoint();
         progress(5, `Classifying ${uncachedReps.length} holdings into industries via Claude (${industryCacheHits} cached)`);
         try {
           await classifyHoldingIndustries(uncachedReps);
@@ -714,6 +751,7 @@ export async function runFullPipeline(
   }
 
   // ── Step 6: Score Holdings Quality factor ──
+  await checkpoint();
   progress(6, 'Scoring Holdings Quality');
 
   const qualityResults = new Map<string, QualityFactorResult>();
@@ -892,6 +930,7 @@ export async function runFullPipeline(
   }
 
   // ── Step 7b: Score Cost Efficiency ──
+  await checkpoint();
   progress(7, 'Scoring Cost Efficiency');
 
   const costResults = new Map<string, CostEfficiencyResult>();
@@ -922,6 +961,7 @@ export async function runFullPipeline(
   // ── Steps 8–9: Fetch momentum data + cross-sectional scoring (with cache) ──
   // §4.6: Tiingo is PRIMARY for fund NAV/prices. FMP is FALLBACK.
   // Session 10: Check tiingo_price_cache first, only hit API for misses.
+  await checkpoint();
   progress(8, 'Fetching price data (Tiingo primary, FMP fallback)');
 
   // Calculate date range: 13 months back (12 months + buffer)
@@ -994,6 +1034,7 @@ export async function runFullPipeline(
     }
   }
 
+  await checkpoint();
   progress(9, 'Scoring Momentum (cross-sectional)');
   const momentumResult = scoreMomentumCrossSectional(fundMomentums);
   const momentumMap = new Map<string, MomentumScore>();
@@ -1002,6 +1043,7 @@ export async function runFullPipeline(
   }
 
   // ── Step 10: Fetch RSS headlines + FRED macro data ──
+  await checkpoint();
   progress(10, 'Fetching news headlines and macro data');
 
   const headlines = await getHeadlines();
@@ -1012,6 +1054,7 @@ export async function runFullPipeline(
   // A3 Task 6a: label was 'Generating investment brief' — wrong (this step
   // generates the macro thesis; Briefs are a separate, on-demand flow) and
   // it caused a false alarm on July 2.
+  await checkpoint();
   progress(11, 'Generating macro thesis');
 
   let thesis: MacroThesis;
@@ -1035,6 +1078,7 @@ export async function runFullPipeline(
   }
 
   // ── Step 12: Score Positioning factor ──
+  await checkpoint();
   progress(12, 'Scoring Positioning');
 
   const positioningResults = new Map<string, PositioningResult>();
@@ -1059,6 +1103,7 @@ export async function runFullPipeline(
   }
 
   // ── Step 13: Compute composite scores ──
+  await checkpoint();
   progress(13, 'Computing composite scores');
 
   const fundScoreInputs: Array<{

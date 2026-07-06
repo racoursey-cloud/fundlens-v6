@@ -112,6 +112,14 @@ export function AppShell() {
   const [currentStep, setCurrentStep] = useState<number | null>(null);
   const [stepMessage, setStepMessage] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  // UI Honesty item 3: true between clicking Stop and the server confirming
+  // the run actually ended — the overlay shows "Stopping…" instead of
+  // pretending the run vanished
+  const [stopping, setStopping] = useState(false);
+
+  // UI Honesty item 1: on the Pipeline tab, the page's own trigger is the
+  // one to use — the header button stands down (presentation only)
+  const onPipelineTab = location.pathname.startsWith('/pipeline');
 
   // A5 Task 4: admin accounts see the Pipeline tab and the Refresh Analysis
   // button; everyone else sees neither (the run endpoint already 403s them —
@@ -172,18 +180,21 @@ export function AppShell() {
       if (res.data) {
         if (!res.data.isRunning) {
           if (triggerConfirmedRef.current) {
-            // Trigger completed AND DB says not running → genuinely done
-            setSource('live');
+            // Trigger completed AND DB says not running → genuinely done.
+            // UI Honesty item 3: the badge reflects how the run actually
+            // ended — 'live' only if it completed (a cancelled or failed
+            // run must not flash LIVE).
+            setSource(res.data.latestRun?.status === 'completed' ? 'live' : 'seed');
             setIsRunning(false);
+            setStopping(false);
             setCurrentStep(null);
             setStepMessage(null);
             setActiveRunId(null);
           }
           // else: trigger still in flight — ignore the false negative
         } else {
-          const d = res.data as Record<string, unknown>;
-          if (d.currentStep != null) setCurrentStep(d.currentStep as number);
-          if (d.stepMessage != null) setStepMessage(d.stepMessage as string);
+          if (res.data.currentStep != null) setCurrentStep(res.data.currentStep);
+          if (res.data.stepMessage != null) setStepMessage(res.data.stepMessage);
         }
       }
     };
@@ -192,36 +203,20 @@ export function AppShell() {
     return () => clearInterval(interval);
   }, [isRunning]);
 
-  // Abort pipeline on browser close / tab close
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (activeRunId) {
-        // Use sendBeacon for reliability — fetch may be cancelled during unload
-        navigator.sendBeacon(
-          '/api/pipeline/abort',
-          new Blob(
-            [JSON.stringify({ runId: activeRunId })],
-            { type: 'application/json' }
-          )
-        );
-        // Also try fetch as backup (sendBeacon doesn't send auth headers)
-        abortPipeline(activeRunId).catch(() => {});
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [activeRunId]);
+  // UI Honesty item 3 (Robert's July 6 ruling): the browser-close abort
+  // beacon is gone. It existed to prevent stale 'running' rows — the
+  // heartbeat + stale-run sweep now handle that properly, and a run is a
+  // server job: closing the tab should not kill it. Cancel is explicit,
+  // via the Stop button here or the Pipeline tab's Cancel.
 
   const handleStopAnalysis = useCallback(async () => {
+    // Request cancellation; the server honors it at the run's next
+    // checkpoint. The overlay stays up in its "Stopping…" state until the
+    // poll confirms the run actually ended — closing it early would lie.
+    setStopping(true);
     if (activeRunId) {
       await abortPipeline(activeRunId).catch(() => {});
     }
-    triggerConfirmedRef.current = false;
-    setIsRunning(false);
-    setSource('seed');
-    setCurrentStep(null);
-    setStepMessage(null);
-    setActiveRunId(null);
   }, [activeRunId]);
 
   const handleRefreshAnalysis = async () => {
@@ -232,10 +227,19 @@ export function AppShell() {
     setStepMessage(null);
     const res = await triggerPipeline();
     if (res.error) {
-      setIsRunning(false);
-      setSource('seed');
-      setActiveRunId(null);
-      triggerConfirmedRef.current = false;
+      // UI Honesty item 2: before resetting (the old "flash"), check
+      // whether the error was a collision with a run that is already going
+      // — if so, adopt that run: show its real progress, let Stop cancel it.
+      const status = await fetchPipelineStatus();
+      if (status.data?.isRunning && status.data.latestRun) {
+        setActiveRunId(status.data.latestRun.id);
+        triggerConfirmedRef.current = true; // run row exists — poll can trust status
+      } else {
+        setIsRunning(false);
+        setSource('seed');
+        setActiveRunId(null);
+        triggerConfirmedRef.current = false;
+      }
     } else if (res.data) {
       setActiveRunId(res.data.runId);
       triggerConfirmedRef.current = true; // DB row confirmed — poll can now trust status
@@ -301,8 +305,9 @@ export function AppShell() {
         {/* Spacer */}
         <div style={{ flex: 1 }} />
 
-        {/* Refresh Analysis button (A5 Task 4: admin-only) */}
-        {!isMobile && isAdmin && (
+        {/* Refresh Analysis button (A5 Task 4: admin-only; UI Honesty
+            item 1: hidden on the Pipeline tab — that page has its own) */}
+        {!isMobile && isAdmin && !onPipelineTab && (
           <button
             className="fl-run-btn"
             disabled={isRunning}
@@ -423,7 +428,7 @@ export function AppShell() {
       )}
 
       {/* ═══ PIPELINE OVERLAY (v5.1 pattern) ══════════════════════════ */}
-      <PipelineOverlay isRunning={isRunning} currentStep={currentStep} stepMessage={stepMessage} onStop={handleStopAnalysis} />
+      <PipelineOverlay isRunning={isRunning} currentStep={currentStep} stepMessage={stepMessage} onStop={handleStopAnalysis} stopping={stopping} />
 
     </div>
   );

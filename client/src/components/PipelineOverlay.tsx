@@ -43,8 +43,14 @@ interface Props {
   currentStep?: number | null;
   /** Step message from server */
   stepMessage?: string | null;
-  /** Called when user clicks Stop — parent should abort pipeline & reset state */
+  /** Called when user clicks Stop — parent requests cancellation (UI
+   *  Honesty item 3: a request the server honors at its next checkpoint,
+   *  not an instant kill) */
   onStop?: () => void;
+  /** UI Honesty item 3: true after Stop is clicked, until the server
+   *  confirms the run has actually ended — the overlay says so instead of
+   *  vanishing while work continues */
+  stopping?: boolean;
 }
 
 // ─── Step indicator ─────────────────────────────────────────────────────────
@@ -89,7 +95,7 @@ function StepDot({ status, index }: { status: 'done' | 'active' | 'pending'; ind
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export function PipelineOverlay({ isRunning, currentStep, stepMessage, onStop }: Props) {
+export function PipelineOverlay({ isRunning, currentStep, stepMessage, onStop, stopping }: Props) {
   // Use real step from server if available, otherwise simulate
   const [simulatedStep, setSimulatedStep] = useState(0);
 
@@ -209,32 +215,48 @@ export function PipelineOverlay({ isRunning, currentStep, stepMessage, onStop }:
             })}
           </div>
 
-          {/* Stop button */}
+          {/* Stop button — while stopping, say what is actually happening
+              (the run winds down at its next checkpoint; it has not vanished) */}
           {onStop && (
-            <button
-              onClick={onStop}
-              style={{
-                marginTop: 24, width: '100%', height: 40,
-                background: 'transparent',
-                border: `1px solid ${theme.colors.borderLight}`,
-                borderRadius: 8, cursor: 'pointer',
-                color: theme.colors.textMuted, fontSize: 13, fontWeight: 600,
-                fontFamily: theme.fonts.body, letterSpacing: '0.01em',
-                transition: 'background 0.15s, border-color 0.15s, color 0.15s',
-              }}
-              onMouseEnter={e => {
-                (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceHover;
-                (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.accentBlue;
-                (e.currentTarget as HTMLButtonElement).style.color = theme.colors.text;
-              }}
-              onMouseLeave={e => {
-                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-                (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.borderLight;
-                (e.currentTarget as HTMLButtonElement).style.color = theme.colors.textMuted;
-              }}
-            >
-              Stop Analysis
-            </button>
+            <>
+              <button
+                onClick={onStop}
+                disabled={stopping}
+                style={{
+                  marginTop: 24, width: '100%', height: 40,
+                  background: 'transparent',
+                  border: `1px solid ${theme.colors.borderLight}`,
+                  borderRadius: 8, cursor: stopping ? 'default' : 'pointer',
+                  color: theme.colors.textMuted, fontSize: 13, fontWeight: 600,
+                  fontFamily: theme.fonts.body, letterSpacing: '0.01em',
+                  transition: 'background 0.15s, border-color 0.15s, color 0.15s',
+                  opacity: stopping ? 0.7 : 1,
+                }}
+                onMouseEnter={e => {
+                  if (stopping) return;
+                  (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceHover;
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.accentBlue;
+                  (e.currentTarget as HTMLButtonElement).style.color = theme.colors.text;
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.borderLight;
+                  (e.currentTarget as HTMLButtonElement).style.color = theme.colors.textMuted;
+                }}
+              >
+                {stopping ? 'Stopping — finishing current task…' : 'Stop Analysis'}
+              </button>
+              {stopping && (
+                <p style={{
+                  margin: '10px 0 0', fontSize: 11, lineHeight: 1.5,
+                  color: theme.colors.textMuted, fontFamily: theme.fonts.body,
+                  textAlign: 'center',
+                }}>
+                  The run stops at its next checkpoint — usually under two
+                  minutes; up to ten during a first-time full scan.
+                </p>
+              )}
+            </>
           )}
         </div>
       </div>
