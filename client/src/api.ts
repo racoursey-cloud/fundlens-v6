@@ -81,6 +81,12 @@ export interface PipelineRun {
   funds_failed: number;
   total_holdings: number;
   duration_ms: number | null;
+  /** v8 A0 (Gap 5): last sign of life, stamped ~every 60s while the run's
+   *  process is alive. Null/absent on pre-migration rows. */
+  heartbeat_at?: string | null;
+  /** UI Honesty item 3: set when a cancel has been requested; the run stops
+   *  at its next checkpoint and writes "Cancelled by user". */
+  cancel_requested_at?: string | null;
 }
 
 export interface Brief {
@@ -177,10 +183,20 @@ export const completeSetup = (data: {
   });
 
 // Pipeline
+// UI Honesty item 4: the type now carries the step fields the server has
+// always sent (AppShell previously cast around their absence). Step data
+// exists only for runs triggered via POST /api/pipeline/run — the nightly
+// and retry runners report no steps, so any surface must render honestly
+// without them.
 export const fetchPipelineStatus = () =>
-  apiFetch<{ latestRun: PipelineRun | null; isRunning: boolean; recentRuns: PipelineRun[] }>(
-    '/api/pipeline/status'
-  );
+  apiFetch<{
+    latestRun: PipelineRun | null;
+    isRunning: boolean;
+    currentStep: number | null;
+    stepMessage: string | null;
+    totalSteps: number | null;
+    recentRuns: PipelineRun[];
+  }>('/api/pipeline/status');
 
 export const triggerPipeline = () =>
   apiFetch<{ message: string; runId: string }>('/api/pipeline/run', { method: 'POST' });
@@ -191,6 +207,9 @@ export const retryPipeline = (failedRunId: string) =>
     body: JSON.stringify({ failedRunId }),
   });
 
+// UI Honesty item 3: requests cancellation — the run stops at its next
+// checkpoint (usually under two minutes; up to ~ten on a first-time full
+// scan) and records itself "Cancelled by user". Admin-only on the server.
 export const abortPipeline = (runId: string) =>
   apiFetch<{ message: string }>('/api/pipeline/abort', {
     method: 'POST',
