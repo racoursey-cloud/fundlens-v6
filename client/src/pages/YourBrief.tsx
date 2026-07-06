@@ -455,7 +455,10 @@ export function YourBrief() {
 
   // Score + profile state (for allocation donut + risk slider)
   const [scores, setScores] = useState<FundScore[]>([]);
-  const [_profile, setProfile] = useState<UserProfile | null>(null);
+  // UI Honesty item 5: profile is read below as the staleness gate — until
+  // it has actually loaded, `risk` still holds the 4.0 placeholder and any
+  // staleness judgment against it would be a lie (the banner flash).
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [risk, setRisk] = useState<number>(4.0);
   const [weights, setWeights] = useState({ cost: 0.25, quality: 0.30, positioning: 0.20, momentum: 0.25 });
   const [loadingScores, setLoadingScores] = useState(true);
@@ -722,7 +725,10 @@ export function YourBrief() {
   // ── Stale indicator (Option B) ────────────────────────────────────────
 
   const briefRisk = extractBriefRisk(selectedBrief);
-  const isStale = briefRisk !== null && Math.abs(risk - briefRisk) >= 0.1;
+  // UI Honesty item 5: staleness is only judgeable once the profile has
+  // loaded — before that, `risk` is the 4.0 placeholder and comparing the
+  // brief against it flashed a false "risk changed" banner.
+  const isStale = profile !== null && briefRisk !== null && Math.abs(risk - briefRisk) >= 0.1;
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
