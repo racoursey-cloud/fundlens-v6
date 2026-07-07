@@ -33,8 +33,11 @@ import { delay, type RegimeNormalizedObservation } from '../../types.js';
 
 const FRED_API_BASE = 'https://api.stlouisfed.org/fred';
 
-/** Courtesy delay between sequential FRED calls (Record 01 §6.2) */
-export const REGIME_FRED_DELAY_MS = 250;
+/** Courtesy delay between sequential FRED calls. 600ms per Fabio's S4
+ *  rider (July 7, 2026): his original 250ms "far below the ceiling" math
+ *  was wrong, his words — 600ms holds sustained volume at ~100 calls/min,
+ *  genuinely under FRED's ~120/min ceiling (Record 01 §6.2). */
+export const REGIME_FRED_DELAY_MS = 600;
 
 // ─── Pacing ─────────────────────────────────────────────────────────────────
 
