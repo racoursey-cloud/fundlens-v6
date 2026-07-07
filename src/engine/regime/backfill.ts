@@ -110,6 +110,17 @@ async function enabledSeries(): Promise<RegimeSeriesRow[]> {
   return data;
 }
 
+/** Fabio's July 7 resume rule: a snapshot-style series that already holds
+ *  rows is SKIPPED outright on a backfill re-run — the sweep owns its
+ *  freshness from there; the backfill never refetches what landed. */
+async function seriesHasRows(seriesId: string): Promise<boolean> {
+  const { data } = await supaFetch<{ id: string }>('regime_observations', {
+    params: { series_id: `eq.${seriesId}`, select: 'id', limit: '1' },
+    single: true,
+  });
+  return !!data;
+}
+
 // ─── Estimate mode (read-only; the S4 numbers, emailed) ─────────────────────
 
 interface SeriesEstimate {
@@ -257,6 +268,10 @@ export async function runBackfillExecute(): Promise<void> {
 
     for (const s of singles) {
       attempted++;
+      if (await seriesHasRows(s.id)) {
+        console.log(`[regime] Backfill ${s.series_code}: already populated — skipped outright (resume rule)`);
+        continue;
+      }
       let obs: RegimeNormalizedObservation[] = [];
       if (s.source === 'fred') {
         obs = (await fetchCurrent(s.series_code)).map(o =>
@@ -298,6 +313,14 @@ export async function runBackfillExecute(): Promise<void> {
         // No ALFRED archive: store current history as a dated snapshot —
         // as-published replay for this series begins today, and the
         // registry's 'alfred' label needs Robert's correction.
+        if (await seriesHasRows(s.id)) {
+          console.log(`[regime] Backfill ${s.series_code}: snapshot already populated — skipped outright (resume rule)`);
+          policyFindings.push(
+            `${s.series_code}: NOT in ALFRED — snapshot already populated from a prior run; skipped; ` +
+              `registry vintage_policy should become snapshot_custom (Robert's cell edit)`
+          );
+          continue;
+        }
         const obs = (await fetchCurrent(s.series_code)).map(o => ({
           ...o,
           realtime_start: todayIso,

@@ -274,9 +274,20 @@ export async function ingestObservations(
   }
 
   if (toInsert.length > 0) {
-    const { error } = await supaInsert('regime_observations', toInsert);
+    // Conflict-tolerant insert under the vintage law's unique key —
+    // PostgREST ignore-duplicates on (series_id, obs_date, realtime_start).
+    // The value-compare above decides what SHOULD land; this makes a
+    // resume or race unable to throw on rows that already did (Fabio's
+    // July 7 requirement: "safe to re-run" is true by behavior). Never
+    // merge-duplicates: §2.5 forbids updating a vintage row in place.
+    const { data, error } = await supaFetch<RegimeObservationRow[]>('regime_observations', {
+      method: 'POST',
+      body: toInsert,
+      params: { on_conflict: 'series_id,obs_date,realtime_start' },
+      headers: { Prefer: 'return=representation, resolution=ignore-duplicates' },
+    });
     if (error) throw new Error(`${series.series_code}: inserting ${toInsert.length} vintages failed: ${error}`);
-    result.written = toInsert.length;
+    result.written = Array.isArray(data) ? data.length : toInsert.length;
   }
 
   return result;
