@@ -39,6 +39,7 @@ import { startRunHeartbeat, runIsStale, makeCancelChecker } from './monitor.js';
 // v8 A1 Task 6: the regime harness's two scheduled jobs + its stale-run
 // cleanup (Task 7 condition 3) ride this module's existing machinery.
 import { runDailySweep, runExpectationsCheck, cleanupStaleIngestRuns } from './regime/ingest.js';
+import { regimeBootTasks } from './regime/backfill.js';
 import type { FundRow, PipelineRunRow } from './types.js';
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -391,6 +392,13 @@ export function startCronJobs(): void {
   // runs older than 15 minutes and did so silently.)
   failOrphanedRuns().catch(err => {
     console.error('[cron] Orphaned run cleanup error:', err);
+  });
+
+  // v8 A1 Tasks 8+9: regime boot tasks — the as-of self-test (acceptance
+  // item 4), the one-time S4 estimate pass, and the S4-gated backfill.
+  // Fire-and-forget: boot never blocks on FRED.
+  regimeBootTasks().catch(err => {
+    console.error('[cron] Regime boot tasks error:', err);
   });
 }
 
