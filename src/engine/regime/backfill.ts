@@ -51,16 +51,18 @@ import type {
   RegimeNormalizedObservation,
 } from '../types.js';
 import { ingestObservations } from './ingest.js';
-import { fetchCurrent, fetchAsOf, fetchVintageDates } from './sources/alfred.js';
+import { fetchCurrent, fetchAsOf, fetchVintageDates, REGIME_FRED_DELAY_MS } from './sources/alfred.js';
 import { fetchOfrFsi } from './sources/ofr.js';
 import { fetchClevelandNowcast } from './sources/cleveland.js';
 import { runAsOfSelfTest } from './asof.js';
 
 // ─── The S4 gate (regime-module-local constant per A1 §6) ───────────────────
 
-/** FALSE until Robert's S4 go. The go is a one-constant commit he merges —
- *  bulk history lands only after that click (A1 §4, STOP S4). */
-const REGIME_BACKFILL_APPROVED = false;
+/** Robert's S4 go, given July 7, 2026 after reading the production
+ *  estimate email (the read-only counting pass of that morning, 17 series,
+ *  0 rows written). His merge of this commit is the go, recorded in git
+ *  (A1 §4, STOP S4 — discharged). */
+const REGIME_BACKFILL_APPROVED = true;
 
 /** Monthly as-of grid origin for alfred-policy vintage reconstruction */
 const GRID_START_YEAR = 1990;
@@ -182,7 +184,7 @@ export async function runBackfillEstimate(): Promise<void> {
     }
 
     const totalCalls = estimates.reduce((sum, e) => sum + e.apiCalls, 0);
-    const minutes = Math.ceil((totalCalls * 250) / 60000);
+    const minutes = Math.ceil((totalCalls * REGIME_FRED_DELAY_MS) / 60000);
     const tableRows = estimates
       .map(
         e =>
