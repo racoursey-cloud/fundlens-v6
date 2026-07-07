@@ -7,26 +7,37 @@
  * FETCH ADDRESS (operator-verified live, July 6, 2026 — S3 ruling):
  *   https://www.clevelandfed.org/-/media/files/webcharts/inflationnowcasting/nowcast_quarter.json?sc_lang=en
  * with nowcast_month.json and nowcast_year.json at the same path for the
- * other horizons (Stage 3 decisions; A1 ingests the quarter horizon, the
- * one whose data format was verified against a real download).
+ * other horizons (Stage 3 decisions; A1 ingests the quarter horizon).
  *
- * FORMAT: the underlying data was verified July 6, 2026 from an
- * operator-downloaded QuarterlyAnnualizedPercentChange2026q3.csv — one row
- * per business day, columns CPI / Core CPI / PCE / Core PCE (quarterly
- * annualized), each row being THAT DAY'S estimate of the SAME target
- * quarter. The JSON endpoint feeds the same chart; its exact envelope has
- * not yet been seen from the build sandbox (network policy), so the parser
- * below accepts the common chart-feed shapes and FAILS LOUDLY with a
- * payload snippet on anything else — a format surprise becomes a Task 7
- * ingest-failure alert on day one, never a silent wrong number. The proven
- * CSV parser is retained below as the format-verified alternate path.
+ * PAYLOAD SCHEMA (verified live by Fabio, July 6, 2026): a top-level array
+ * of chart blocks — ONE PER QUARTER, 2013:Q3 → present — each shaped
+ *   { chart: { _comment: "YYYY-MM-DD HH:MM" publication stamp,
+ *              subcaption: the quarter },
+ *     categories: [ { category: [ { label: "MM/DD" }, ... ] } ],
+ *     dataset: exactly four series — CPI, Core CPI, PCE, Core PCE
+ *              Inflation — each data[i].value a stringified number
+ *              aligned to the category labels }
+ * The feed therefore carries the FULL as-published daily nowcast archive
+ * back to 2013:Q3 in a single fetch — each block is its own within-quarter
+ * vintage record, and the Task 5 §5 open archive question is RESOLVED:
+ * the archive ships inside the live file.
  *
- * Vintage semantics (either path): obs_date = the target quarter's end
- * date; realtime_start = the day the estimate was published. Each quarter
- * file/feed retro-carries its own daily rows, so the current quarter's
- * as-published history reconstructs honestly on first fetch (Task 5 §5).
+ * A1 ingests the headline CPI and PCE series (the two registry rows);
+ * Core series are one flag-flip away for Stage 3 — registry rows, never
+ * schema (A1 §2).
  *
- * Vintage policy: snapshot_custom (charter §4.2·6).
+ * Vintage semantics: obs_date = the block's quarter-end date;
+ * realtime_start = the daily label's date (year from the block's quarter;
+ * a label whose month exceeds the quarter's end month is December-before-Q1
+ * and belongs to the prior year). Ingest dedupes held vintages (Task 6).
+ *
+ * Vintage policy: snapshot_custom (charter §4.2·6); earliest honestly-
+ * replayable date 2013:Q3 per the live archive.
+ *
+ * Any envelope surprise FAILS LOUDLY with a payload snippet — a format
+ * change becomes a Task 7 ingest-failure alert, never a silent number.
+ * The CSV parser (proven against a real operator download) is retained as
+ * the switchable fallback path.
  */
 
 import type { RegimeNormalizedObservation } from '../../types.js';
@@ -37,14 +48,22 @@ import type { RegimeNormalizedObservation } from '../../types.js';
 const CLEVELAND_NOWCAST_JSON_PATTERN =
   'https://www.clevelandfed.org/-/media/files/webcharts/inflationnowcasting/nowcast_{HORIZON}.json?sc_lang=en';
 
-/** A1 ingests the quarter horizon (format verified against a real file) */
+/** A1 ingests the quarter horizon (data verified against a real download) */
 const CLEVELAND_HORIZON = 'quarter';
 
-/** Registry series_code → data column/series label (verified July 6, 2026) */
+/** Registry series_code → dataset series name (verified July 6, 2026) */
 const CLEVELAND_LABEL_BY_SERIES: Record<string, string> = {
   CLEV_CPI_NOWCAST: 'CPI Inflation',
   CLEV_PCE_NOWCAST: 'PCE Inflation',
 };
+
+/** Dataset order when seriesname is absent (Fabio-verified block layout) */
+const CLEVELAND_DATASET_ORDER = [
+  'CPI Inflation',
+  'Core CPI Inflation',
+  'PCE Inflation',
+  'Core PCE Inflation',
+];
 
 // ─── Quarter helpers ────────────────────────────────────────────────────────
 
@@ -66,134 +85,98 @@ export function quarterEndDate(q: QuarterRef): string {
   return `${q.year}-${String(lastMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 }
 
+/** Parse a block's quarter from chart.subcaption (e.g. "2026:Q3") */
+export function parseQuarterLabel(subcaption: string): QuarterRef | null {
+  const m = subcaption.match(/(\d{4})\s*[:.\s-]?\s*Q([1-4])/i);
+  if (!m) return null;
+  return { year: Number(m[1]), quarter: Number(m[2]) as QuarterRef['quarter'] };
+}
+
 export function clevelandNowcastUrl(horizon: string = CLEVELAND_HORIZON): string {
   return CLEVELAND_NOWCAST_JSON_PATTERN.replace('{HORIZON}', horizon);
 }
 
-// ─── Date coercion ──────────────────────────────────────────────────────────
-
-/** Coerce a chart-feed date (epoch ms, ISO string, or MM/DD label) to ISO.
- *  MM/DD labels take their year from the target quarter. */
-export function coerceVintageDate(raw: unknown, q: QuarterRef): string | null {
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString().slice(0, 10);
-  }
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    const mmdd = trimmed.match(/^(\d{1,2})\/(\d{1,2})$/);
-    if (mmdd) {
-      return `${q.year}-${mmdd[1].padStart(2, '0')}-${mmdd[2].padStart(2, '0')}`;
-    }
-    const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-    const parsed = new Date(trimmed);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
-  }
-  return null;
+/** MM/DD label + its block's quarter → ISO vintage date. A label whose
+ *  month exceeds the quarter's end month is December-before-Q1 territory
+ *  and belongs to the prior year. */
+export function labelToVintageDate(label: string, q: QuarterRef): string | null {
+  const m = label.trim().match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (!m) return null;
+  const month = Number(m[1]);
+  const year = month > q.quarter * 3 ? q.year - 1 : q.year;
+  return `${year}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
 }
 
-// ─── JSON parsing (fails loudly on unrecognized envelopes) ──────────────────
+// ─── JSON parsing (exact schema; fails loudly on surprises) ─────────────────
 
-interface LabeledSeries {
-  label: string;
-  points: Array<{ dateRaw: unknown; value: number }>;
-}
-
-/** Extract labeled point-series from the common chart-feed shapes:
- *  {series:[{name,data:[...]}]}, bare arrays of row objects, or {data:...}
- *  wrappers. Points may be [x,y] pairs or {x/date/label, y/value} objects. */
-function extractLabeledSeries(payload: unknown): LabeledSeries[] {
-  // Unwrap {series: [...]} / {data: [...]} envelopes
-  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    const obj = payload as Record<string, unknown>;
-    if (Array.isArray(obj.series)) return extractLabeledSeries(obj.series);
-    if (Array.isArray(obj.data)) return extractLabeledSeries(obj.data);
-  }
-
-  if (!Array.isArray(payload)) return [];
-
-  // Shape A: array of named series [{name|label, data|points|values: [...]}]
-  const named = payload.filter(
-    (s): s is Record<string, unknown> =>
-      !!s && typeof s === 'object' && !Array.isArray(s) &&
-      typeof ((s as Record<string, unknown>).name ?? (s as Record<string, unknown>).label) === 'string' &&
-      Array.isArray((s as Record<string, unknown>).data ?? (s as Record<string, unknown>).points ?? (s as Record<string, unknown>).values)
-  );
-  if (named.length > 0) {
-    return named.map(s => {
-      const label = String(s.name ?? s.label);
-      const rawPoints = (s.data ?? s.points ?? s.values) as unknown[];
-      const points: LabeledSeries['points'] = [];
-      for (const p of rawPoints) {
-        if (Array.isArray(p) && p.length >= 2) {
-          const v = Number(p[1]);
-          if (Number.isFinite(v)) points.push({ dateRaw: p[0], value: v });
-        } else if (p && typeof p === 'object') {
-          const o = p as Record<string, unknown>;
-          const v = Number(o.y ?? o.value ?? o.val);
-          const dateRaw = o.x ?? o.date ?? o.label ?? o.Label;
-          if (Number.isFinite(v) && dateRaw !== undefined) points.push({ dateRaw, value: v });
-        }
-      }
-      return { label, points };
-    });
-  }
-
-  // Shape B: array of row objects [{Label:'07/01','CPI Inflation':0.83,...}]
-  const rows = payload.filter(
-    (r): r is Record<string, unknown> => !!r && typeof r === 'object' && !Array.isArray(r)
-  );
-  if (rows.length > 0) {
-    const dateKey = ['Label', 'label', 'date', 'Date', 'x'].find(k => k in rows[0]);
-    if (dateKey) {
-      const valueKeys = Object.keys(rows[0]).filter(k => k !== dateKey);
-      return valueKeys.map(label => ({
-        label,
-        points: rows
-          .map(r => ({ dateRaw: r[dateKey], value: Number(r[label]) }))
-          .filter(p => Number.isFinite(p.value)),
-      }));
-    }
-  }
-
-  return [];
+interface ClevelandChartBlock {
+  chart?: { _comment?: string; subcaption?: string; caption?: string };
+  categories?: Array<{ category?: Array<{ label?: string }> }>;
+  dataset?: Array<{ seriesname?: string; data?: Array<{ value?: string | number }> }>;
 }
 
 /**
- * Parse a Cleveland nowcast JSON payload for one registry series. Every
- * daily estimate becomes a vintage of the quarter-end observation.
- * Throws with a payload snippet when the envelope is unrecognized or the
- * expected series label is absent — loud failure, never a silent zero.
+ * Parse the Cleveland nowcast JSON for one registry series: every daily
+ * estimate in every quarter block becomes a vintage of that block's
+ * quarter-end observation. One call returns the full archive (2013:Q3 →
+ * present); ingest dedupes rows already held (A1 Task 6).
  */
 export function parseClevelandNowcastJson(
   payload: unknown,
-  seriesCode: string,
-  q: QuarterRef
+  seriesCode: string
 ): RegimeNormalizedObservation[] {
   const wanted = CLEVELAND_LABEL_BY_SERIES[seriesCode];
   if (!wanted) throw new Error(`Cleveland adapter: unknown series_code ${seriesCode}`);
 
-  const all = extractLabeledSeries(payload);
   const snippet = () => JSON.stringify(payload)?.slice(0, 300);
-  if (all.length === 0) {
-    throw new Error(`Cleveland nowcast JSON: unrecognized envelope — payload starts: ${snippet()}`);
-  }
-
-  const match = all.find(s => s.label.trim().toLowerCase() === wanted.toLowerCase());
-  if (!match) {
+  if (!Array.isArray(payload) || payload.length === 0) {
     throw new Error(
-      `Cleveland nowcast JSON: series "${wanted}" not found among [${all.map(s => s.label).join(', ')}]`
+      `Cleveland nowcast JSON: expected a non-empty array of quarter blocks — payload starts: ${snippet()}`
     );
   }
 
-  const obsDate = quarterEndDate(q);
   const out: RegimeNormalizedObservation[] = [];
-  for (const p of match.points) {
-    const vintage = coerceVintageDate(p.dateRaw, q);
-    if (!vintage) continue;
-    out.push({ obs_date: obsDate, value: p.value, realtime_start: vintage });
+  let parsedBlocks = 0;
+
+  for (const raw of payload) {
+    const block = raw as ClevelandChartBlock;
+    const subcaption = block?.chart?.subcaption ?? '';
+    const q = parseQuarterLabel(subcaption);
+    const labels = block?.categories?.[0]?.category;
+    const dataset = block?.dataset;
+    if (!q || !Array.isArray(labels) || !Array.isArray(dataset)) continue;
+
+    // Locate the wanted series: by seriesname when present, else by the
+    // verified dataset order.
+    let seriesEntry = dataset.find(
+      d =>
+        typeof d?.seriesname === 'string' &&
+        d.seriesname.trim().toLowerCase() === wanted.toLowerCase()
+    );
+    if (!seriesEntry) {
+      const idx = CLEVELAND_DATASET_ORDER.indexOf(wanted);
+      if (idx !== -1 && dataset[idx]?.data) seriesEntry = dataset[idx];
+    }
+    if (!seriesEntry?.data) continue;
+
+    const obsDate = quarterEndDate(q);
+    for (let i = 0; i < seriesEntry.data.length; i++) {
+      const label = labels[i]?.label;
+      const rawVal = seriesEntry.data[i]?.value;
+      if (typeof label !== 'string' || rawVal === undefined || rawVal === null || rawVal === '') continue;
+      const value = Number(rawVal);
+      if (!Number.isFinite(value)) continue;
+      const vintage = labelToVintageDate(label, q);
+      if (!vintage) continue;
+      out.push({ obs_date: obsDate, value, realtime_start: vintage });
+    }
+    parsedBlocks++;
+  }
+
+  if (parsedBlocks === 0) {
+    throw new Error(
+      `Cleveland nowcast JSON: no quarter block matched the verified schema — payload starts: ${snippet()}`
+    );
   }
   if (out.length === 0) {
     throw new Error(`Cleveland nowcast JSON: series "${wanted}" yielded zero parseable points`);
@@ -204,8 +187,8 @@ export function parseClevelandNowcastJson(
 // ─── CSV parsing — the format-verified alternate path ───────────────────────
 // Proven July 6, 2026 against a real QuarterlyAnnualizedPercentChange2026q3.csv
 // (header: Label,CPI Inflation,Core CPI Inflation,PCE Inflation,Core PCE
-// Inflation; rows MM/DD). Kept as the switchable fallback if the JSON
-// envelope proves unusable at first sweep.
+// Inflation; rows MM/DD). Kept as the switchable fallback if the JSON feed
+// ever changes shape.
 
 export function parseClevelandQuarterlyCsv(
   csv: string,
@@ -232,7 +215,7 @@ export function parseClevelandQuarterlyCsv(
   const out: RegimeNormalizedObservation[] = [];
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(',');
-    const vintage = coerceVintageDate(cols[0]?.trim(), q);
+    const vintage = labelToVintageDate(cols[0]?.trim() ?? '', q);
     const raw = cols[valueIdx]?.trim();
     if (!vintage || !raw) continue;
     const value = Number(raw);
@@ -245,19 +228,18 @@ export function parseClevelandQuarterlyCsv(
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Fetch the current quarter's nowcast feed and return every daily vintage
- * it carries for one registry series (ingest dedupes held rows — Task 6).
+ * Fetch the nowcast feed and return every daily vintage it carries for one
+ * registry series — the full 2013:Q3 → present archive in one call
+ * (ingest dedupes rows already held — A1 Task 6).
  */
 export async function fetchClevelandNowcast(
-  seriesCode: string,
-  onDate: string
+  seriesCode: string
 ): Promise<RegimeNormalizedObservation[]> {
-  const q = quarterOf(onDate);
   const url = clevelandNowcastUrl();
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Cleveland nowcast fetch returned ${res.status} from ${url}`);
   }
   const payload = await res.json();
-  return parseClevelandNowcastJson(payload, seriesCode, q);
+  return parseClevelandNowcastJson(payload, seriesCode);
 }
