@@ -274,18 +274,78 @@ export async function runBackfillExecute(): Promise<void> {
       console.log(`[regime] Backfill ${s.series_code}: ${res.written} rows`);
     }
 
+    // Discovered July 7, 2026, by the first execute's honest failure: a
+    // series can be labeled alfred-policy in the registry yet be ABSENT
+    // from ALFRED entirely — FRED 400s any realtime request for it ("The
+    // series does not exist in ALFRED"). CFNAI is the proven case. So the
+    // walk now discovers each series' true archive first (vintagedates),
+    // clamps the grid to it, and falls back to snapshot semantics when no
+    // archive exists — reported as a policy finding, never papered over.
+    const policyFindings: string[] = [];
+
     for (const s of gridWalks) {
       attempted++;
       let seriesRows = 0;
-      for (const gridDate of grid) {
+
+      let vintageDates: string[] = [];
+      try {
+        vintageDates = await fetchVintageDates(s.series_code);
+      } catch {
+        vintageDates = [];
+      }
+
+      if (vintageDates.length === 0) {
+        // No ALFRED archive: store current history as a dated snapshot —
+        // as-published replay for this series begins today, and the
+        // registry's 'alfred' label needs Robert's correction.
+        const obs = (await fetchCurrent(s.series_code)).map(o => ({
+          ...o,
+          realtime_start: todayIso,
+          realtime_end: null,
+        }));
+        const res = await ingestObservations(s, obs, run.id);
+        written += res.written;
+        policyFindings.push(
+          `${s.series_code}: NOT in ALFRED — ${res.written} rows stored as a today-dated snapshot; ` +
+            `as-published replay begins ${todayIso}; registry vintage_policy should become snapshot_custom (Robert's cell edit)`
+        );
+        console.log(`[regime] Backfill ${s.series_code}: no ALFRED archive — snapshot fallback, ${res.written} rows`);
+        continue;
+      }
+
+      const firstVintage = vintageDates[0];
+      const effectiveGrid = grid.filter(d => d >= firstVintage);
+      for (const gridDate of effectiveGrid) {
         const obsStart = isoDaysBefore(gridDate, GRID_OBS_WINDOW_DAYS[s.cadence] ?? 120);
         const obs = await fetchAsOf(s.series_code, gridDate, obsStart);
-        if (obs.length === 0) continue; // grid date predates the series
+        if (obs.length === 0) continue;
         const res = await ingestObservations(s, obs, run.id);
         seriesRows += res.written;
       }
+
+      // Completeness pass: one current fetch fills (a) observations from
+      // before the archive's first vintage (stored as today-dated snapshot
+      // rows — honest: known-as-of-today; invisible to past as-of reads)
+      // and (b) revisions since the last month-end. Dedupe discards the rest.
+      const current = (await fetchCurrent(s.series_code)).map(o => ({
+        ...o,
+        realtime_start: todayIso,
+        realtime_end: null,
+      }));
+      const fillRes = await ingestObservations(s, current, run.id);
+      seriesRows += fillRes.written;
+
+      if (firstVintage > grid[0]) {
+        policyFindings.push(
+          `${s.series_code}: ALFRED archive begins ${firstVintage} — as-published replay starts there; ` +
+            `earlier observations stored as today-dated snapshot rows only`
+        );
+      }
+
       written += seriesRows;
-      console.log(`[regime] Backfill ${s.series_code}: grid walk complete, ${seriesRows} vintage rows`);
+      console.log(
+        `[regime] Backfill ${s.series_code}: walked ${effectiveGrid.length} grid dates from ${firstVintage}, ${seriesRows} vintage rows`
+      );
     }
 
     await supaUpdate(
@@ -299,11 +359,19 @@ export async function runBackfillExecute(): Promise<void> {
       { id: `eq.${run.id}` }
     );
 
+    const findingsHtml =
+      policyFindings.length > 0
+        ? `<p><strong>Archive findings (for the Task 11 record and the race's honesty notes):</strong></p><ul>` +
+          policyFindings.map(f => `<li>${f}</li>`).join('') +
+          `</ul>`
+        : '';
+
     await sendAdminAlert(
       'Regime harness: historical backfill complete',
       `<p>The S4-approved backfill finished: <strong>${written}</strong> vintage rows across ` +
         `${attempted} series, loaded sequentially and paced. The as-of replay door can now serve ` +
-        `the race's history questions from our own vintage memory.</p>`
+        `the race's history questions from our own vintage memory.</p>` +
+        findingsHtml
     );
     console.log(`[regime] Backfill execute complete: ${written} rows across ${attempted} series`);
   } catch (err) {
