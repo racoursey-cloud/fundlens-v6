@@ -8,6 +8,8 @@
 
 **Hard rules, no exceptions:** Never rename, correct, or touch environment variable names. Never modify Claude API call patterns — all Claude calls in engine code are sequential with delays, never parallel. Never change model constants, delays, or anything in `constants.ts` unless the assignment explicitly says so.
 
+**Database law (ratified July 6, 2026, A1):** No AI ever runs DDL against production — no CREATE, ALTER, DROP, or trigger change, by any assistant, under any circumstances. Robert applies migration SQL himself in the Supabase dashboard, or first types explicit approval naming the specific migration before it runs. Read-only queries for verification remain permitted. A schema change applied any other way is a violation regardless of outcome.
+
 **When uncertain, stop and ask.** A question costs a minute; a wrong assumption costs a session. Robert would always rather answer a question than review a surprise.
 
 **Reporting:** End every session with a plain-English summary: what was done, what was verified, what needs Robert's decision. Write it like a briefing to a smart boss who doesn't code — short, concrete, no jargon.
