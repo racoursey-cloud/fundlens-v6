@@ -59,14 +59,17 @@ const RUN_SILENCE_STALE_MS = 10 * 60 * 1000;
 const RUN_HARD_CEILING_MS = 6 * 60 * 60 * 1000;
 
 /**
- * Start stamping heartbeat_at on a pipeline run's row every ~60s.
+ * Start stamping heartbeat_at on a run's row every ~60s.
  * Returns the stop function — call it in a finally block when the run ends.
- * Write failures are logged but never interrupt the pipeline; the liveness
+ * Write failures are logged but never interrupt the run; the liveness
  * check's started_at fallback covers a run whose stamps never land.
+ * v8 A1 Task 7: `table` widens the A0 machinery to regime_ingest_runs —
+ * same stamps, same rule, second table. Defaults keep every A0 caller
+ * compiling and behaving unchanged.
  */
-export function startRunHeartbeat(runId: string): () => void {
+export function startRunHeartbeat(runId: string, table: string = 'pipeline_runs'): () => void {
   const beat = () => {
-    supaUpdate('pipeline_runs', { heartbeat_at: new Date().toISOString() }, { id: `eq.${runId}` })
+    supaUpdate(table, { heartbeat_at: new Date().toISOString() }, { id: `eq.${runId}` })
       .then(r => {
         if (r.error) console.warn(`[monitor] Heartbeat write failed for run ${runId}: ${r.error}`);
       })
@@ -81,13 +84,25 @@ export function startRunHeartbeat(runId: string): () => void {
 }
 
 /**
- * THE shared liveness rule (imported by cron.ts and routes.ts — never
- * duplicated): a 'running' row is stale when its last sign of life
- * (heartbeat_at; started_at for pre-migration rows or if stamps never
- * landed) is older than 10 minutes, or total runtime exceeds the 6-hour
- * hard ceiling.
+ * v8 A1 Task 7: the minimal shape the liveness rule actually reads —
+ * satisfied by PipelineRunRow AND RegimeIngestRunRow, so the ONE rule
+ * (A0's explicit design) judges both tables with zero forks. Defined here
+ * rather than types.ts per the documented monitor.ts co-location exception.
  */
-export function runIsStale(run: PipelineRunRow, nowMs: number = Date.now()): boolean {
+export interface LivenessRow {
+  status: string;
+  started_at: string;
+  heartbeat_at?: string | null;
+}
+
+/**
+ * THE shared liveness rule (imported by cron.ts and routes.ts — never
+ * duplicated; v8 A1 widens it non-breakingly to regime ingest runs): a
+ * 'running' row is stale when its last sign of life (heartbeat_at;
+ * started_at for pre-migration rows or if stamps never landed) is older
+ * than 10 minutes, or total runtime exceeds the 6-hour hard ceiling.
+ */
+export function runIsStale(run: LivenessRow, nowMs: number = Date.now()): boolean {
   if (run.status !== 'running') return false;
   const startedMs = new Date(run.started_at).getTime();
   if (nowMs - startedMs > RUN_HARD_CEILING_MS) return true;

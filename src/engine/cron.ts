@@ -36,6 +36,9 @@ import {
 // UI Honesty item 3: makeCancelChecker joins them — the nightly is
 // cancellable from the Pipeline tab like any other run.
 import { startRunHeartbeat, runIsStale, makeCancelChecker } from './monitor.js';
+// v8 A1 Task 6: the regime harness's two scheduled jobs + its stale-run
+// cleanup (Task 7 condition 3) ride this module's existing machinery.
+import { runDailySweep, runExpectationsCheck, cleanupStaleIngestRuns } from './regime/ingest.js';
 import type { FundRow, PipelineRunRow } from './types.js';
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -246,6 +249,11 @@ async function cleanupStaleRuns(): Promise<void> {
 
     alertStaleRun(stale.id, stale.started_at).catch(() => {});
   }
+
+  // v8 A1 Task 7 condition 3: the SAME 30-minute schedule and the SAME
+  // shared liveness rule also judge regime ingest runs — one definition
+  // of "stale", now three importers, zero forks.
+  await cleanupStaleIngestRuns(runIsStale);
 }
 
 // ─── Orphaned Run Detection (A3 Task 6b, Principle 1) ──────────────────────
@@ -346,6 +354,36 @@ export function startCronJobs(): void {
   });
 
   console.log('[cron] Stale run cleanup scheduled: every 30 minutes');
+
+  // ── v8 A1 Task 6: regime harness jobs — scheduled in America/New_York
+  // because every publication clock in Record 01 §6 is Eastern (NFCI Wed
+  // 8:30 ET, Cleveland ~10:00 ET, H.15 ~16:15 ET). Stored timestamps stay
+  // UTC. Exactly two jobs; per-series expectations do the calendar work.
+
+  // Daily sweep: 17:30 ET — after the day's publications have landed
+  cron.schedule('30 17 * * *', () => {
+    runDailySweep().catch(err => {
+      console.error('[cron] Unhandled error in regime sweep job:', err);
+    });
+  }, {
+    scheduled: true,
+    timezone: 'America/New_York',
+  });
+
+  console.log('[cron] Regime data sweep scheduled: daily at 17:30 ET');
+
+  // Expectations check: 09:00 ET — did everything arrive when its cadence
+  // said it should? (The Oct 2025 CPI blackout is the motivating case.)
+  cron.schedule('0 9 * * *', () => {
+    runExpectationsCheck().catch(err => {
+      console.error('[cron] Unhandled error in regime expectations job:', err);
+    });
+  }, {
+    scheduled: true,
+    timezone: 'America/New_York',
+  });
+
+  console.log('[cron] Regime expectations check scheduled: daily at 09:00 ET');
 
   // A3 Task 6b: at startup, fail ANY run still marked 'running' — a run
   // cannot survive a server restart, so it is dead regardless of age.

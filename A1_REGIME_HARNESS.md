@@ -79,7 +79,7 @@ Migration `v8_a1_regime_ingest_runs.sql`: create `regime_ingest_runs` mirroring 
 
 ### Task 3 — Regime-of-record migration *(charter §2.5, §4.2·4)*
 Migration `v8_a1_regime_classifications.sql`: create `regime_classifications` — `id`, `classification_date`, `regime_label` (text — taxonomy is Stage 2's; no enum yet), `basis` (`record` | `replay` | `revised_study`), `engine` (text — contender/winner name), `rules_version` (text — spec version or hash), `inputs` (jsonb — the as-published values used), `computed_at`. Unique on (`classification_date`, `basis`, `engine`, `rules_version`). The table stays empty until the race writes `replay` rows and a shipped winner writes `record` rows — §2.5 law gets its home before anyone needs it. Immutability of `record` rows is enforced per ⚖ D2.
-**STOP S2 — present all three migration files' SQL in plain English to Robert. Robert applies them in the Supabase dashboard. No code PR merges until he confirms applied (charter §3 migrations-before-merges; A0 precedent).**
+**STOP S2 — present all four migration files' SQL in plain English to Robert. Robert applies them in the Supabase dashboard. No code PR merges until he confirms applied (charter §3 migrations-before-merges; A0 precedent).** *(Corrected July 6 per Fabio's whenever-item: Tasks 1–3 produce four migration files, not three.)*
 
 ### Task 4 — Fetch adapters *(charter §4.2·5, §4.2·6, §5)*
 `src/engine/regime/sources/` — one adapter per source, each returning normalized observations `{obs_date, value, realtime_start}`:
