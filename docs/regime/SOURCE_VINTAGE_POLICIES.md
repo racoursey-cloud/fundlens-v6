@@ -47,9 +47,9 @@
 **Series:** CLEV_CPI_NOWCAST, CLEV_PCE_NOWCAST (headline columns; Core columns are Stage 3 flag-flips)
 
 - **Format, verified July 6, 2026** from an operator-downloaded `QuarterlyAnnualizedPercentChange2026q3.csv`: one file per target quarter; one row per business day (Label = MM/DD); columns CPI / Core CPI / PCE / Core PCE, quarterly annualized percent change. Parser proven against the real file (4 daily vintages extracted for each series, mapped to the 2026-09-30 quarter-end observation).
-- **Revision behavior — the good news:** the file is **its own within-quarter vintage record.** Each row is the nowcast *as published on that day*, and the rows stay in the file — so the current quarter's daily as-published history reconstructs honestly from a single fetch, even for days before our first sweep.
-- **Open verification item (S4):** whether past-quarter files stay downloadable at the same address pattern. If yes, as-published nowcast history extends back as far as the archive reaches; if no, replay begins with the current quarter at first sweep. Either answer is honest; the backfill estimate will state which we got.
-- **Earliest honestly-replayable date:** at worst, the first day of the quarter in which the first sweep runs (2026-07-01 if A1 deploys this quarter); at best, the start of the publisher's per-quarter archive — resolved at S4.
+- **Revision behavior — the good news, upgraded July 6 (Fabio's live pull of the JSON feed):** the feed is a top-level array of quarter blocks, **one per quarter from 2013:Q3 to the present**, each carrying its own day-by-day nowcast rows and a publication stamp. The feed is therefore its own as-published archive — every daily estimate back to 2013:Q3 reconstructs honestly from a single fetch, including days long before our first sweep.
+- **Former S4 verification item — RESOLVED:** past quarters need no separate files; the archive ships inside the live feed. Today's block (07/01–07/06) was confirmed against the operator-downloaded CSV of the same data.
+- **Earliest honestly-replayable date:** **2013:Q3** (the first block in the live feed).
 
 ## 6. Cboe VIX history file, policy `never_revised` (backstop duty only)
 
