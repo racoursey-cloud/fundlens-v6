@@ -509,6 +509,70 @@ export interface NmfpFundData {
   filingDate: string;
 }
 
+// ─── Regime Harness Types (v8 A1) ───────────────────────────────────────────
+
+/** Row in the `regime_series` registry table (A1 Task 1) */
+export interface RegimeSeriesRow {
+  id: string;
+  source: 'fred' | 'ofr' | 'cleveland' | 'cboe';
+  series_code: string;
+  display_name: string;
+  axis: 'growth' | 'inflation' | 'stress' | 'rates';
+  tier: 'load_bearing' | 'timeliness' | 'confirmation' | 'insurance';
+  cadence: 'daily' | 'weekly' | 'monthly' | 'irregular';
+  /** How this series' history replays honestly (charter §4.2·6) */
+  vintage_policy: 'alfred' | 'never_revised' | 'alfred_windowed' | 'snapshot_custom';
+  /** Named fallback channel on record — not a built adapter (A1 ruling D1) */
+  fallback_channel: string | null;
+  enabled: boolean;
+  notes: string | null;
+  created_at: string;
+}
+
+/** Row in the `regime_observations` vintage-memory table (A1 Task 2).
+ *  ALFRED shape: obs_date = the period described; realtime_start = the
+ *  publication/vintage date. Revisions are new rows, never overwrites. */
+export interface RegimeObservationRow {
+  id: string;
+  series_id: string;
+  obs_date: string;
+  value: number;
+  realtime_start: string;
+  /** ALFRED semantics: null = still the current vintage */
+  realtime_end: string | null;
+  fetched_at: string;
+  ingest_run_id: string | null;
+}
+
+/** Row in the `regime_ingest_runs` table — the A0 liveness shape, same
+ *  vocabulary as pipeline_runs (completed_at), read by the shared
+ *  runIsStale rule (A1 Task 2, Task 7) */
+export interface RegimeIngestRunRow {
+  id: string;
+  kind: 'sweep' | 'expectations_check' | 'backfill' | 'manual';
+  started_at: string;
+  heartbeat_at: string | null;
+  completed_at: string | null;
+  status: 'running' | 'completed' | 'failed';
+  series_attempted: number;
+  rows_written: number;
+  error: string | null;
+}
+
+/** A normalized observation as returned by every regime source adapter
+ *  (A1 Task 4): {obs_date, value, realtime_start}, ISO dates throughout */
+export interface RegimeNormalizedObservation {
+  /** The period the value describes */
+  obs_date: string;
+  value: number;
+  /** The date this value was published / first observable. For FRED vintage
+   *  windows this may be clamped to the window start — ingest dedupes by
+   *  value comparison, never by blind insert (A1 Task 6) */
+  realtime_start: string;
+  /** ALFRED semantics: absent/null = still current */
+  realtime_end?: string | null;
+}
+
 // ─── Utility Types ──────────────────────────────────────────────────────────
 
 /** Standard result wrapper for pipeline operations */
