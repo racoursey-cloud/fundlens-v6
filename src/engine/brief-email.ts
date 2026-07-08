@@ -214,7 +214,7 @@ export async function sendBriefEmail(
     const resend = new Resend(resendKey);
 
     const result = await resend.emails.send({
-      from: 'FundLens <brief@fundlens.app>',
+      from: 'FundLens <brief@updates.fundlens.app>',
       to: [toEmail],
       subject: title,
       html: emailHtml,
