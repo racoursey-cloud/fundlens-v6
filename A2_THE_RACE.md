@@ -31,7 +31,7 @@ Four ways of reading the economic weather audition against decades of history, e
 | T10YIE / T5YIFR | inflation | never_revised | 2003-01-02 |
 | CFNAI | growth | alfred | 2011-05-31 * |
 | NFCI | stress | alfred | 2011-05-31 |
-| CLEV_CPI / CLEV_PCE nowcasts | inflation | snapshot_custom | 2012-10-01 (the feed is its own archive) |
+| CLEV_CPI / CLEV_PCE nowcasts | inflation | snapshot_custom | 2013-08-20 (the feed is its own archive) *(corrected July 10, 2026: the 2012-10-01 first printed here was the F2 parser year-shift, not a vintage — repaired under the named authorizations and re-verified in production July 10; the policies doc's 2013:Q3 claim stands vindicated)* |
 | GDPNOW | growth | alfred | 2016-05-31 |
 | SAHMREALTIME | growth | alfred | 2019-09-30 |
 | WEI | growth | alfred | 2020-04-30 |
@@ -59,7 +59,7 @@ Four pieces, in strict order — law before specs, specs before code, code befor
 ## §3 — Tasks
 
 ### Task 0 — Clyde's Evidence Gate *(charter §3 operating law; CLAUDE.md)*
-Read in full before anything else: `FUNDLENS_V8_CHARTER.md`, this assignment, `docs/sessions/v8-regime-session-01.md` (especially §3–§5: the framework survey, Contender A's Stage 1 shape, and the honesty flags), `docs/regime/SOURCE_VINTAGE_POLICIES.md` (including the ERRATA and §4's OFR finding), `CLAUDE.md`, `src/engine/regime/asof.ts`, `src/engine/regime/ingest.ts`, `src/engine/types.ts`, and the three regime migrations for schema truth. State findings: the stage vocabulary in your own words, the asOf refusal-and-empty semantics, and any conflict between this assignment and main. **STOP S1 — wait for Robert.**
+Read in full before anything else: `FUNDLENS_V8_CHARTER.md`, this assignment, `docs/sessions/v8-regime-session-01.md` (especially §3–§5: the framework survey, Contender A's Stage 1 shape, and the honesty flags), `docs/regime/SOURCE_VINTAGE_POLICIES.md` (including the ERRATA and §4's OFR finding), `CLAUDE.md`, `src/engine/regime/asof.ts`, `src/engine/regime/ingest.ts`, `src/engine/types.ts`, and the four regime migrations for schema truth. *(Corrected July 10, 2026 at S1 — finding F1, Fabio's drafting error, caught by Clyde: A1 shipped four migration files, `regime_ingest_runs` included; "three" understated the read list.)* State findings: the stage vocabulary in your own words, the asOf refusal-and-empty semantics, and any conflict between this assignment and main. **STOP S1 — wait for Robert.**
 
 ### Task 1 — RACE_RULES.md *(charter §2.3 race law; §2.5; §7)*
 One plain-English law file the whole race obeys. It must pin down, each in its own section:
