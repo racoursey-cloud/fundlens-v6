@@ -140,7 +140,19 @@ export async function fetchVintageWindow(
     'series/observations',
     params
   );
-  return normalize(json.observations ?? []);
+  // A2 F6 fix: FRED clamps a still-current vintage's realtime_end to the
+  // requested window END, exactly as it clamps realtime_start to the window
+  // start (file-header note). An end at or beyond the window boundary is a
+  // clamp artifact — supersession unknown — never a real vintage close.
+  // Emit null and let ingest's chain logic close the row when a successor
+  // arrives. A real supersession ON the boundary date loses nothing: its
+  // successor row is in the same window and the chain close restores the
+  // same end date.
+  return normalize(json.observations ?? []).map(r =>
+    r.realtime_end != null && r.realtime_end >= realtimeEnd
+      ? { ...r, realtime_end: null }
+      : r
+  );
 }
 
 /**
