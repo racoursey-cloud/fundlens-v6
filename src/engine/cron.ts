@@ -40,6 +40,9 @@ import { startRunHeartbeat, runIsStale, makeCancelChecker } from './monitor.js';
 // cleanup (Task 7 condition 3) ride this module's existing machinery.
 import { runDailySweep, runExpectationsCheck, cleanupStaleIngestRuns } from './regime/ingest.js';
 import { regimeBootTasks } from './regime/backfill.js';
+// v8 A2 Task 5: the race rail's one-time adoption ingest (S4-ratified;
+// reconciliation-gated; frozen at adoption — skips itself once loaded).
+import { runRailIngestIfNeeded } from './regime/sources/french.js';
 import type { FundRow, PipelineRunRow } from './types.js';
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -397,9 +400,17 @@ export function startCronJobs(): void {
   // v8 A1 Tasks 8+9: regime boot tasks — the as-of self-test (acceptance
   // item 4), the one-time S4 estimate pass, and the S4-gated backfill.
   // Fire-and-forget: boot never blocks on FRED.
-  regimeBootTasks().catch(err => {
-    console.error('[cron] Regime boot tasks error:', err);
-  });
+  // v8 A2 Task 5 rides sequentially behind the A1 boot tasks (house
+  // pattern: never parallel): the rail adoption runs once, ever, and only
+  // after Robert's migration has registered RACE_EQ_TR.
+  regimeBootTasks()
+    .catch(err => {
+      console.error('[cron] Regime boot tasks error:', err);
+    })
+    .then(() => runRailIngestIfNeeded())
+    .catch(err => {
+      console.error('[cron] Race rail adoption error:', err);
+    });
 }
 
 /**
