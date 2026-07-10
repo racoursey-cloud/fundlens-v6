@@ -219,7 +219,13 @@ export async function ingestObservations(
   );
 
   const toInsert: Array<Record<string, unknown>> = [];
-  const toClose: Array<{ id: string; realtimeEnd: string }> = [];
+  const toClose: Array<{ id: string; realtimeEnd: string; predecessorStart: string }> = [];
+  // A2 F4 guard: in-batch predecessors are pending inserts — a close must
+  // actually SET their realtime_end (the old path silently no-opped them,
+  // leaving every same-batch predecessor open forever).
+  const pendingByObsDate = new Map<string, Record<string, unknown>>();
+  let outOfOrderSkips = 0;
+  let clampedEndsNullified = 0;
 
   for (const obs of ordered) {
     const key = `${obs.obs_date}|${obs.realtime_start}`;
@@ -229,8 +235,27 @@ export async function ingestObservations(
     if (open && Number(open.value) === obs.value) continue; // no new information
 
     if (open) {
-      // A genuine revision: close the held vintage at the new vintage date
-      toClose.push({ id: open.id, realtimeEnd: obs.realtime_start });
+      // A2 F4 guard: a close only ever points FORWARD — the predecessor's
+      // realtime_end is the successor's LATER realtime_start. An arrival
+      // at or before the open vintage's start is out-of-order (a window-
+      // clamp artifact or a resume replay); closing on it would write the
+      // end <= start row class asOf can never see. Skip it loudly.
+      if (obs.realtime_start <= open.realtime_start) {
+        outOfOrderSkips++;
+        continue;
+      }
+      if (open.id) {
+        // A genuine revision: close the held vintage at the new vintage date
+        toClose.push({
+          id: open.id,
+          realtimeEnd: obs.realtime_start,
+          predecessorStart: open.realtime_start,
+        });
+      } else {
+        // In-batch predecessor: set the pending insert's realtime_end now
+        const pending = pendingByObsDate.get(obs.obs_date);
+        if (pending) pending.realtime_end = obs.realtime_start;
+      }
       if (series.vintage_policy === 'never_revised') {
         result.neverRevisedViolations.push({
           obsDate: obs.obs_date,
@@ -240,16 +265,27 @@ export async function ingestObservations(
       }
     }
 
+    // A2 F4 write-time invariant: never persist realtime_end <= realtime_start.
+    // FRED clamps a vintage window's realtime_end exactly as it clamps
+    // realtime_start; storing the clamp verbatim made backfill rows
+    // zero-length — invisible to every asOf date. A clamped end is an
+    // artifact, not a vintage lifetime: store the row open and let the
+    // chain's next vintage close it.
+    const sourceEnd = obs.realtime_end ?? null;
+    const safeEnd = sourceEnd !== null && sourceEnd <= obs.realtime_start ? null : sourceEnd;
+    if (sourceEnd !== null && safeEnd === null) clampedEndsNullified++;
+
     const newRow = {
       series_id: series.id,
       obs_date: obs.obs_date,
       value: obs.value,
       realtime_start: obs.realtime_start,
-      realtime_end: obs.realtime_end ?? null,
+      realtime_end: safeEnd,
       ingest_run_id: ingestRunId,
     };
     toInsert.push(newRow);
     existingKeys.add(key);
+    pendingByObsDate.set(obs.obs_date, newRow);
     // The just-inserted row becomes the open vintage for later revisions
     openByObsDate.set(obs.obs_date, {
       id: '',
@@ -257,14 +293,32 @@ export async function ingestObservations(
       obs_date: obs.obs_date,
       value: obs.value,
       realtime_start: obs.realtime_start,
-      realtime_end: obs.realtime_end ?? null,
+      realtime_end: safeEnd,
       fetched_at: '',
       ingest_run_id: ingestRunId,
     });
   }
 
+  if (outOfOrderSkips > 0 || clampedEndsNullified > 0) {
+    console.warn(
+      `[regime] ${series.series_code}: F4 guard — skipped ${outOfOrderSkips} out-of-order ` +
+        `arrival${outOfOrderSkips === 1 ? '' : 's'}, nullified ${clampedEndsNullified} clamped ` +
+        `realtime_end value${clampedEndsNullified === 1 ? '' : 's'} (stored open for the chain to close)`
+    );
+  }
+
   for (const close of toClose) {
-    if (!close.id) continue; // in-batch predecessor: realtime_end was set at insert
+    // A2 F4 write-time invariant, enforced at the write itself: refuse any
+    // close that would persist realtime_end <= realtime_start. The forward
+    // guard above makes this unreachable; if it ever fires, the loud
+    // refusal is the correct failure mode — never a backwards chain.
+    if (close.realtimeEnd <= close.predecessorStart) {
+      console.warn(
+        `[regime] ${series.series_code}: F4 invariant refused a backwards close ` +
+          `(end ${close.realtimeEnd} <= start ${close.predecessorStart}) — row left open`
+      );
+      continue;
+    }
     const { error } = await supaUpdate(
       'regime_observations',
       { realtime_end: close.realtimeEnd },
