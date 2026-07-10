@@ -8,7 +8,7 @@
 
 **Hard rules, no exceptions:** Never rename, correct, or touch environment variable names. Never modify Claude API call patterns — all Claude calls in engine code are sequential with delays, never parallel. Never change model constants, delays, or anything in `constants.ts` unless the assignment explicitly says so.
 
-**Database law (ratified July 6, 2026, A1):** No AI ever runs DDL against production — no CREATE, ALTER, DROP, or trigger change, by any assistant, under any circumstances. Robert applies migration SQL himself in the Supabase dashboard, or first types explicit approval naming the specific migration before it runs. Read-only queries for verification remain permitted. A schema change applied any other way is a violation regardless of outcome.
+**Database law (ratified July 6, 2026, A1 S2 ruling; amended to the full ruling July 10, 2026 by Robert):** No AI session — chat (Fabio) or Code (Clyde) — ever executes DDL against the production database on its own judgment: no CREATE, ALTER, DROP, or trigger change, by any assistant, under any circumstances. Migration SQL is presented in-session as the exact file text, one migration at a time, and Robert either runs it himself in the Supabase SQL Editor or types explicit approval naming that migration (e.g., 'apply v8_a1_regime_series') before it is applied for him. The committed .sql file must byte-match what ran. Read-only queries for verification remain permitted. A schema change applied any other way is a violation regardless of outcome. Uncertain approval is no approval.
 
 **When uncertain, stop and ask.** A question costs a minute; a wrong assumption costs a session. Robert would always rather answer a question than review a surprise.
 
