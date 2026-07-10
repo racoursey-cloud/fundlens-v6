@@ -1,14 +1,15 @@
 /**
  * FundLens v6 — Shared SVG Donut Chart Component
  *
- * Ported from v5.1's PortfolioTab.jsx and FundDetailSidebar.jsx donut math.
+ * Ported from v5.1's PortfolioTab.jsx donut math.
  * Supports:
  *   - Hover tooltips (name + percentage in center)
- *   - Click drill-in (sector → holdings breakdown, fund → open detail)
+ *   - Click drill-in (per-slice item list, note line, and empty state)
  *   - Full 360° edge case (two semicircular arcs to avoid SVG bug)
- *   - Configurable inner radius, size, and gap between slices
+ *   - Configurable inner radius and size
  *
- * Used by: Portfolio.tsx (dual donuts), FundDetail.tsx (mini sector donut)
+ * Used by: Research.tsx (dual donuts with drill-in + BarBreakdown),
+ * FundLens.tsx and YourBrief.tsx (allocation donuts, no drill).
  *
  * Session 11 deliverable. Destination: client/src/components/DonutChart.tsx
  * References: Spec §6.7 (SVG-only charts, no canvas, no third-party libraries)
@@ -410,97 +411,3 @@ export function BarBreakdown({ items, onItemClick }: {
   );
 }
 
-// ─── Mini Donut (for sidebar) ───────────────────────────────────────────────
-
-interface MiniDonutProps {
-  sectors: Array<{ sector: string; weight: number; color: string }>;
-  size?: number;
-  activeSector?: string | null;
-  onSectorClick?: (sector: string) => void;
-}
-
-export function MiniDonut({ sectors, size = 220, activeSector, onSectorClick }: MiniDonutProps) {
-  const cx = size / 2;
-  const cy = size / 2;
-  const outerR = size * 0.38;
-  const innerR = size * 0.26;
-  const totalWeight = sectors.reduce((s, sec) => s + sec.weight, 0);
-
-  if (sectors.length === 0 || totalWeight === 0) return null;
-
-  // Build slices using polar math (v5.1 FundDetailSidebar pattern)
-  let cursor = 0;
-  const slices = sectors.map(sec => {
-    const pct = sec.weight / totalWeight;
-    const span = pct * 360;
-    const startDeg = cursor;
-    const endDeg = cursor + span;
-
-    // Slice path with gap
-    const gapDeg = span > 2 ? 0.4 : 0;
-    const s = startDeg + gapDeg;
-    const e = endDeg - gapDeg;
-
-    let path = '';
-    if (e > s) {
-      const large = (e - s) > 180 ? 1 : 0;
-      const toRad = (deg: number) => ((deg - 90) * Math.PI) / 180;
-      const polar = (r: number, deg: number) => ({
-        x: cx + r * Math.cos(toRad(deg)),
-        y: cy + r * Math.sin(toRad(deg)),
-      });
-
-      const o1 = polar(outerR, s);
-      const o2 = polar(outerR, e);
-      const i1 = polar(innerR, e);
-      const i2 = polar(innerR, s);
-
-      const f = (n: number) => n.toFixed(3);
-      path = [
-        `M ${f(o1.x)} ${f(o1.y)}`,
-        `A ${outerR} ${outerR} 0 ${large} 1 ${f(o2.x)} ${f(o2.y)}`,
-        `L ${f(i1.x)} ${f(i1.y)}`,
-        `A ${innerR} ${innerR} 0 ${large} 0 ${f(i2.x)} ${f(i2.y)}`,
-        'Z',
-      ].join(' ');
-    }
-
-    cursor += span;
-    return { ...sec, pct, path, midDeg: startDeg + span / 2 };
-  });
-
-  return (
-    <div>
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        style={{ display: 'block', margin: '0 auto' }}
-      >
-        {slices.map(slice => (
-          <path
-            key={slice.sector}
-            d={slice.path}
-            fill={slice.color}
-            opacity={activeSector && activeSector !== slice.sector ? 0.25 : 1}
-            style={{ cursor: onSectorClick ? 'pointer' : 'default', transition: 'opacity 150ms' }}
-            onClick={() => onSectorClick?.(slice.sector)}
-          />
-        ))}
-        {/* Centre label */}
-        <text
-          x={cx} y={cy - 6} textAnchor="middle"
-          style={{ fill: theme.colors.textDim, fontSize: 10, fontFamily: theme.fonts.body }}
-        >
-          Sector
-        </text>
-        <text
-          x={cx} y={cy + 12} textAnchor="middle"
-          style={{ fill: theme.colors.text, fontSize: 12, fontFamily: theme.fonts.body, fontWeight: 600 }}
-        >
-          Exposure
-        </text>
-      </svg>
-    </div>
-  );
-}
