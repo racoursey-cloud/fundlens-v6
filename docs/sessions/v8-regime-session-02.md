@@ -18,7 +18,7 @@ Session Record 01 (July 6) surveyed frameworks and re-surveyed data sources; Rob
 
 ## 2. What was built — the PR ledger
 
-All A1 code reached `main` through eight pull requests. One file per commit throughout; the four schema migrations were applied by Robert in the Supabase dashboard per the database law (ratified July 6, in `CLAUDE.md`) before their PRs merged.
+All A1 code reached `main` through eight pull requests. One file per commit throughout. The four schema migrations ran programmatically without confirmable approval — the S2 breach, caught same-session. The repair: each migration file committed byte-matched to the production ledger (`supabase_migrations.schema_migrations`, versions 20260706221055–221204), and the migration law written into `CLAUDE.md` that same evening. All DDL since follows the law.
 
 | PR | Merged | Contents |
 |---|---|---|
