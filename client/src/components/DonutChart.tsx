@@ -40,6 +40,10 @@ interface DonutChartProps {
   onSliceClick?: (slice: DonutSlice) => void;
   /** Drill-in data: when a slice is clicked, show these items below */
   drillData?: Map<string, DonutDrillItem[]>;
+  /** Per-slice note shown under the drill panel header (e.g. "+4.2 pts vs market") */
+  drillNotes?: Map<string, string>;
+  /** Shown in the drill panel when a clicked slice has no drill items */
+  drillEmptyMessage?: string;
 }
 
 // ─── Donut Chart ────────────────────────────────────────────────────────────
@@ -51,6 +55,8 @@ export function DonutChart({
   title,
   onSliceClick,
   drillData,
+  drillNotes,
+  drillEmptyMessage,
 }: DonutChartProps) {
   const [hovered, setHovered] = useState<number | null>(null);
   const [drillSliceId, setDrillSliceId] = useState<string | null>(null);
@@ -107,6 +113,11 @@ export function DonutChart({
 
   const hoveredSlice = hovered !== null ? arcs[hovered] : null;
   const drillItems = drillSliceId && drillData ? drillData.get(drillSliceId) : null;
+  // A clicked slice with no drill items still opens the panel when an
+  // empty-state message is provided, so the absence of data is stated
+  // plainly instead of the click doing nothing.
+  const showDrillPanel = drillSliceId !== null && drillData !== undefined
+    && ((drillItems?.length ?? 0) > 0 || !!drillEmptyMessage);
 
   const handleSliceClick = (slice: DonutSlice) => {
     if (drillData) {
@@ -178,9 +189,11 @@ export function DonutChart({
       </div>
 
       {/* Drill-in panel (expandable holdings list for selected slice) */}
-      {drillItems && drillItems.length > 0 && (
+      {showDrillPanel && (
         <DrillInPanel
-          items={drillItems}
+          items={drillItems ?? []}
+          note={drillSliceId ? drillNotes?.get(drillSliceId) : undefined}
+          emptyMessage={drillEmptyMessage}
           sliceLabel={slices.find(s => s.id === drillSliceId)?.label ?? ''}
           sliceColor={slices.find(s => s.id === drillSliceId)?.color ?? theme.colors.textDim}
           onClose={() => setDrillSliceId(null)}
@@ -192,8 +205,10 @@ export function DonutChart({
 
 // ─── Drill-In Panel ─────────────────────────────────────────────────────────
 
-function DrillInPanel({ items, sliceLabel, sliceColor, onClose }: {
+function DrillInPanel({ items, note, emptyMessage, sliceLabel, sliceColor, onClose }: {
   items: DonutDrillItem[];
+  note?: string;
+  emptyMessage?: string;
   sliceLabel: string;
   sliceColor: string;
   onClose: () => void;
@@ -234,6 +249,27 @@ function DrillInPanel({ items, sliceLabel, sliceColor, onClose }: {
           &times;
         </button>
       </div>
+
+      {/* Per-slice note (e.g. delta vs market baseline) */}
+      {note && (
+        <div style={{
+          padding: '6px 12px', fontSize: 11,
+          color: theme.colors.textMuted,
+          borderBottom: `1px solid ${theme.colors.border}`,
+        }}>
+          {note}
+        </div>
+      )}
+
+      {/* Empty state — the slice has no drill data and the panel says so */}
+      {items.length === 0 && emptyMessage && (
+        <div style={{
+          padding: '10px 12px', fontSize: 12,
+          color: theme.colors.textDim, fontStyle: 'italic',
+        }}>
+          {emptyMessage}
+        </div>
+      )}
 
       {/* Holdings list */}
       <div style={{ maxHeight: 200, overflowY: 'auto' }}>
