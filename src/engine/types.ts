@@ -514,10 +514,10 @@ export interface NmfpFundData {
 /** Row in the `regime_series` registry table (A1 Task 1) */
 export interface RegimeSeriesRow {
   id: string;
-  source: 'fred' | 'ofr' | 'cleveland' | 'cboe';
+  source: 'fred' | 'ofr' | 'cleveland' | 'cboe' | 'french';
   series_code: string;
   display_name: string;
-  axis: 'growth' | 'inflation' | 'stress' | 'rates';
+  axis: 'growth' | 'inflation' | 'stress' | 'rates' | 'price';
   tier: 'load_bearing' | 'timeliness' | 'confirmation' | 'insurance';
   cadence: 'daily' | 'weekly' | 'monthly' | 'irregular';
   /** How this series' history replays honestly (charter §4.2·6) */
