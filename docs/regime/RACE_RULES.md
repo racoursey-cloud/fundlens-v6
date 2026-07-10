@@ -25,7 +25,7 @@
 
 - **Base classification grid: the last calendar day of every month**, from each contender's honest start through the last full month before the run. Month-ends align with the vintage memory's own backfill grid, so as-of reads at grid dates are maximally informed.
 - Each grid date D gets one classification row per contender per leg, computed strictly from `asOf(…, D, …)` reads (Leg 1) or the revised reader (Leg 2).
-- **The stress override is evaluated weekly** — every Friday (or last business day of the week) between grid dates, plus every grid date — using the same as-of discipline. An override transition (entry or exit, subject to the spec's hysteresis and dwell rules) writes one additional classification row dated the evaluation day.
+- **The stress override is evaluated every business day** — including every grid date — using the same as-of discipline. *(Amended at S2, Fabio's ruling: the override exists for speed — Feb–Mar 2020 is its proof case — and the shipped engine sees data at the daily sweep tempo; the race auditions the rule at the tempo it will live at. Portfolio action still obeys §3 in full.)* An override transition (entry or exit, subject to the spec's hysteresis and dwell rules) writes one additional classification row dated the evaluation day.
 - Portfolio **action** never outruns §3: a classification change on date D acts at the next available trade date, and base-regime tilts change at most once per calendar month; override entries/exits may act at the weekly tempo.
 
 ## §3 — Constraint and whipsaw model (401(k)-realistic)
