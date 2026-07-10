@@ -193,16 +193,30 @@ export async function ingestObservations(
     incoming[0].obs_date
   );
 
-  const { data: held, error: heldError } = await supaSelect<RegimeObservationRow[]>(
-    'regime_observations',
-    {
-      series_id: `eq.${series.id}`,
-      obs_date: `gte.${minObsDate}`,
-      order: 'obs_date.asc,realtime_start.asc',
-    },
-    'id,obs_date,value,realtime_start,realtime_end'
-  );
-  if (heldError) throw new Error(`${series.series_code}: reading held vintages failed: ${heldError}`);
+  // A2 F6 fix: the held read MUST see every vintage or dedupe and closes go
+  // blind. An unbounded PostgREST select is silently capped at the server's
+  // max-rows (~1,000) — for OFR's ~24,000-row history that hid all but the
+  // oldest observations, so value-identical snapshots re-inserted nightly
+  // (~5,700 rows of churn) and open rows beyond the cap were never closed
+  // (the F6 multi-open class). Paginate explicitly until a short page.
+  const HELD_PAGE_SIZE = 1000;
+  const held: RegimeObservationRow[] = [];
+  for (let offset = 0; ; offset += HELD_PAGE_SIZE) {
+    const { data: page, error: heldError } = await supaSelect<RegimeObservationRow[]>(
+      'regime_observations',
+      {
+        series_id: `eq.${series.id}`,
+        obs_date: `gte.${minObsDate}`,
+        order: 'obs_date.asc,realtime_start.asc',
+        limit: String(HELD_PAGE_SIZE),
+        offset: String(offset),
+      },
+      'id,obs_date,value,realtime_start,realtime_end'
+    );
+    if (heldError) throw new Error(`${series.series_code}: reading held vintages failed: ${heldError}`);
+    held.push(...(page ?? []));
+    if (!page || page.length < HELD_PAGE_SIZE) break;
+  }
 
   const existingKeys = new Set<string>();
   const openByObsDate = new Map<string, RegimeObservationRow>();
