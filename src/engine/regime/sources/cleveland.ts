@@ -27,9 +27,10 @@
  * schema (A1 §2).
  *
  * Vintage semantics: obs_date = the block's quarter-end date;
- * realtime_start = the daily label's date (year from the block's quarter;
- * a label whose month exceeds the quarter's end month is December-before-Q1
- * and belongs to the prior year). Ingest dedupes held vintages (Task 6).
+ * realtime_start = the daily label's date (year chosen so the label sits
+ * closest to its block's quarter — publications run from a prior-quarter
+ * lead-in through post-quarter trailing updates; A2 F2 fix, July 10, 2026).
+ * Ingest dedupes held vintages (Task 6).
  *
  * Vintage policy: snapshot_custom (charter §4.2·6); earliest honestly-
  * replayable date 2013:Q3 per the live archive.
@@ -96,14 +97,31 @@ export function clevelandNowcastUrl(horizon: string = CLEVELAND_HORIZON): string
   return CLEVELAND_NOWCAST_JSON_PATTERN.replace('{HORIZON}', horizon);
 }
 
-/** MM/DD label + its block's quarter → ISO vintage date. A label whose
- *  month exceeds the quarter's end month is December-before-Q1 territory
- *  and belongs to the prior year. */
+/** MM/DD label + its block's quarter → ISO vintage date.
+ *
+ *  A2 F2 fix (July 10, 2026): a quarter's nowcast publications span from a
+ *  lead-in in the prior quarter, through the quarter, to trailing updates
+ *  after quarter end (until the official print lands). The original rule
+ *  ("month past quarter-end ⇒ prior year") dated every trailing label one
+ *  year early — and a Q4 block's January/February trailing labels one year
+ *  early by the other branch. Correct rule: of the three candidate years,
+ *  take the one that places the label closest to the quarter's middle
+ *  month — every legitimate label sits within ±6 months of it, so the
+ *  choice is unambiguous. */
 export function labelToVintageDate(label: string, q: QuarterRef): string | null {
   const m = label.trim().match(/^(\d{1,2})\/(\d{1,2})$/);
   if (!m) return null;
   const month = Number(m[1]);
-  const year = month > q.quarter * 3 ? q.year - 1 : q.year;
+  const quarterMidAbs = q.year * 12 + (q.quarter * 3 - 1);
+  let year = q.year;
+  let best = Infinity;
+  for (const candidate of [q.year - 1, q.year, q.year + 1]) {
+    const dist = Math.abs(candidate * 12 + month - quarterMidAbs);
+    if (dist < best) {
+      best = dist;
+      year = candidate;
+    }
+  }
   return `${year}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
 }
 
