@@ -1,6 +1,6 @@
 # A1 — THE REGIME HARNESS
 
-**Status:** RATIFIED — July 6, 2026, by Robert. Both §5 decisions ruled as proposed, same session.
+**Status:** COMPLETE — ruled by Robert at the A1 session close (status recorded July 10, 2026). Ratified July 6, 2026, by Robert; both §5 decisions ruled as proposed, same session.
 **Authority:** `FUNDLENS_V8_CHARTER.md` §6 item 1 — "The harness — ingestion scheduler per source cadence, per-source vintage policies, regime-of-record schema, ALFRED replay plumbing, A0-pattern heartbeat and admin alerts."
 **Operator:** Robert Coursey — not a developer, browser-only, plain English throughout (CLAUDE.md).
 **Builder:** Clyde, under Evidence Gate/STOP law (charter §0, §3). One file per commit; migrations before merges; docs reach the repo only through Clyde commits (charter §3).

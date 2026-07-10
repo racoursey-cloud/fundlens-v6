@@ -231,54 +231,84 @@ export function Research() {
   }, [allocations]);
 
   // ── Sector Exposure donut — click sector → see contributing funds ────
+  // Donut honesty fix: slices are allocation-weighted — a fund the
+  // allocation excludes contributes nothing, so the donut describes the
+  // recommended portfolio, not an equal-weight average of every scored
+  // fund. Slices and drill items share one normalization, so a slice's
+  // contributing funds sum back to the slice. Each sector also carries
+  // its delta vs FXAIX (S&P 500 proxy) as the market baseline.
 
-  const { sectorSlices, sectorDrillData } = useMemo(() => {
+  const { sectorSlices, sectorDrillData, sectorDrillNotes } = useMemo(() => {
     const sectorAgg = new Map<string, number>();
-    const sectorFunds = new Map<string, DonutDrillItem[]>();
+    const sectorFundRaw = new Map<string, { name: string; ticker: string; contribution: number }[]>();
 
     for (const s of scores) {
       const ticker = s.funds?.ticker || s.fund_id;
       const fundAlloc = allocMap.get(ticker) ?? 0;
+      if (fundAlloc <= 0) continue;
       const details = s.factor_details as Record<string, unknown> | undefined;
       const sectors = (details?.sectorExposure || details?.sectors) as Record<string, number> | undefined;
+      if (!sectors) continue;
 
-      if (sectors) {
-        for (const [sector, weight] of Object.entries(sectors)) {
-          sectorAgg.set(sector, (sectorAgg.get(sector) || 0) + weight);
-
-          // Drill: sector → funds contributing to this sector.
-          // A2 Task 4: sectorExposure weights are whole percents (35 = 35%),
-          // so contribution = weight% of fundAlloc% → divide by 100, not ×100.
-          if (fundAlloc > 0) {
-            const existing = sectorFunds.get(sector) || [];
-            const contribution = Math.round((weight * fundAlloc / 100) * 10) / 10;
-            if (contribution > 0) {
-              existing.push({
-                name: s.funds?.name || ticker,
-                ticker,
-                weight: contribution,
-              });
-              sectorFunds.set(sector, existing);
-            }
-          }
-        }
+      for (const [sector, weight] of Object.entries(sectors)) {
+        // A2 Task 4: sectorExposure weights are whole percents (35 = 35%),
+        // so contribution = weight% of fundAlloc% → divide by 100, not ×100.
+        const contribution = (weight * fundAlloc) / 100;
+        if (contribution <= 0) continue;
+        sectorAgg.set(sector, (sectorAgg.get(sector) || 0) + contribution);
+        const existing = sectorFundRaw.get(sector) || [];
+        existing.push({ name: s.funds?.name || ticker, ticker, contribution });
+        sectorFundRaw.set(sector, existing);
       }
     }
 
-    for (const [sector, items] of sectorFunds.entries()) {
-      sectorFunds.set(sector, items.sort((a, b) => b.weight - a.weight).slice(0, 20));
-    }
-
     const total = [...sectorAgg.values()].reduce((s, v) => s + v, 0);
+    const scale = total > 0 ? 100 / total : 0;
+
     const slices: DonutSlice[] = [...sectorAgg.entries()]
       .sort((a, b) => b[1] - a[1])
-      .filter(([, v]) => total > 0 && (v / total) * 100 > 0.1)
+      .filter(([, v]) => v * scale > 0.1)
       .map(([label, value]) => ({
-        id: label, label, pct: total > 0 ? (value / total) * 100 : 0,
+        id: label, label, pct: value * scale,
         color: SECTOR_COLORS[label] ?? '#71717a',
       }));
 
-    return { sectorSlices: slices, sectorDrillData: sectorFunds };
+    const sectorFunds = new Map<string, DonutDrillItem[]>();
+    for (const [sector, items] of sectorFundRaw.entries()) {
+      sectorFunds.set(sector, items
+        .map(i => ({
+          name: i.name,
+          ticker: i.ticker,
+          weight: Math.round(i.contribution * scale * 100) / 100,
+        }))
+        .filter(i => i.weight > 0)
+        .sort((a, b) => b.weight - a.weight)
+        .slice(0, 20));
+    }
+
+    // FXAIX baseline: normalize its sector weights to shares of its
+    // classified total so the delta compares like with like.
+    const fxaixRow = scores.find(s => (s.funds?.ticker || s.fund_id) === 'FXAIX');
+    const fxaixDetails = fxaixRow?.factor_details as Record<string, unknown> | undefined;
+    const fxaixSectors = (fxaixDetails?.sectorExposure || fxaixDetails?.sectors) as Record<string, number> | undefined;
+    const fxaixTotal = fxaixSectors
+      ? Object.values(fxaixSectors).reduce((s, v) => s + v, 0) : 0;
+
+    const notes = new Map<string, string>();
+    for (const slice of slices) {
+      if (!fxaixSectors || fxaixTotal <= 0) {
+        notes.set(slice.id, 'Market comparison unavailable — no FXAIX sector data in the latest run.');
+        continue;
+      }
+      const marketPct = ((fxaixSectors[slice.id] ?? 0) / fxaixTotal) * 100;
+      const delta = slice.pct - marketPct;
+      const signed = `${delta >= 0 ? '+' : '−'}${Math.abs(delta).toFixed(1)} pts vs market`;
+      notes.set(slice.id, marketPct > 0
+        ? `${signed} (FXAIX ${marketPct.toFixed(1)}%)`
+        : `${signed} — the S&P 500 holds none`);
+    }
+
+    return { sectorSlices: slices, sectorDrillData: sectorFunds, sectorDrillNotes: notes };
   }, [scores, allocMap]);
 
   // ── Fund Allocation donut — click fund → see its sector breakdown ────
@@ -297,18 +327,20 @@ export function Research() {
       if (!allocMap.has(ticker)) continue;
       const details = s.factor_details as Record<string, unknown> | undefined;
       const sectors = (details?.sectorExposure || details?.sectors) as Record<string, number> | undefined;
-      if (sectors) {
-        // A2 Task 4: sectorExposure weights are whole percents already —
-        // the old ×100 here made the fund drill-down show '3500.0%'.
-        const items: DonutDrillItem[] = Object.entries(sectors)
-          .filter(([, w]) => w > 0.001)
-          .sort((a, b) => b[1] - a[1])
-          .map(([sector, w]) => ({
-            name: sector,
-            weight: Math.round(w * 10) / 10,
-          }));
-        fundSectors.set(ticker, items);
-      }
+      // A2 Task 4: sectorExposure weights are whole percents already —
+      // the old ×100 here made the fund drill-down show '3500.0%'.
+      // Funds with no sector data get an explicit empty entry so the
+      // drill panel states that plainly instead of ignoring the click.
+      const items: DonutDrillItem[] = sectors
+        ? Object.entries(sectors)
+            .filter(([, w]) => w > 0.001)
+            .sort((a, b) => b[1] - a[1])
+            .map(([sector, w]) => ({
+              name: sector,
+              weight: Math.round(w * 100) / 100,
+            }))
+        : [];
+      fundSectors.set(ticker, items);
     }
 
     return { fundSlices: slices, fundDrillData: fundSectors };
@@ -359,6 +391,7 @@ export function Research() {
                   size={220}
                   title="Recommended Allocation"
                   drillData={fundDrillData}
+                  drillEmptyMessage="This fund doesn't report sector-level holdings data."
                 />
                 <BarBreakdown items={fundSlices} />
               </>
@@ -382,6 +415,7 @@ export function Research() {
                   size={220}
                   title="Aggregate Sector Exposure"
                   drillData={sectorDrillData}
+                  drillNotes={sectorDrillNotes}
                 />
                 <BarBreakdown items={sectorSlices} />
               </>
