@@ -30,7 +30,7 @@ The three mixes deliberately bracket the exact operating range of A's and B's la
   - **Empty-`asOf` behavior: satisfied vacuously.** There is no read that could come back empty; no defaulting is possible because there is nothing to default. A missing rail date is a runner/rail matter (Task 5), not a classification event.
   - **F3: obeyed vacuously and absolutely.** `BAMLH0A0HYM2` appears nowhere in Leg 1 — D reads nothing at all (RACE_RULES §5).
   - **Coverage (RACE_RULES §6 metric 4): 100% of its window by construction.** D classifies every grid date it exists on; it is the coverage yardstick the others are read against.
-- **Honest start: the rail's verified start date, no warm-up** — D needs no trailing window. This is pending the same primary print as Contender B's §4.4 rows 1–2 (documented 1926-07-01 daily / July 1926 monthly; primary fetch blocked from this session's container — same evidence, same protocol, printed at Task 5 rail adoption). Head-to-head comparisons run only on overlapping honest windows regardless (RACE_RULES §7), so D meets every opponent on that opponent's own window.
+- **Honest start: the rail's verified start date, no warm-up** — D needs no trailing window. Verified by the same primary print as Contender B's §4.4 rows 1–2 (daily first row 1926-07-01, monthly first row 1926-07; Fabio-side fetch 2026-07-10 — full evidence in B §4.4). Head-to-head comparisons run only on overlapping honest windows regardless (RACE_RULES §7), so D meets every opponent on that opponent's own window.
 
 ## §4 — Rows the null writes (proposed; final shape ridable at S5)
 
