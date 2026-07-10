@@ -1,7 +1,7 @@
 # CONTENDER A — Quadrant + Stress Override (Stages 2–4)
 
 **Authority:** `A2_THE_RACE.md` Task 2; charter §2.3 ("exactly as specified by Regime Session Record 01 (Stage 1)"); Record 01 §4 (the ratified Stage 1 shape). Obeys `RACE_RULES.md` **as frozen at blob `ea44a7dc0cdcf473035528849234b39258c39f4a`** (commit `e546da7`) — verbatim, by anchor.
-**Status:** DRAFTED for STOP S3 — Fabio rules under the Delegation ruling, Robert's veto standing. Upon ratification this file is frozen; its SHA-256 content hash becomes `rules_version` on every row Contender A writes.
+**Status:** RATIFIED WITH AMENDMENTS at S3 (Fabio's ruling, July 10, 2026; Robert's veto standing) — F7(a)–(d) and F8 applied below; S3 clears on Fabio's repo-side diff verification, upon which this file is frozen and its SHA-256 content hash becomes `rules_version` on every row Contender A writes.
 **Plain-English shape:** four kinds of economic weather from two questions — is growth above or below trend, is inflation pressure above or below the anchor — plus a storm warning that overrides the forecast (Record 01 §4).
 
 ---
@@ -42,9 +42,12 @@ Two binary axes partition all non-storm conditions into four cells; the storm ov
 
 **Declined from v1, alternatives stated:** GDPNow (irregular cadence, 2016 honest start, redundant with CFNAI's 85-indicator composite) and WEI (2020 honest start, same redundancy) — both remain registry flag-flip candidates for a future amendment. `BAMLH0A0HYM2` appears nowhere in Leg 1 (RACE_RULES §5, F3 law).
 
-**Contender A's honest start: 2011-05-31** (the latest required-input earliest-vintage — CFNAI), plus a warm-up of three monthly CFNAI observations for the MA3; the runner computes and prints the first classifiable grid date (expected ≈ 2011-08-31). Deeper history (1990→2011) appears only in Leg 2, labeled.
+**Contender A's honest start: 2011-05-31** (the latest required-input earliest-vintage — CFNAI). *(Corrected at S3 — F8, Clyde's slip, Fabio's production evidence: the first stored CFNAI vintage carries 13 observations, 2010-04-01 through 2011-04-01, so the MA3 computes on day one — no warm-up exists. Expected first classifiable grid date 2011-05-31; the runner prints the actual; §3.6's fewer-than-three rule guards the thin case.)* Deeper history (1990→2011) appears only in Leg 2, labeled.
 
 ## §3 — Stage 4: the classification rules (frozen, citable, deterministic)
+
+### 3.0 Prior state, defined *(added at S3 — F7(a), Fabio's amendment, exact text)*
+*Prior state* means the state at the most recent classified date; it persists across unclassifiable and stale-held gaps. When no prior state exists, an in-band reading resolves to the nearer marker; equidistant resolves to the cautious state (below trend; above anchor). The inflation cold start consults the §3.2 breakeven tie-break first when available.
 
 ### 3.1 Growth axis
 - Reading: CFNAI-MA3 as-published on the evaluation date (mean of the three newest observations in the as-of read).
@@ -54,14 +57,16 @@ Two binary axes partition all non-storm conditions into four cells; the storm ov
 ### 3.2 Inflation axis
 - Reading: year-over-year percent change of the §2 priority chain's series, computed from the as-of read (newest observation vs. the observation 12 months prior, same vintage).
 - **Above anchor** when YoY ≥ **3.0%**; **back to at/below anchor** when YoY ≤ **2.5%** (the Fed's 2% target plus a citable margin). Between the markers the prior state holds — **unless** a non-empty `T10YIE` read tie-breaks: breakeven ≥ 2.5% tips above-anchor, ≤ 2.2% tips at/below; otherwise hold.
+- A chain link is usable only if its as-of read yields a computable YoY — both the newest and the year-ago observation present; otherwise the next link, then §3.7. *(Added at S3 — F7(d), Fabio's amendment, exact text.)*
 
 ### 3.3 Storm override (evaluated every business day per RACE_RULES §2 as amended; all dwell in business days)
 - **Entry** (immediate — speed is the override's reason to exist): VIX close ≥ **35**, or a non-empty OFR FSI read ≥ **2.0**. Either instrument triggers.
 - **Exit:** every available instrument below its exit marker — VIX ≤ **25** and (when available) OFR FSI < **1.0** — held for **5 consecutive business-day evaluations**, and no exit before a **minimum storm dwell of 10 business days**.
 - During a storm the base axes are still computed and recorded in `inputs` (continuity for exit), but the regime label is `stress`. On exit, the label is the base cell computed that same day.
+- Storm exit seeds the base state from the exit-day computation; §3.4 governs thereafter. *(Added at S3 — F7(b), Fabio's amendment, exact text.)*
 
 ### 3.4 Base-state dwell and flap suppression
-- Base states change only by band crossing (the hysteresis above) at monthly grid dates.
+- Base states change only by band crossing (the hysteresis above) at monthly grid dates, except as forced by the §3.1 Sahm fail-safe or seeded by a §3.3 storm exit. *(Reworded at S3 — F7(c).)*
 - A base state must hold **2 consecutive grid dates** before it may revert to the immediately-prior state — a one-month look is never allowed to flap back.
 
 ### 3.5 Tie-breaks
