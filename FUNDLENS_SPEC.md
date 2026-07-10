@@ -1084,7 +1084,7 @@ This section tells future sessions exactly what state the codebase is in relativ
 | API delay reduced 500ms→250ms | §5.3 | constants.ts | Matches v5.1's 200-300ms range while staying conservative. — Session 10 |
 | Classification batch size 25 | §5.3 | classify.ts | Matches v5.1. Fewer Claude calls = fewer 1.2s delays. — Session 10 |
 | v5.1 UI layout ported | §6.7 | Portfolio.tsx, AppShell.tsx, FundDetail.tsx | Two SVG donuts + 7-col fund table + sliders. 4-tab nav. 420px sidebar. — Session 11 |
-| Shared DonutChart component | §6.7 | DonutChart.tsx | SVG arc math, hover tooltips, click drill-in, MiniDonut variant. — Session 11 |
+| Shared DonutChart component | §6.7 | DonutChart.tsx | SVG arc math, hover tooltips, click drill-in (item list, per-slice note, empty state), BarBreakdown. MiniDonut variant retired as dead code July 10, 2026. — Session 11 |
 | SectorScorecard component | §2.6.1 | SectorScorecard.tsx | 14 sectors, 1–10 scale, progress bars, reasoning. Compact mode for Briefs. — Session 11 |
 | Thesis page | §2.6.1, §6.7 | Thesis.tsx | Macro thesis card + sector scorecard. Data from /api/thesis/latest. — Session 11 |
 | Settings page | §6.7 | Settings.tsx | Profile, fund list, pipeline controls, about. Replaces admin-only Pipeline tab. — Session 11 |
