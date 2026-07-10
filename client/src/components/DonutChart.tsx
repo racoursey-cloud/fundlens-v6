@@ -312,42 +312,6 @@ function DrillInPanel({ items, note, emptyMessage, sliceLabel, sliceColor, onClo
   );
 }
 
-// ─── Legend (legacy — kept for backward compat) ─────────────────────────────
-
-export function DonutLegend({ items, onItemClick }: {
-  items: DonutSlice[];
-  onItemClick?: (item: DonutSlice) => void;
-}) {
-  return (
-    <div style={{
-      display: 'flex', flexWrap: 'wrap', gap: '6px 16px', justifyContent: 'center',
-    }}>
-      {items.map(item => (
-        <div
-          key={item.id}
-          onClick={() => onItemClick?.(item)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6, fontSize: 12,
-            cursor: onItemClick ? 'pointer' : 'default',
-          }}
-        >
-          <div style={{
-            width: 10, height: 10, borderRadius: 2,
-            background: item.color, flexShrink: 0,
-          }} />
-          <span style={{ color: theme.colors.textMuted }}>{item.label}</span>
-          <span style={{
-            color: theme.colors.text, fontWeight: 600,
-            fontFamily: theme.fonts.mono,
-          }}>
-            {item.pct.toFixed(1)}%
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ─── Horizontal Bar Breakdown ───────────────────────────────────────────────
 // Replaces the wrapped-label legend with a sorted horizontal bar chart.
 // Items are sorted descending by percentage, label on left, bar + pct on right.
