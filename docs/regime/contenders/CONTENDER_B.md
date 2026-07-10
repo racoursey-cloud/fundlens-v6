@@ -26,7 +26,7 @@ Two binary axes partition all non-storm conditions into four cells; the storm ov
 
 | Role | Series | Honest start | Verification state (July 10, 2026) |
 |---|---|---|---|
-| Trend + volatility reading | `RACE_EQ_TR` — daily U.S. equity total-return index built from the D2 library (new registry series, §4.2–§4.3) | documented 1926-07-01 | **PENDING primary print** (§4.4) |
+| Trend + volatility reading | `RACE_EQ_TR` — daily U.S. equity total-return index built from the D2 library (new registry series, §4.2–§4.3) | documented 1926-07-01 | **VERIFIED** (§4.4 rows 1–2, primary print 2026-07-10) |
 | Stress instrument, deep history | `VIXCLS` — per D3 and RACE_RULES §5 | **1990-01-02** | **VERIFIED** — re-checked read-only in production this session: earliest vintage = earliest observation = 1990-01-02, policy `never_revised` |
 
 **Confirmatory inputs** (empty = unused, no coverage effect):
@@ -100,8 +100,8 @@ RACE_RULES §1 (frozen) says Leg-1 history reaches contenders through `asOf()` *
 
 | # | Item | State (July 10, 2026) | Evidence |
 |---|---|---|---|
-| 1 | D2 library **daily** three-factor file: actual first data row | **PENDING primary print** — documented start 1926-07-01 (library's own description pages; WRDS vendor documentation) | Primary fetch blocked from this session's container: the network policy denied `mba.tuck.dartmouth.edu` (CONNECT 403, logged 2026-07-10 ~22:15 UTC). Print at the Task 5 rail-adoption fetch; land the value here by amendment commit before S4 clears |
-| 2 | D2 library **monthly** three-factor file: actual first data row | **PENDING primary print** — documented start July 1926 (same sources) | Same block, same protocol |
+| 1 | D2 library **daily** three-factor file: actual first data row | **VERIFIED — primary print (Fabio-side fetch, 2026-07-10 22:41 UTC)** | First data row: `19260701,    0.09,   -0.25,   -0.27,    0.01` (columns ,Mkt-RF,SMB,HML,RF). File's own build note: "This file was created by using the 202605 CRSP database." SHA-256 of fetched file: f051e37d30c129359c6801d9d2a715c929b19aa3be0ffe684b93995ede9ffebb. Clyde's 403 stands logged (2026-07-10 ~22:15 UTC); the Task 5 adoption fetch prints its own first row and reconciles against this print |
+| 2 | D2 library **monthly** three-factor file: actual first data row | **VERIFIED — primary print (Fabio-side fetch, 2026-07-10 22:41 UTC)** | First data row: `192607,   2.89,  -2.55,  -2.39,   0.22` (columns ,Mkt-RF,SMB,HML,RF). File's own build note: "This file was created using the 202605 CRSP database." SHA-256: a26fcdeb09199d29bf79d40bb34ce0ffe41798d08feff1190a2c532b4742e88e. Same reconciliation protocol at Task 5 |
 | 3 | Tiingo in-house NAV depth (the declined rail, stated not assumed) | **VERIFIED read-only in production** — 21 tickers, 2025-06-04 → 2026-07-07 windows only; no deep history held; no Tiingo key present in this container | Production query, this session |
 | 4 | `VIXCLS` honest start | **VERIFIED read-only in production** — earliest vintage = earliest observation = 1990-01-02, `never_revised` | Production query, this session |
 
