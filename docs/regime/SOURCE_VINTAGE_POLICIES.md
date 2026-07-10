@@ -51,6 +51,7 @@
 - **Revision behavior — the good news, upgraded July 6 (Fabio's live pull of the JSON feed):** the feed is a top-level array of quarter blocks, **one per quarter from 2013:Q3 to the present**, each carrying its own day-by-day nowcast rows and a publication stamp. The feed is therefore its own as-published archive — every daily estimate back to 2013:Q3 reconstructs honestly from a single fetch, including days long before our first sweep.
 - **Former S4 verification item — RESOLVED:** past quarters need no separate files; the archive ships inside the live feed. Today's block (07/01–07/06) was confirmed against the operator-downloaded CSV of the same data.
 - **Earliest honestly-replayable date:** **2013:Q3** (the first block in the live feed).
+- **ERRATA (July 10, 2026, A2 F2 — found at the race's S1 evidence gate, diagnosed by Fabio):** the adapter's original label-year rule dated every *post-quarter trailing* nowcast label exactly one year early (e.g. the 2013:Q3 block's October updates stored as 2012-10-01), which made production's earliest stored vintage appear to predate the archive. The parser was fixed (A2 F2 fix, `cleveland.ts`), the misdated rows repaired under the Database law, and **this section's 2013:Q3 claim stands vindicated** — the feed's archive begins where this policy always said it did.
 
 ## 6. Cboe VIX history file, policy `never_revised` (backstop duty only)
 
