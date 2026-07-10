@@ -10,3 +10,4 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-07-10 | `docs/archive/v8/` creation deferred until a second spent v8 instrument exists (July 10 ruling) | — |
 | 2026-07-10 | Research sector drill truncates at 20 contributors, so slice reconciliation can be off by pennies in extreme fragmentation (noted at PR #36 review) | — |
 | 2026-07-10 | Builder branch names are reused across assignments — consider fresh names per assignment (cosmetic hygiene, July 10) | — |
+| 2026-07-10 | Ingest dedupe open-tracking map keeps only the last open vintage per obs-date — harmless post-guard, inelegant (A2 F4 dedupe report) | — |
