@@ -402,11 +402,28 @@ async function walkStormContender(
   const lastGrid = [...grid].sort().pop();
   let date = fromIso;
   while (lastGrid !== undefined && date <= lastGrid) {
+    // F9 (Fabio's fix order, July 10): a weekend grid date still classifies —
+    // the grid evaluation runs, but the storm machine does NOT (not a
+    // business day; A §3.6's holiday principle — dwell and exit counters are
+    // business-day-only and must not advance). An active storm carried
+    // across the weekend still labels the row stress via state, with base
+    // inputs cited only: the storm instruments were not read today, and
+    // inputs cites every value USED (RACE_RULES §8).
+    const isGrid = grid.has(date);
     if (!isWeekday(date)) {
+      if (isGrid) {
+        const reads = await readAll(date, GRID_SERIES[name]);
+        const outcome = hooks.grid(date, reads, []); // no storm eval today
+        if (outcome.evaluation.classifiable) {
+          classifiedGridDates++;
+          rows.push(buildRow(date, name, leg.basis, rulesVersion, outcome.evaluation, 'grid'));
+        } else {
+          unclassifiable.push({ date, reason: outcome.evaluation.unclassifiableReason ?? 'unclassifiable' });
+        }
+      }
       date = nextDay(date);
       continue;
     }
-    const isGrid = grid.has(date);
 
     // The shared override, every business day (§2 as amended; A §3.3)
     const vix = (await leg.reader('VIXCLS', date, 1))[0];
