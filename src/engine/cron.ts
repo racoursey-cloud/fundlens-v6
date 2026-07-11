@@ -43,6 +43,9 @@ import { regimeBootTasks } from './regime/backfill.js';
 // v8 A2 Task 5: the race rail's one-time adoption ingest (S4-ratified;
 // reconciliation-gated; frozen at adoption — skips itself once loaded).
 import { runRailIngestIfNeeded } from './regime/sources/french.js';
+// v8 A2 Task 7a: the race's gated one-shot (merge = go, Robert's click;
+// skips itself forever once a completed race run exists).
+import { runRaceIfNeeded } from './regime/race-boot.js';
 import type { FundRow, PipelineRunRow } from './types.js';
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -410,6 +413,10 @@ export function startCronJobs(): void {
     .then(() => runRailIngestIfNeeded())
     .catch(err => {
       console.error('[cron] Race rail adoption error:', err);
+    })
+    .then(() => runRaceIfNeeded())
+    .catch(err => {
+      console.error('[cron] Race execution error:', err);
     });
 }
 
