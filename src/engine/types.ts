@@ -573,6 +573,81 @@ export interface RegimeNormalizedObservation {
   realtime_end?: string | null;
 }
 
+// ─── Race Types (v8 A2 Task 6) ──────────────────────────────────────────────
+
+/** Row in the `regime_classifications` table (A1 Task 3) — written by the
+ *  race runner only as basis 'replay' or 'revised_study'; 'record' stays
+ *  untouched until a winner ships (A2 §6). */
+export interface RegimeClassificationRow {
+  id: string;
+  classification_date: string;
+  regime_label: string;
+  basis: 'record' | 'replay' | 'revised_study';
+  engine: string;
+  rules_version: string;
+  inputs: Record<string, unknown>;
+  computed_at: string;
+}
+
+/** Runner-performed observation reads handed to a contender: series code →
+ *  trailing observations, newest first (exactly asOf()'s return shape).
+ *  Contender modules NEVER read data themselves — the runner performs every
+ *  read, which makes acceptance §7.1's "no other data access, provable by
+ *  inspection" literally true (A2 Task 6; RACE_RULES §1). */
+export type RaceAsOfReads = Record<string, RegimeNormalizedObservation[]>;
+
+/** One cited input in a classification row's `inputs` evidence — series,
+ *  observation date, value, vintage date (RACE_RULES §8). Degradation flags
+ *  (CONTENDER_A §3.7: degraded_source, stale_held) ride the citation. */
+export interface RaceCitedInput {
+  series: string;
+  obs_date: string;
+  value: number;
+  realtime_start: string;
+  flag?: string;
+}
+
+/** Hysteresis-band axis state — the §3.4 dwell law's machinery, shared by
+ *  Contender A's two axes and Contender B's two axes (same numbers, same
+ *  reason: hysteresis is load-bearing, Record 01 honesty flag 3). */
+export interface RaceAxisState {
+  /** Current axis state (contender-defined vocabulary) */
+  state: string;
+  /** Immediately-prior axis state — the flap-suppression target */
+  prior: string | null;
+  /** Consecutive grid dates the current state has held */
+  heldGridDates: number;
+}
+
+/** Shared storm-override state (CONTENDER_A §3.3, adopted verbatim by B and
+ *  composed by C; all dwell in business days). */
+export interface RaceStormState {
+  active: boolean;
+  /** Business-day evaluations since entry, entry day = 1 (min dwell 10) */
+  dwellBusinessDays: number;
+  /** Consecutive evaluations with every available instrument below its exit
+   *  marker (exit requires 5) */
+  consecutiveExitEvals: number;
+}
+
+/** What a contender evaluation returns to the runner. Unclassifiable means
+ *  NO row is written and the date counts against coverage — never defaulted
+ *  (RACE_RULES §1, §6 metric 4). */
+export interface ContenderEvaluation {
+  classifiable: boolean;
+  /** Present when classifiable */
+  label?: string;
+  /** Race-scoped equity weight per the spec's §3.8 ladder / D's §1 mixes */
+  equityWeight?: number;
+  /** Every value consumed, cited (RACE_RULES §8) */
+  citedInputs: RaceCitedInput[];
+  /** Plain-English reason when unclassifiable (coverage narration) */
+  unclassifiableReason?: string;
+  /** Extra evidence keys merged into the row's inputs jsonb (e.g. base axes
+   *  recorded during a storm, D's mix and standing weights) */
+  extraEvidence?: Record<string, unknown>;
+}
+
 // ─── Utility Types ──────────────────────────────────────────────────────────
 
 /** Standard result wrapper for pipeline operations */
