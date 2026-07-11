@@ -45,7 +45,7 @@ import { ingestObservations } from '../ingest.js';
 
 // ─── Constants (regime-module-local per A1 §6) ──────────────────────────────
 
-const FRENCH_DAILY_FACTORS_URL =
+export const FRENCH_DAILY_FACTORS_URL =
   'https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip';
 
 const RAIL_SERIES_CODE = 'RACE_EQ_TR';
