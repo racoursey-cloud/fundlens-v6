@@ -17,8 +17,14 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import { supaFetch } from './supabase.js';
+import { ALLOWED_SIGNUP_DOMAINS } from './constants.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
+
+/** Account access tier (B-series B2). 'reference' is the database default
+ *  for every new signup; 'full' is flipped by Robert only. */
+export type AccessTier = 'reference' | 'full';
 
 /** JWT payload from Supabase (the data inside the token) */
 interface SupabaseJwtPayload {
@@ -44,6 +50,10 @@ export interface AuthenticatedRequest extends Request {
   userEmail: string | null;
   /** Full decoded JWT payload */
   jwtPayload: SupabaseJwtPayload;
+  /** Account access tier (B2) — resolved by requireAuth on every request.
+   *  routes.ts requireFullTier reads this; reference accounts get facts
+   *  only, never scores/tiers/verdicts. */
+  accessTier: AccessTier;
 }
 
 // ─── JWT Validation ─────────────────────────────────────────────────────────
@@ -291,6 +301,62 @@ function verifyHS256(signatureInput: string, signatureBytes: Buffer): boolean {
   return crypto.timingSafeEqual(expected, signatureBytes);
 }
 
+// ─── Access Tier + Domain Gate (B-series B2, plan §1.2–§1.3) ───────────────
+// Two questions answered per request, cached together:
+//   1. Is this account allowed in at all? Allowed = email domain is in
+//      ALLOWED_SIGNUP_DOMAINS (constants.ts), OR the email has a row in the
+//      access_exceptions table (rows added by Robert only). Anything else
+//      gets 403 'Access restricted' from requireAuth — the Supabase auth
+//      user may exist, but no API route ever serves it.
+//   2. Which tier is it? Read from user_profiles.access_tier. A missing
+//      profile resolves to 'reference' — the same default the database
+//      applies when the profile row is created.
+// The cache mirrors the adminCache/TTL pattern in routes.ts (60s) so tier
+// checks don't add a database query to every click. Lookup failures fail
+// CLOSED for the gate and LOW for the tier (never accidental full access).
+
+const ACCESS_CACHE_TTL_MS = 60_000; // mirrors ADMIN_CACHE_TTL_MS (routes.ts)
+const accessCache = new Map<string, { allowed: boolean; tier: AccessTier; checkedAt: number }>();
+
+async function resolveAccess(
+  userId: string,
+  email: string | null
+): Promise<{ allowed: boolean; tier: AccessTier }> {
+  const cached = accessCache.get(userId);
+  if (cached && Date.now() - cached.checkedAt < ACCESS_CACHE_TTL_MS) {
+    return cached;
+  }
+
+  const normalizedEmail = email?.trim().toLowerCase() ?? null;
+  const domain = normalizedEmail?.split('@')[1] ?? null;
+
+  // Gate first — the domain check is a pure string comparison
+  let allowed = domain !== null && ALLOWED_SIGNUP_DOMAINS.includes(domain);
+
+  // Not a company domain: allowed only with an access_exceptions row
+  if (!allowed && normalizedEmail) {
+    const { data: exception } = await supaFetch<{ email: string }>('access_exceptions', {
+      params: { email: `eq.${normalizedEmail}`, select: 'email' },
+      single: true,
+    });
+    allowed = !!exception;
+  }
+
+  // Tier — only worth resolving for accounts that are allowed in
+  let tier: AccessTier = 'reference';
+  if (allowed) {
+    const { data: profile } = await supaFetch<{ access_tier?: string }>('user_profiles', {
+      params: { id: `eq.${userId}`, select: 'access_tier' },
+      single: true,
+    });
+    if (profile?.access_tier === 'full') tier = 'full';
+  }
+
+  const result = { allowed, tier, checkedAt: Date.now() };
+  accessCache.set(userId, result);
+  return result;
+}
+
 // ─── Express Middleware ─────────────────────────────────────────────────────
 
 /**
@@ -347,10 +413,20 @@ export async function requireAuth(
     return;
   }
 
+  // B2: domain gate + access tier. A valid JWT is not enough — the account
+  // must belong to an allowed signup domain or hold an explicit exception
+  // row. Everyone who passes carries their tier on the request.
+  const access = await resolveAccess(payload.sub, payload.email || null);
+  if (!access.allowed) {
+    res.status(403).json({ error: 'Access restricted' });
+    return;
+  }
+
   // Attach user info to request
   (req as AuthenticatedRequest).userId = payload.sub;
   (req as AuthenticatedRequest).userEmail = payload.email || null;
   (req as AuthenticatedRequest).jwtPayload = payload;
+  (req as AuthenticatedRequest).accessTier = access.tier;
 
   next();
 }

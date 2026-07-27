@@ -315,6 +315,19 @@ export const ADMIN_EMAILS: readonly string[] = [
   'racoursey@gmail.com',
 ];
 
+// ─── Reference Tier: Signup Domain Gate (B-series B2, plan §1.3) ────────────
+// Enforced in the server API layer (auth.ts requireAuth) — not Supabase
+// config, not the client. An authenticated account whose email domain is
+// not listed here AND whose email has no row in the access_exceptions table
+// receives 403 { error: 'Access restricted' } on every API route. The
+// Supabase auth user may exist; no route ever serves it.
+// Exceptions (e.g., former employees with plan balances, and Robert's own
+// non-company address) are rows in access_exceptions, added by Robert only.
+// Domains are compared lowercase.
+export const ALLOWED_SIGNUP_DOMAINS: readonly string[] = [
+  'terrascend.com',
+];
+
 // ─── Environment Variable Keys ───────────────────────────────────────────────
 // Listed here so we can validate they exist at startup.
 export const ENV_KEYS = [
