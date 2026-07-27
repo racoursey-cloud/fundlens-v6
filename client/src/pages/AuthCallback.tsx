@@ -80,9 +80,13 @@ export function AuthCallback() {
                 : hashError.description || 'The sign-in link could not be verified.'
               : 'The sign-in didn’t complete in this browser. This can happen on managed work computers.'}
           </p>
+          {/* The token behind this link IS the 6-digit code — one single-use
+              secret in two costumes. Whatever consumed the link (a scanner's
+              click or the user's own successful one) consumed the code too,
+              so recovery is always a fresh email. */}
           <p style={{ color: theme.colors.textMuted, fontSize: 14, lineHeight: 1.6, margin: '0 0 24px' }}>
-            Use the <strong style={{ color: theme.colors.text }}>6-digit code</strong> from
-            the same email instead — or request a new one.
+            Go back to sign-in, request a new email, and type its fresh{' '}
+            <strong style={{ color: theme.colors.text }}>6-digit code</strong>.
           </p>
           <button
             onClick={() => navigate('/login', { replace: true })}
