@@ -1,7 +1,7 @@
 -- ============================================================================
 -- FundLens — B3: reference profile birth state
--- (D2 re-ruling, Fabio, July 27, 2026 — supersedes the B3 planning-session
---  no-DB-change ruling)
+-- (D2 re-ruled by Robert, July 27, 2026; spec by Fabio — supersedes the
+--  B3 planning-session no-DB-change ruling)
 --
 -- WHY: every profile is created by the on_auth_user_created trigger BEFORE
 -- any API call runs, so profiles have been born with column defaults that
