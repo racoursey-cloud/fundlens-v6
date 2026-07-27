@@ -41,6 +41,13 @@ import rateLimit from 'express-rate-limit';
 import { requireAuth, AuthenticatedRequest } from '../engine/auth.js';
 import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../engine/supabase.js';
 import { DEFAULT_FACTOR_WEIGHTS, ADMIN_EMAILS, RISK_MIN, RISK_MAX } from '../engine/constants.js';
+import {
+  shapeFundForReference,
+  shapeFundListForReference,
+  shapeHoldingForReference,
+  type ReferenceDossierSource,
+  type ReferenceHoldingSource,
+} from '../engine/reference-shape.js';
 import type {
   FundRow,
   FundScoresRow,
@@ -112,6 +119,21 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction): Pr
   const { userId, userEmail } = req as AuthenticatedRequest;
   if (!userId || !(await isAdminUser(userId, userEmail))) {
     res.status(403).json({ error: 'Admin access required for this operation.' });
+    return;
+  }
+  next();
+}
+
+// ─── Full-tier middleware (B-series B2) ───────────────────────────────────
+// Reference accounts never receive composite scores, tiers, z-scores,
+// allocation output, Briefs, or thesis content (plan §1.2). The tier is
+// resolved by requireAuth (auth.ts) on every request; this middleware is
+// the hard stop on routes whose entire payload is full-tier content.
+// Fails closed: anything that is not explicitly 'full' is refused.
+
+function requireFullTier(req: Request, res: Response, next: NextFunction): void {
+  if ((req as AuthenticatedRequest).accessTier !== 'full') {
+    res.status(403).json({ error: 'Full access required for this feature.' });
     return;
   }
   next();
@@ -224,6 +246,23 @@ router.get('/api/scores', requireAuth, async (req: Request, res: Response) => {
     return;
   }
 
+  // B2: reference accounts get the allowlist shape (reference-shape.ts —
+  // facts only, alphabetical by ticker) with each fund's Dossier coverage
+  // joined in. Full-tier responses take the original path below, unchanged
+  // byte for byte.
+  if ((req as AuthenticatedRequest).accessTier !== 'full') {
+    const { data: dossiers } = await supaSelect<ReferenceDossierSource[]>('fund_dossiers', {
+      pipeline_run_id: `eq.${latestRun.id}`,
+      select: 'fund_id,report_date,holdings_total,fallback_count,resolved_of_resolvable_pct,classified_pct,passes_gate',
+    });
+
+    res.json({
+      funds: shapeFundListForReference(scores || [], dossiers || []),
+      asOf: latestRun.completed_at,
+    });
+    return;
+  }
+
   res.json({
     scores: scores || [],
     pipelineRun: {
@@ -281,6 +320,27 @@ router.get('/api/scores/:ticker', requireAuth, async (req: Request, res: Respons
     limit: '50',
   });
 
+  // B2: reference accounts get the allowlist shape (reference-shape.ts)
+  // with the Dossier from the same pipeline run as the score, and holdings
+  // reduced to name/ticker/pct/sector. Full-tier response below unchanged.
+  if ((req as AuthenticatedRequest).accessTier !== 'full') {
+    const { data: dossier } = await supaFetch<ReferenceDossierSource>('fund_dossiers', {
+      params: {
+        fund_id: `eq.${fund.id}`,
+        pipeline_run_id: `eq.${score.pipeline_run_id}`,
+        select: 'fund_id,report_date,holdings_total,fallback_count,resolved_of_resolvable_pct,classified_pct,passes_gate',
+        limit: '1',
+      },
+      single: true,
+    });
+
+    res.json({
+      fund: shapeFundForReference(fund, score, dossier ?? null),
+      holdings: ((holdings || []) as ReferenceHoldingSource[]).map(shapeHoldingForReference),
+    });
+    return;
+  }
+
   res.json({
     fund,
     score,
@@ -311,10 +371,16 @@ router.get('/api/profile', requireAuth, async (req: Request, res: Response) => {
 
   // Auto-create profile if it doesn't exist (safety net)
   if (!profile && !error) {
+    // B2: reference accounts skip the wizard — their profile is created
+    // already complete. SetupWizard is never shown to them (B3 routes them
+    // into the reference shell); weights/risk stay at database defaults and
+    // are unused by any reference surface.
+    const isReference = (req as AuthenticatedRequest).accessTier !== 'full';
     const { data: created } = await supaInsert<UserProfileRow>('user_profiles', {
       id: userId,
       email: userEmail,
       display_name: userEmail ? userEmail.split('@')[0] : null,
+      ...(isReference ? { setup_completed: true } : {}),
     }, { single: true });
 
     profile = created;
@@ -339,6 +405,24 @@ router.get('/api/profile', requireAuth, async (req: Request, res: Response) => {
 router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
   const { userId } = req as AuthenticatedRequest;
   const updates = req.body;
+
+  // B2: factor weights and risk tolerance are full-tier controls (plan §1.2
+  // — reference accounts receive no weighting or risk machinery). A
+  // reference account sending any of them is rejected outright;
+  // display_name and the other profile fields pass through as before.
+  if ((req as AuthenticatedRequest).accessTier !== 'full') {
+    const fullTierFields = [
+      'weight_cost',
+      'weight_quality',
+      'weight_positioning',
+      'weight_momentum',
+      'risk_tolerance',
+    ];
+    if (fullTierFields.some(f => updates[f] !== undefined)) {
+      res.status(403).json({ error: 'Full access required to change weights or risk settings.' });
+      return;
+    }
+  }
 
   // Whitelist allowed fields (prevent someone from changing their ID, etc.)
   const allowed: Record<string, unknown> = {};
@@ -877,7 +961,7 @@ router.get('/api/pipeline/history', requireAuth, requireAdmin, async (req: Reque
  * Returns the authenticated user's Investment Brief history (newest first).
  * This is the Brief archive tab in the UI.
  */
-router.get('/api/briefs', requireAuth, async (req: Request, res: Response) => {
+router.get('/api/briefs', requireAuth, requireFullTier, async (req: Request, res: Response) => {
   const { userId } = req as AuthenticatedRequest;
 
   const { data, error } = await supaSelect<InvestmentBriefRow[]>('investment_briefs', {
@@ -901,7 +985,7 @@ router.get('/api/briefs', requireAuth, async (req: Request, res: Response) => {
  * Returns a specific Investment Brief with full content.
  * Only returns briefs that belong to the authenticated user.
  */
-router.get('/api/briefs/:id', requireAuth, async (req: Request, res: Response) => {
+router.get('/api/briefs/:id', requireAuth, requireFullTier, async (req: Request, res: Response) => {
   const { userId } = req as AuthenticatedRequest;
   const id = req.params.id as string;
 
@@ -938,7 +1022,7 @@ router.get('/api/briefs/:id', requireAuth, async (req: Request, res: Response) =
  * Query param: ?sendEmail=true to also email the Brief (default: false for on-demand)
  */
 // SESSION 0 SECURITY: Rate limited to prevent Claude Opus quota exhaustion
-router.post('/api/briefs/generate', requireAuth, briefRateLimit, async (req: Request, res: Response) => {
+router.post('/api/briefs/generate', requireAuth, requireFullTier, briefRateLimit, async (req: Request, res: Response) => {
   const { userId } = req as AuthenticatedRequest;
   const sendEmail = req.query.sendEmail === 'true';
 
@@ -1000,7 +1084,7 @@ async function generateBriefAsync(
  * Returns the most recent macro thesis.
  * This is shared context — the same thesis for all users.
  */
-router.get('/api/thesis/latest', requireAuth, async (req: Request, res: Response) => {
+router.get('/api/thesis/latest', requireAuth, requireFullTier, async (req: Request, res: Response) => {
   const { data, error } = await supaFetch('thesis_cache', {
     params: {
       order: 'generated_at.desc',
