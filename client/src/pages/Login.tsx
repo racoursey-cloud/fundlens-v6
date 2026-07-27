@@ -1,14 +1,17 @@
 /**
  * FundLens v6 — Login Page
  *
- * Magic link authentication. User enters their email, receives a
- * login link from Supabase (sent via Resend SMTP), clicks it, and
- * gets redirected back to the app with a valid session.
+ * Code-first email authentication (B3). User enters their email, Supabase
+ * emails a 6-digit code (via Resend SMTP), the user types it here, and
+ * verifyOtp establishes the session. Corporate mail scanners consume
+ * tokened links in transit — TerrAscend's did, live, twice — so the typed
+ * code is the sign-in factor; the email carries no link.
  *
- * No passwords. No sign-up form. The on_auth_user_created trigger
- * in Supabase auto-creates a user_profiles row on first login.
+ * No passwords. No sign-up form — the on_auth_user_created trigger
+ * auto-creates a user_profiles row on first sign-in, and who actually gets
+ * served is decided server-side by the B2 domain gate, not by this page.
  *
- * Session 8 deliverable. Destination: client/src/pages/Login.tsx
+ * Session 8 deliverable, reworked in B3. Destination: client/src/pages/Login.tsx
  * References: Master Reference §3 (Auth), §10 (Technology).
  */
 
@@ -68,8 +71,8 @@ export function Login() {
     }
   };
 
-  // B3 (docket 1): a typed code signs in even when the emailed link was
-  // already detonated by a corporate mail scanner.
+  // B3 (docket 1): corporate scanners consume tokened links in transit, so
+  // the emailed 6-digit code is the sign-in factor.
   const handleVerifyCode = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = code.trim();
@@ -174,7 +177,7 @@ export function Login() {
           padding: '32px',
         }}>
           {status === 'sent' ? (
-            /* ── Check your email: code entry first (scanner-proof), link second ── */
+            /* ── Check your email: code entry (scanner-proof) ── */
             <div style={{ textAlign: 'center' }}>
               <div style={{
                 fontSize: '40px',
@@ -335,7 +338,7 @@ export function Login() {
                   cursor: (status === 'sending' || !email.trim()) ? 'not-allowed' : 'pointer',
                 }}
               >
-                {status === 'sending' ? 'Sending...' : 'Send sign-in link'}
+                {status === 'sending' ? 'Sending...' : 'Email me a code'}
               </button>
             </form>
           )}
