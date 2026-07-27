@@ -68,6 +68,10 @@ export interface UserProfile {
    *  the Refresh Analysis button, and the /pipeline page. Optional because
    *  rows predating the a5_task4 migration lack the column. */
   is_admin?: boolean;
+  /** B3: server-enforced account tier (b1 migration + B2 enforcement).
+   *  'reference' = facts only — the client routes these accounts into the
+   *  reference shell. 'full' = the complete app. Flipped by Robert only. */
+  access_tier?: 'reference' | 'full';
 }
 
 export interface PipelineRun {
@@ -99,6 +103,66 @@ export interface Brief {
   generated_at: string;
   model_used: string;
 }
+
+// ─── Reference tier types (B3) ─────────────────────────────────────────────
+// Client mirrors of src/engine/reference-shape.ts — the server-side
+// allowlist serializer. A reference account's /api/scores responses carry
+// ONLY these fields; see that file for the enumerated contract.
+
+export interface ReferenceFund {
+  ticker: string;
+  name: string;
+  expense_ratio: number | null;
+  /** Raw trailing returns as decimals (0.042 = 4.2%) */
+  returns: {
+    threeMonth: number | null;
+    sixMonth: number | null;
+    nineMonth: number | null;
+    twelveMonth: number | null;
+  };
+  /** Sector name → weight fraction (~sums to 1) — also the HHI input */
+  sector_exposure: Record<string, number>;
+  top_holdings: Array<{
+    name: string | null;
+    ticker: string | null;
+    sector: string | null;
+    weight: number | null;
+  }>;
+  holdings_count: number | null;
+  fallback_count: number | null;
+  coverage: {
+    resolved_pct: number;
+    classified_pct: number;
+    passes_gate: boolean;
+  } | null;
+  as_of: {
+    report_date: string | null;
+    priced_as_of: string;
+    scored_at: string;
+  };
+}
+
+export interface ReferenceHolding {
+  name: string;
+  ticker: string | null;
+  pct: number;
+  sector: string | null;
+}
+
+// ─── 403 discrimination (B3, docket 3) ─────────────────────────────────────
+// The server sends two distinct 403 bodies; pages must render honest states
+// for each instead of painting empty content over them.
+//   'Access restricted'          — the account is outside the signup domain
+//                                  gate; NO route will ever serve it.
+//   'Full access required…'      — a reference account touched a full-tier
+//                                  route; the reference shell shouldn't
+//                                  reach these, but never render them blank.
+
+export const isAccessRestricted = (error: string | null): boolean =>
+  error === 'Access restricted';
+
+export const isFullTierRequired = (error: string | null): boolean =>
+  !!error && error.startsWith('Full access required');
 
 // ─── Core Fetch ────────────────────────────────────────────────────────────
 
@@ -161,6 +225,14 @@ export const fetchScores = () =>
 
 export const fetchFundScore = (ticker: string) =>
   apiFetch<{ fund: Fund; score: FundScore; holdings: unknown[] }>(`/api/scores/${ticker}`);
+
+// Reference-tier scores (B3): same endpoints, different response shape —
+// the server detects the account's tier and returns the allowlisted form.
+export const fetchReferenceScores = () =>
+  apiFetch<{ funds: ReferenceFund[]; asOf: string | null }>('/api/scores');
+
+export const fetchReferenceFundDetail = (ticker: string) =>
+  apiFetch<{ fund: ReferenceFund; holdings: ReferenceHolding[] }>(`/api/scores/${ticker}`);
 
 // Profile
 export const fetchProfile = () =>

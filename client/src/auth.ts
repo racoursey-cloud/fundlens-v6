@@ -51,13 +51,41 @@ export async function signInWithMagicLink(
     options: {
       // Where Supabase redirects after clicking the magic link
       emailRedirectTo: `${window.location.origin}/auth/callback`,
-      // A5 Task 4 / Decision 3 (ratified July 5, 2026): magic links sign in
-      // EXISTING accounts only — an unknown email creates nothing. This is
-      // what auto-provisioned the July 5 ghost account (a typo'd address
-      // became a shell user). New users are added by Robert in the Supabase
-      // dashboard (Authentication → Users → Invite user).
-      shouldCreateUser: false,
+      // B3 ruling (Robert, July 27, 2026 — supersedes Decision 3 of July 5):
+      // self-signup is open again. The ghost-account risk Decision 3 closed
+      // is now carried by a stronger layer — the B2 server-side domain gate
+      // (auth.ts requireAuth): an address outside ALLOWED_SIGNUP_DOMAINS
+      // with no access_exceptions row gets 403 on every API route, so a
+      // typo'd or outside signup can exist in auth but is served nothing.
+      shouldCreateUser: true,
     },
+  });
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true, error: null };
+}
+
+/**
+ * B3 (docket 1 — scanner-proof factor): verify the 6-digit code from the
+ * sign-in email. TerrAscend's email security detonates magic links in
+ * transit (robots click links), so the code a human types is the reliable
+ * path for @terrascend.com inboxes. Requires the auth email template to
+ * include {{ .Token }} (Robert's dashboard action, B3).
+ *
+ * On success Supabase establishes the session; onAuthStateChange fires and
+ * the app proceeds exactly as it does after a link click.
+ */
+export async function verifyEmailCode(
+  email: string,
+  code: string
+): Promise<{ success: boolean; error: string | null }> {
+  const { error } = await supabase.auth.verifyOtp({
+    email,
+    token: code,
+    type: 'email',
   });
 
   if (error) {

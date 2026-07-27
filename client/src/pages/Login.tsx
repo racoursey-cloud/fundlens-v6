@@ -1,20 +1,24 @@
 /**
  * FundLens v6 — Login Page
  *
- * Magic link authentication. User enters their email, receives a
- * login link from Supabase (sent via Resend SMTP), clicks it, and
- * gets redirected back to the app with a valid session.
+ * Code-first email authentication (B3). User enters their email, Supabase
+ * emails a 6-digit code (via Resend SMTP), the user types it here, and
+ * verifyOtp establishes the session. Corporate mail scanners consume
+ * tokened links in transit — TerrAscend's did, live, twice — so the typed
+ * code is the sign-in factor; the email carries no link.
  *
- * No passwords. No sign-up form. The on_auth_user_created trigger
- * in Supabase auto-creates a user_profiles row on first login.
+ * No passwords. No sign-up form — the on_auth_user_created trigger
+ * auto-creates a user_profiles row on first sign-in, and who actually gets
+ * served is decided server-side by the B2 domain gate, not by this page.
  *
- * Session 8 deliverable. Destination: client/src/pages/Login.tsx
+ * Session 8 deliverable, reworked in B3. Destination: client/src/pages/Login.tsx
  * References: Master Reference §3 (Auth), §10 (Technology).
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { verifyEmailCode } from '../auth';
 import { theme } from '../theme';
 
 export function Login() {
@@ -22,6 +26,19 @@ export function Login() {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
+  // B3 (docket 1): the 6-digit code path — the scanner-proof factor.
+  const [code, setCode] = useState('');
+  const [codeStatus, setCodeStatus] = useState<'idle' | 'verifying' | 'error'>('idle');
+  const [codeError, setCodeError] = useState('');
+  // Resend cooldown: Supabase rate-limits resends, so the button sits
+  // disabled for 60 seconds after every send (including the first).
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
 
   // Already logged in → go to app
   if (!loading && user) {
@@ -40,20 +57,56 @@ export function Login() {
 
     if (success) {
       setStatus('sent');
+      setCode('');
+      setCodeStatus('idle');
+      setCodeError('');
+      setResendCooldown(60);
     } else {
       setStatus('error');
-      // A5 Task 4 / Decision 3: unknown emails no longer create accounts
-      // (shouldCreateUser: false in auth.ts). Supabase reports that as a
-      // signup-not-allowed error — translate it into a polite refusal
-      // instead of a raw error string.
+      // B3: with self-signup open (shouldCreateUser: true), the old
+      // "unknown email" refusal no longer occurs at send time — access is
+      // decided server-side after sign-in. Whatever error arrives here is
+      // a real delivery/service problem, shown as such.
+      setErrorMsg(error || 'Something went wrong. Try again.');
+    }
+  };
+
+  // B3 (docket 1): corporate scanners consume tokened links in transit, so
+  // the emailed 6-digit code is the sign-in factor.
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = code.trim();
+    if (!trimmed) return;
+
+    setCodeStatus('verifying');
+    setCodeError('');
+
+    const { success, error } = await verifyEmailCode(email.trim(), trimmed);
+
+    if (!success) {
+      setCodeStatus('error');
       const raw = (error || '').toLowerCase();
-      if (raw.includes('signup') || raw.includes('sign up') || raw.includes('otp_disabled') || raw.includes('user not found')) {
-        setErrorMsg(
-          "This email isn't set up for FundLens. If you think it should be, contact Robert."
-        );
+      if (raw.includes('expired') || raw.includes('invalid')) {
+        setCodeError('That code didn’t work — it may have expired or been mistyped. Request a new email and try the fresh code.');
       } else {
-        setErrorMsg(error || 'Something went wrong. Try again.');
+        setCodeError(error || 'Could not verify the code. Try again.');
       }
+    }
+    // On success, onAuthStateChange sets the user and the redirect above
+    // leaves this page — no state update needed here.
+  };
+
+  // Resend: same send path, fresh code, fresh 60-second cooldown.
+  const handleResend = async () => {
+    if (resendCooldown > 0) return;
+    setCode('');
+    setCodeStatus('idle');
+    setCodeError('');
+    setResendCooldown(60);
+    const { success, error } = await signIn(email.trim());
+    if (!success) {
+      setCodeStatus('error');
+      setCodeError(error || 'Could not resend the code. Try again in a minute.');
     }
   };
 
@@ -99,9 +152,20 @@ export function Login() {
           <p style={{
             color: theme.colors.textMuted,
             fontSize: '14px',
+            margin: '0 0 6px',
+          }}>
+            401(k) fund information for TerrAscend
+          </p>
+          {/* B3 (docket 7): who this is for, stated up front and visibly —
+              access is decided by company email, not at this form. */}
+          <p style={{
+            color: theme.colors.text,
+            fontSize: '13px',
+            fontWeight: 500,
             margin: 0,
           }}>
-            401(k) fund scoring for TerrAscend
+            For TerrAscend employees — sign in with your{' '}
+            <strong>@terrascend.com</strong> email.
           </p>
         </div>
 
@@ -113,7 +177,7 @@ export function Login() {
           padding: '32px',
         }}>
           {status === 'sent' ? (
-            /* ── Check your email ── */
+            /* ── Check your email: code entry (scanner-proof) ── */
             <div style={{ textAlign: 'center' }}>
               <div style={{
                 fontSize: '40px',
@@ -132,14 +196,83 @@ export function Login() {
               <p style={{
                 color: theme.colors.textMuted,
                 fontSize: '14px',
-                margin: '0 0 24px',
+                margin: '0 0 16px',
                 lineHeight: 1.5,
               }}>
-                We sent a sign-in link to <strong style={{ color: theme.colors.text }}>{email}</strong>.
-                Click the link in the email to sign in.
+                We emailed a 6-digit code to{' '}
+                <strong style={{ color: theme.colors.text }}>{email}</strong>.
+                Type it below.
               </p>
+
+              <form onSubmit={handleVerifyCode} style={{ marginBottom: '16px' }}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="6-digit code"
+                  autoFocus
+                  style={{
+                    width: '100%',
+                    padding: '10px 14px',
+                    background: theme.colors.bg,
+                    border: `1px solid ${theme.colors.border}`,
+                    borderRadius: theme.radii.md,
+                    color: theme.colors.text,
+                    fontSize: '18px',
+                    fontFamily: theme.fonts.mono,
+                    textAlign: 'center',
+                    letterSpacing: '0.3em',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    marginBottom: '12px',
+                  }}
+                />
+                {codeStatus === 'error' && (
+                  <p style={{
+                    color: theme.colors.error,
+                    fontSize: '13px',
+                    margin: '0 0 12px',
+                    textAlign: 'left',
+                  }}>
+                    {codeError}
+                  </p>
+                )}
+                <button
+                  type="submit"
+                  disabled={codeStatus === 'verifying' || code.trim().length < 6}
+                  style={{
+                    ...buttonBase,
+                    background: theme.colors.accentBlue,
+                    color: '#fff',
+                    opacity: (codeStatus === 'verifying' || code.trim().length < 6) ? 0.6 : 1,
+                    cursor: (codeStatus === 'verifying' || code.trim().length < 6) ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {codeStatus === 'verifying' ? 'Verifying...' : 'Sign in with code'}
+                </button>
+              </form>
+
               <button
-                onClick={() => { setStatus('idle'); setEmail(''); }}
+                onClick={handleResend}
+                disabled={resendCooldown > 0}
+                style={{
+                  ...buttonBase,
+                  background: 'transparent',
+                  color: resendCooldown > 0 ? theme.colors.textDim : theme.colors.accentBlue,
+                  border: `1px solid ${theme.colors.border}`,
+                  cursor: resendCooldown > 0 ? 'not-allowed' : 'pointer',
+                  marginBottom: '12px',
+                }}
+              >
+                {resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : 'Resend code'}
+              </button>
+
+              <button
+                onClick={() => { setStatus('idle'); setEmail(''); setCode(''); setCodeStatus('idle'); setCodeError(''); }}
                 style={{
                   ...buttonBase,
                   background: 'transparent',
@@ -205,7 +338,7 @@ export function Login() {
                   cursor: (status === 'sending' || !email.trim()) ? 'not-allowed' : 'pointer',
                 }}
               >
-                {status === 'sending' ? 'Sending...' : 'Send sign-in link'}
+                {status === 'sending' ? 'Sending...' : 'Email me a code'}
               </button>
             </form>
           )}
@@ -217,7 +350,7 @@ export function Login() {
           fontSize: '12px',
           marginTop: '24px',
         }}>
-          No password needed. We&apos;ll email you a secure sign-in link.
+          No password needed. We&apos;ll email you a 6-digit code to type here.
         </p>
       </div>
     </div>
