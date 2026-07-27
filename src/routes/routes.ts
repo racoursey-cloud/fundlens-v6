@@ -523,7 +523,7 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
  * Complete the setup wizard. Sets factor weights, risk tolerance,
  * and selected funds in one call, then marks setup as complete.
  */
-router.post('/api/profile/setup', requireAuth, async (req: Request, res: Response) => {
+router.post('/api/profile/setup', requireAuth, requireFullTier, async (req: Request, res: Response) => {
   const { userId } = req as AuthenticatedRequest;
   const { weights, riskTolerance, selectedFundIds } = req.body;
 
