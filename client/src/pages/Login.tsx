@@ -12,7 +12,7 @@
  * References: Master Reference §3 (Auth), §10 (Technology).
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { verifyEmailCode } from '../auth';
@@ -27,6 +27,15 @@ export function Login() {
   const [code, setCode] = useState('');
   const [codeStatus, setCodeStatus] = useState<'idle' | 'verifying' | 'error'>('idle');
   const [codeError, setCodeError] = useState('');
+  // Resend cooldown: Supabase rate-limits resends, so the button sits
+  // disabled for 60 seconds after every send (including the first).
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
 
   // Already logged in → go to app
   if (!loading && user) {
@@ -48,6 +57,7 @@ export function Login() {
       setCode('');
       setCodeStatus('idle');
       setCodeError('');
+      setResendCooldown(60);
     } else {
       setStatus('error');
       // B3: with self-signup open (shouldCreateUser: true), the old
@@ -81,6 +91,20 @@ export function Login() {
     }
     // On success, onAuthStateChange sets the user and the redirect above
     // leaves this page — no state update needed here.
+  };
+
+  // Resend: same send path, fresh code, fresh 60-second cooldown.
+  const handleResend = async () => {
+    if (resendCooldown > 0) return;
+    setCode('');
+    setCodeStatus('idle');
+    setCodeError('');
+    setResendCooldown(60);
+    const { success, error } = await signIn(email.trim());
+    if (!success) {
+      setCodeStatus('error');
+      setCodeError(error || 'Could not resend the code. Try again in a minute.');
+    }
   };
 
   return (
@@ -172,9 +196,9 @@ export function Login() {
                 margin: '0 0 16px',
                 lineHeight: 1.5,
               }}>
-                We sent a 6-digit code and a sign-in link to{' '}
+                We emailed a 6-digit code to{' '}
                 <strong style={{ color: theme.colors.text }}>{email}</strong>.
-                Type the code below — or click the link.
+                Type it below.
               </p>
 
               <form onSubmit={handleVerifyCode} style={{ marginBottom: '16px' }}>
@@ -229,16 +253,20 @@ export function Login() {
                 </button>
               </form>
 
-              <p style={{
-                color: theme.colors.textDim,
-                fontSize: '12px',
-                margin: '0 0 16px',
-                lineHeight: 1.5,
-              }}>
-                On a work computer? Email security tools sometimes use up
-                sign-in links before you can click them — the code always
-                works.
-              </p>
+              <button
+                onClick={handleResend}
+                disabled={resendCooldown > 0}
+                style={{
+                  ...buttonBase,
+                  background: 'transparent',
+                  color: resendCooldown > 0 ? theme.colors.textDim : theme.colors.accentBlue,
+                  border: `1px solid ${theme.colors.border}`,
+                  cursor: resendCooldown > 0 ? 'not-allowed' : 'pointer',
+                  marginBottom: '12px',
+                }}
+              >
+                {resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : 'Resend code'}
+              </button>
 
               <button
                 onClick={() => { setStatus('idle'); setEmail(''); setCode(''); setCodeStatus('idle'); setCodeError(''); }}
@@ -319,8 +347,7 @@ export function Login() {
           fontSize: '12px',
           marginTop: '24px',
         }}>
-          No password needed. We&apos;ll email you a 6-digit code and a
-          sign-in link — either one signs you in.
+          No password needed. We&apos;ll email you a 6-digit code to type here.
         </p>
       </div>
     </div>
