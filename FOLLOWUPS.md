@@ -13,3 +13,5 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-07-10 | Ingest dedupe open-tracking map keeps only the last open vintage per obs-date — harmless post-guard, inelegant (A2 F4 dedupe report) | — |
 | 2026-07-10 | ~23,000 redundant value-identical OFR/Cleveland vintages from the capped-read era chain validly — honest, harmless; dedupe only via certified statement if storage ever matters (F6 residue, Fabio ruling) | — |
 | 2026-07-10 | ingest.ts fetchSeries has no explicit 'french' case — a wrongly-enabled RACE_EQ_TR fails loud but generic ("unknown source"); a cboe-style named refusal would read better (A2 Task 5) | — |
+| 2026-07-27 | App.tsx c9 header comment states reference profiles are born setup_completed=false — stale once b3_birth_state.sql runs; comment-only fix (ruled cosmetic, B3 amendment wave) | — |
+| 2026-07-27 | TierRouter + ProtectedRoute each fetch the profile at full-tier boot — dedupe candidate (context or prop-pass) (B3 amendment wave) | — |
