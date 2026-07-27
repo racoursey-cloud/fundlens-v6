@@ -111,10 +111,16 @@ async function findEligibleUsers(): Promise<UserProfileRow[]> {
     Date.now() - BRIEF.DELIVERY_INTERVAL_DAYS * 24 * 60 * 60 * 1000
   ).toISOString();
 
+  // B2 (B-series plan §B2 acceptance): only full-tier accounts are ever
+  // selected — a Brief is full-tier content (plan §1.2), and reference
+  // profiles are auto-created with setup_completed = true, which would
+  // otherwise make every new reference signup Brief-eligible here.
+
   // Users who have never received a Brief
   const { data: neverReceived } = await supaSelect<UserProfileRow[]>(
     'user_profiles',
     {
+      access_tier: 'eq.full',
       briefs_enabled: 'eq.true',
       setup_completed: 'eq.true',
       last_brief_sent_at: 'is.null',
@@ -125,6 +131,7 @@ async function findEligibleUsers(): Promise<UserProfileRow[]> {
   const { data: overdue } = await supaSelect<UserProfileRow[]>(
     'user_profiles',
     {
+      access_tier: 'eq.full',
       briefs_enabled: 'eq.true',
       setup_completed: 'eq.true',
       'last_brief_sent_at': `lt.${thirtyDaysAgo}`,
@@ -231,9 +238,12 @@ export async function regenerateBriefsForAllUsers(
 ): Promise<{ regenerated: number; errors: number }> {
   console.log(`[brief-scheduler] Regenerating Briefs for ALL users after pipeline ${pipelineRunId}`);
 
+  // B2: same full-tier filter as findEligibleUsers — Briefs never go to
+  // reference accounts by any code path.
   const { data: users } = await supaSelect<UserProfileRow[]>(
     'user_profiles',
     {
+      access_tier: 'eq.full',
       setup_completed: 'eq.true',
       briefs_enabled: 'eq.true',
     }
