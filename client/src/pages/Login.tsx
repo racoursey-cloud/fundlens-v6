@@ -228,9 +228,20 @@ export function Login() {
                     letterSpacing: '0.3em',
                     outline: 'none',
                     boxSizing: 'border-box',
-                    marginBottom: '12px',
+                    marginBottom: '8px',
                   }}
                 />
+                {/* Code lifetime (OTP expiration is 3600s in Supabase config)
+                    — stated so the resend countdown can't be misread as a
+                    code fuse. */}
+                <p style={{
+                  color: theme.colors.textDim,
+                  fontSize: '12px',
+                  margin: '0 0 12px',
+                  lineHeight: 1.5,
+                }}>
+                  Your code stays valid for an hour.
+                </p>
                 {codeStatus === 'error' && (
                   <p style={{
                     color: theme.colors.error,
@@ -268,7 +279,7 @@ export function Login() {
                   marginBottom: '12px',
                 }}
               >
-                {resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : 'Resend code'}
+                {resendCooldown > 0 ? `Resend available in ${resendCooldown}s` : 'Resend code'}
               </button>
 
               <button
@@ -338,7 +349,7 @@ export function Login() {
                   cursor: (status === 'sending' || !email.trim()) ? 'not-allowed' : 'pointer',
                 }}
               >
-                {status === 'sending' ? 'Sending...' : 'Email me a code'}
+                {status === 'sending' ? 'Sending...' : 'Email me a sign-in code'}
               </button>
             </form>
           )}
