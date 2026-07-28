@@ -5,7 +5,7 @@
 
 ## 1. State of the world
 
-- **B3 is COMPLETE and CLOSED.** PR #49 — fifteen one-file commits — merged to `main` (merge commit `2a31f0e`), deployed to **[www.fundlens.app**](https://www.fundlens.app**), migration executed, config corrected, live battery passed.
+- **B3 is COMPLETE and CLOSED.** PR #49 — fifteen one-file commits — merged to `main` (merge commit `2a31f0e`), deployed to **www.fundlens.app**, migration executed, config corrected, live battery passed.
 - **What shipped (client-only; no server files, no v8 files):**
   - Reference shell: **Funds | My Mix (B6-pending stub) | Help** tabs; no Refresh Analysis, no source badge, no pipeline polling; disclaimer footer (placeholder legal copy, pending Robert's final text) on every page.
   - Sortable facts grid: eight ratified columns, expense shown in both registers (percent and ~$/yr per $10,000), alphabetical default, user-driven sorting only, HHI label text with no good/bad colors, em-dash for missing.
