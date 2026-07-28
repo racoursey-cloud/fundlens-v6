@@ -1,10 +1,13 @@
 /**
- * FundLens — Reference Funds Grid (B3)
+ * FundLens — Reference Funds Grid (B3; amended B4 c3)
  *
  * The reference tier's home page: every active fund in the plan as a
- * sortable table of facts. Columns (plan §B3): Ticker, Name, Expense ratio
- * (with ~$/yr per $10,000 — Main Street register), 1Y return (raw figure),
+ * sortable table of facts. Columns: Ticker, Name, Expense ratio (percent;
+ * the dollar register lives in a native tooltip and in the detail's
+ * identity strip — Robert's grid-density ruling), 1Y return (raw figure),
  * Top holding, # holdings, Concentration (HHI label), Data as-of.
+ * Clicking a row opens the ReferenceFundDetail expansion beneath it (B4);
+ * a second click closes it.
  *
  * Honesty rules, enforced here:
  *   - Default order is alphabetical — the server returns it that way and
@@ -12,16 +15,23 @@
  *     own click on a factual column, sortable both directions.
  *   - No colors implying good/bad. hhiLabel() ships display colors for the
  *     full tier; this page uses its LABEL TEXT ONLY, in plain text color.
+ *   - Money markets show "Money market" in the concentration cell, never
+ *     an HHI label (F1 — "Highly Concentrated" was true math and the wrong
+ *     message on the plan's safest funds).
+ *   - As-of shows the EDGAR report_date or an em dash — never a scored_at
+ *     fallback (F2 — the emptiest rows must not look the freshest).
  *   - Missing data renders as an em dash, never as zero.
  *
  * Data: fetchReferenceScores() — the tier-shaped /api/scores response
  * (see src/engine/reference-shape.ts for the allowlist contract).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { fetchReferenceScores, type ReferenceFund } from '../../api';
 import { computeHHI, hhiLabel } from '../../utils/hhi';
 import { theme } from '../../theme';
+import { ReferenceFundDetail } from './FundDetail';
+import { MONEY_MARKET_TICKERS } from './constants';
 
 // ─── Sorting ───────────────────────────────────────────────────────────────
 
@@ -55,8 +65,8 @@ function concentration(f: ReferenceFund): { hhi: number | null; label: string | 
 }
 
 function asOfDate(f: ReferenceFund): string | null {
-  const d = f.as_of.report_date ?? f.as_of.scored_at ?? null;
-  return d ? d.slice(0, 10) : null;
+  // F2: report_date or nothing — no scored_at fallback.
+  return f.as_of.report_date ? f.as_of.report_date.slice(0, 10) : null;
 }
 
 const COLUMNS: Column[] = [
@@ -72,11 +82,17 @@ const COLUMNS: Column[] = [
 
 // ─── Formatting (facts, plainly) ───────────────────────────────────────────
 
+// B4 c3: percent only — the dollar register moved to the cell's native
+// tooltip (below) and the detail identity strip (grid-density ruling).
 function fmtExpense(er: number | null): string {
   if (er === null) return '—';
-  const pct = (er * 100).toFixed(2);
-  const dollars = Math.round(er * 10_000);
-  return `${pct}% (~$${dollars}/yr per $10,000)`;
+  return `${(er * 100).toFixed(2)}%`;
+}
+
+/** Native browser title tooltip for the expense cell — no library, no JS */
+function expenseTooltip(er: number | null): string | undefined {
+  if (er === null) return undefined;
+  return `≈ $${Math.round(er * 10_000)} per year per $10,000 invested`;
 }
 
 function fmtReturn(r: number | null): string {
@@ -95,6 +111,9 @@ export function ReferenceFunds() {
   // Default: alphabetical by ticker, ascending — matches the server order.
   const [sortKey, setSortKey] = useState<ColumnKey>('ticker');
   const [sortDir, setSortDir] = useState<1 | -1>(1);
+
+  // B4: which fund's detail expansion is open (one at a time; click toggles)
+  const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
 
   useEffect(() => {
     fetchReferenceScores().then(res => {
@@ -167,7 +186,8 @@ export function ReferenceFunds() {
       </h1>
       <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: `0 0 ${theme.spacing.lg}` }}>
         {funds.length} funds, listed alphabetically. Click any column heading
-        to sort it yourself — the app applies no ranking of its own.
+        to sort it yourself — the app applies no ranking of its own. Click a
+        fund to look inside it.
         {asOf ? ` Data updated ${asOf.slice(0, 10)}.` : ''}
       </p>
 
@@ -202,22 +222,42 @@ export function ReferenceFunds() {
           <tbody>
             {sorted.map(f => {
               const conc = concentration(f);
+              const isMM = MONEY_MARKET_TICKERS.has(f.ticker);
+              const isExpanded = expandedTicker === f.ticker;
               return (
-                <tr key={f.ticker}>
-                  <td style={{ ...cellStyle, textAlign: 'left', fontFamily: theme.fonts.mono, color: theme.colors.text }}>
-                    {f.ticker}
-                  </td>
-                  <td style={{ ...cellStyle, textAlign: 'left', color: theme.colors.text }}>{f.name}</td>
-                  <td style={{ ...cellStyle, textAlign: 'right' }}>{fmtExpense(f.expense_ratio)}</td>
-                  <td style={{ ...cellStyle, textAlign: 'right' }}>{fmtReturn(f.returns.twelveMonth)}</td>
-                  <td style={{ ...cellStyle, textAlign: 'left' }}>{topHoldingName(f) ?? '—'}</td>
-                  <td style={{ ...cellStyle, textAlign: 'right' }}>
-                    {f.holdings_count && f.holdings_count > 0 ? f.holdings_count : '—'}
-                  </td>
-                  {/* Label text only — no good/bad color coding (plan §B3) */}
-                  <td style={{ ...cellStyle, textAlign: 'left' }}>{conc.label ?? '—'}</td>
-                  <td style={{ ...cellStyle, textAlign: 'right' }}>{asOfDate(f) ?? '—'}</td>
-                </tr>
+                <Fragment key={f.ticker}>
+                  <tr
+                    onClick={() => setExpandedTicker(prev => (prev === f.ticker ? null : f.ticker))}
+                    style={{ cursor: 'pointer', background: isExpanded ? theme.colors.surface : undefined }}
+                  >
+                    <td style={{ ...cellStyle, textAlign: 'left', fontFamily: theme.fonts.mono, color: theme.colors.text }}>
+                      {f.ticker}
+                    </td>
+                    <td style={{ ...cellStyle, textAlign: 'left', color: theme.colors.text }}>{f.name}</td>
+                    {/* B4: dollars live in the native title tooltip */}
+                    <td style={{ ...cellStyle, textAlign: 'right' }} title={expenseTooltip(f.expense_ratio)}>
+                      {fmtExpense(f.expense_ratio)}
+                    </td>
+                    <td style={{ ...cellStyle, textAlign: 'right' }}>{fmtReturn(f.returns.twelveMonth)}</td>
+                    <td style={{ ...cellStyle, textAlign: 'left' }}>{topHoldingName(f) ?? '—'}</td>
+                    <td style={{ ...cellStyle, textAlign: 'right' }}>
+                      {f.holdings_count && f.holdings_count > 0 ? f.holdings_count : '—'}
+                    </td>
+                    {/* Label text only — no good/bad color coding (plan §B3).
+                        F1: money markets say what they are, never an HHI label. */}
+                    <td style={{ ...cellStyle, textAlign: 'left', ...(isMM ? { color: theme.colors.textDim } : {}) }}>
+                      {isMM ? 'Money market' : conc.label ?? '—'}
+                    </td>
+                    <td style={{ ...cellStyle, textAlign: 'right' }}>{asOfDate(f) ?? '—'}</td>
+                  </tr>
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={COLUMNS.length} style={{ padding: 0, borderBottom: `1px solid ${theme.colors.border}` }}>
+                        <ReferenceFundDetail fund={f} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
