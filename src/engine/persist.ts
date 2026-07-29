@@ -346,7 +346,13 @@ export async function persistPipelineResults(
     let fundInsertFailed = false;
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500);
-      const { error } = await supaInsert('holdings_cache', chunk, { upsert: true });
+      // Repair Record c4: name the real duplicate key so a same-accession
+      // re-run updates rows in place instead of colliding with the unique
+      // index (the c3 supaInsert note in supabase.ts explains the mechanism).
+      const { error } = await supaInsert('holdings_cache', chunk, {
+        upsert: true,
+        onConflict: 'fund_id,accession_number,cusip',
+      });
       if (!error) {
         holdingsWritten += chunk.length;
       } else {
@@ -452,7 +458,10 @@ export async function persistPipelineResults(
     funds_failed: result.stats.fundsFailed,
     total_holdings: result.stats.totalHoldingsScored,
     duration_ms: result.stats.durationMs,
-    errors: result.stats.errors,
+    // Repair Record c2: include persist's own failures, so a save-step error
+    // can never again hide behind an empty error list (July 29, 2026: four
+    // runs failed all 21 holdings inserts yet their run rows showed errors []).
+    errors: [...result.stats.errors, ...errors],
   }, { id: `eq.${runId}`, status: 'eq.running' });
 
   if (!completedRows || (Array.isArray(completedRows) && completedRows.length === 0)) {
