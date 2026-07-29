@@ -60,8 +60,10 @@ function buildSectorSlices(sectorExposure: Record<string, number>): DonutSlice[]
   const slices: DonutSlice[] = [];
   let otherPct = 0;
 
-  for (const [sector, fraction] of Object.entries(sectorExposure)) {
-    const pct = fraction * 100;
+  for (const [sector, value] of Object.entries(sectorExposure)) {
+    // FSPGX wave c4: the stored map is already on the 0–100 scale
+    // (DonutChart's contract) — pass it through, never multiply.
+    const pct = value;
     if (pct <= 0) continue;
     if (sector in REFERENCE_SECTOR_COLORS && sector !== 'Other') {
       slices.push({ id: sector, label: sector, pct, color: REFERENCE_SECTOR_COLORS[sector]! });
