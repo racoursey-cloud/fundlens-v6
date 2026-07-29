@@ -452,7 +452,10 @@ export async function persistPipelineResults(
     funds_failed: result.stats.fundsFailed,
     total_holdings: result.stats.totalHoldingsScored,
     duration_ms: result.stats.durationMs,
-    errors: result.stats.errors,
+    // Repair Record c2: include persist's own failures, so a save-step error
+    // can never again hide behind an empty error list (July 29, 2026: four
+    // runs failed all 21 holdings inserts yet their run rows showed errors []).
+    errors: [...result.stats.errors, ...errors],
   }, { id: `eq.${runId}`, status: 'eq.running' });
 
   if (!completedRows || (Array.isArray(completedRows) && completedRows.length === 0)) {
