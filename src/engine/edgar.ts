@@ -434,6 +434,78 @@ async function findLatestNportFiling(
     return candidates[0];
   }
 
+  // ── Series-direct resolution (FSPGX wave c2; architecture ruled by
+  //    Robert, July 28, 2026) ──
+  // PRIMARY PATH: ask the browse-edgar CGI for this series' own newest
+  // NPORT-P accessions directly — EDGAR accepts the S-number as the CIK
+  // parameter — then find that accession in the candidates already
+  // collected above. The whole array is searched: no cap applies to a
+  // string match. The scan below stays byte-unchanged as the FALLBACK;
+  // its 60 cap is what left FSPGX (position 64 of 599 in the Salem
+  // Street trust feed) dark from July 25.
+  // Host: www.sec.gov — the same host the Archives peek
+  // (checkFilingSeriesId) fetches from; no new host introduced.
+  // Sequential like every other EDGAR call — delay first, never parallel.
+  try {
+    await delay(PIPELINE.API_CALL_DELAY_MS);
+    const atomUrl =
+      'https://www.sec.gov/cgi-bin/browse-edgar' +
+      `?action=getcompany&CIK=${targetSeriesId}&type=NPORT-P&count=10&output=atom`;
+    const atomResponse = await fetch(atomUrl, {
+      headers: { 'User-Agent': EDGAR.USER_AGENT },
+    });
+
+    if (atomResponse.ok) {
+      const atomText = await atomResponse.text();
+      // Accessions in document order (newest first). Plain regex, no new
+      // dependencies. EDGAR's atom output historically misspells the tag
+      // as "accession-nunber" — both spellings are accepted.
+      const accessions = [...atomText.matchAll(
+        /<accession-n(?:um|un)ber>\s*([0-9-]+)\s*<\/accession-n(?:um|un)ber>/g
+      )].map(m => m[1]);
+
+      if (accessions.length > 0) {
+        const newestAccession = accessions[0];
+        const direct = candidates.find(c => c.accessionNumber === newestAccession);
+        if (direct) {
+          // One confirmation peek on the single candidate, then return.
+          await delay(PIPELINE.API_CALL_DELAY_MS);
+          const confirmed = await checkFilingSeriesId(
+            cik,
+            direct.accessionNumber,
+            direct.primaryDoc,
+            targetSeriesId
+          );
+          if (confirmed) {
+            console.log(
+              `[edgar] Series-direct match: series ${targetSeriesId} → accession ${direct.accessionNumber} (browse-edgar atom, confirmed by header peek)`
+            );
+            return direct;
+          }
+          console.warn(
+            `[edgar] Series-direct accession ${newestAccession} failed the confirmation peek for series ${targetSeriesId} — falling back to candidate scan`
+          );
+        } else {
+          console.warn(
+            `[edgar] Series-direct accession ${newestAccession} for series ${targetSeriesId} not found among ${candidates.length} candidates — falling back to candidate scan`
+          );
+        }
+      } else {
+        console.warn(
+          `[edgar] Series-direct atom for series ${targetSeriesId} returned no accessions — falling back to candidate scan`
+        );
+      }
+    } else {
+      console.warn(
+        `[edgar] Series-direct atom request failed (HTTP ${atomResponse.status}) for series ${targetSeriesId} — falling back to candidate scan`
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[edgar] Series-direct lookup error for series ${targetSeriesId} — falling back to candidate scan: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
   // ── Series-aware matching ──
   // Fund families (Vanguard, BlackRock, TCW, etc.) file separate NPORT-P
   // for each series under the same CIK. We MUST check the XML header
@@ -476,7 +548,7 @@ async function findLatestNportFiling(
   }
 
   console.warn(
-    `[edgar] No NPORT-P filing matched series ${targetSeriesId} among ${candidates.length} candidates (checked up to 60)`
+    `[edgar] No NPORT-P filing matched series ${targetSeriesId} among ${candidates.length} candidates — both paths failed: series-direct (browse-edgar atom) and the fallback scan (checked up to 60)`
   );
   return null;
 }

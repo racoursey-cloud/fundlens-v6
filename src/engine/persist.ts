@@ -212,12 +212,34 @@ export async function persistPipelineResults(
   // ── 3. Upsert holdings to holdings_cache (batched) ────────────────────
   // Write all resolved holdings for each fund so the UI can show
   // company-level drill-in (inline fund detail, sector donut drill).
-  // Uses upsert on (fund_id, cusip) to avoid duplicates.
+  // Unique index: (fund_id, accession_number, cusip). Order (FSPGX wave
+  // c3): insert the fresh filing's rows FIRST (chunked upsert — real
+  // accessions make re-runs idempotent against the index), then, only
+  // after every chunk succeeds, delete the fund's rows carrying a
+  // DIFFERENT accession (older filings + legacy blank-accession rows).
+  // A fund is never empty mid-persist; a failed insert keeps its last
+  // good filing serving.
   // Batched per-fund: one Supabase call per fund instead of per holding.
 
   for (const [ticker, detail] of result.fundDetails) {
     const fund = funds.find(f => f.ticker === ticker);
     if (!fund) continue;
+
+    // FSPGX wave c3: real filing stamps. fundDetails carries no filing
+    // metadata (mid-wave gate finding, confirmed A3) — this run's Dossier
+    // does: one accession and one report date per fund, applied to all its
+    // rows. The fallback below is a tripwire expected never to fire (a
+    // fund whose EDGAR fetch failed produces no rows): keep the fetch-day
+    // stamp, warn loudly, never invent a date.
+    const stampDossier = dossierByTicker.get(ticker);
+    const accessionNumber = stampDossier?.accessionNumber ?? '';
+    const reportDate = stampDossier?.reportDate ?? new Date().toISOString().slice(0, 10);
+    if (!stampDossier?.accessionNumber || !stampDossier?.reportDate) {
+      console.warn(
+        `[persist] Holdings ${ticker}: LOUD — dossier carries no filing stamps for a fund that produced rows; ` +
+        `keeping fetch-day report_date${accessionNumber ? '' : ' and blank accession'} — investigate`
+      );
+    }
 
     const mappedRows = detail.holdings.map(holding => ({
       fund_id: fund.id,
@@ -234,8 +256,8 @@ export async function persistPipelineResults(
       sector: holding.sector,
       is_look_through: holding.isLookThrough,
       parent_fund_name: holding.parentFundName,
-      accession_number: '',
-      report_date: new Date().toISOString().slice(0, 10),
+      accession_number: accessionNumber,
+      report_date: reportDate,
       // A4 Task 3: industry harvest + liquidity fields (Task 4 writes
       // momentum_eligible; null until then / for non-enrichable holdings)
       industry: holding.industry ?? null,
@@ -316,24 +338,11 @@ export async function persistPipelineResults(
 
     if (rows.length === 0) continue;
 
-    // ── Holdings persist fix: Delete stale rows before inserting fresh ones ──
-    // The unique index on holdings_cache is (fund_id, accession_number, cusip).
-    // Old pipeline runs wrote rows with real accession numbers from EDGAR,
-    // but the current pipeline always sets accession_number = ''. This means
-    // upsert can't match old rows (different accession_number), creating
-    // duplicates — and the API returns mixed stale (NULL sector) + fresh rows.
-    // Fix: wipe all holdings for this fund first, then insert the fresh set.
-    const { error: deleteError } = await supaDelete('holdings_cache', {
-      fund_id: `eq.${fund.id}`,
-    });
-    if (deleteError) {
-      console.warn(`[persist] Holdings ${ticker}: failed to delete stale rows — ${deleteError}`);
-    }
-
     // A5 Task 1: insert in chunks of 500. A full-examination fund (VFWAX:
     // ~3,900 rows) would otherwise ride in one ~1.5MB request — chunking is
-    // cheap insurance against body-size limits. The delete above already
-    // cleared the fund, so per-chunk upserts cannot collide.
+    // cheap insurance against body-size limits. With real accessions, the
+    // unique index (fund_id, accession_number, cusip) makes per-chunk
+    // upserts idempotent on re-runs — no pre-insert delete is needed.
     let fundInsertFailed = false;
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500);
@@ -345,8 +354,25 @@ export async function persistPipelineResults(
         errors.push(`Holdings ${ticker}: batch upsert failed (rows ${i + 1}–${i + chunk.length}) — ${error}`);
       }
     }
-    if (fundInsertFailed) {
-      console.warn(`[persist] Holdings ${ticker}: one or more insert chunks failed — see errors`);
+
+    // ── FSPGX wave c3: scoped delete AFTER a fully successful insert ──
+    // Purges rows from older filings and every legacy blank-accession row
+    // (including FSPGX's July-24 group) on each fund's first good fetch.
+    // On any chunk failure the delete is skipped: the fund keeps serving
+    // its last good filing instead of going empty — the July-1 zero-row
+    // window ceases to exist by construction.
+    if (!fundInsertFailed) {
+      const { error: purgeError } = await supaDelete('holdings_cache', {
+        fund_id: `eq.${fund.id}`,
+        accession_number: `neq.${accessionNumber}`,
+      });
+      if (purgeError) {
+        console.warn(`[persist] Holdings ${ticker}: failed to purge superseded rows — ${purgeError}`);
+      }
+    } else {
+      console.warn(
+        `[persist] Holdings ${ticker}: one or more insert chunks failed — skipping the scoped delete; existing rows kept serving`
+      );
     }
   }
 
