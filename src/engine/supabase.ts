@@ -238,11 +238,16 @@ export async function supaSelect<T = unknown>(
 /**
  * Insert one or more rows into a table.
  * Returns the inserted row(s).
+ * Repair Record c3: options.onConflict names the unique columns that define a
+ * duplicate for upserts (PostgREST on_conflict query parameter, e.g.
+ * 'fund_id,accession_number,cusip'). Without it, merge-duplicates falls back
+ * to the primary key, and rows that collide on any other unique index fail
+ * instead of updating in place.
  */
 export async function supaInsert<T = unknown>(
   table: string,
   rows: unknown,
-  options: { single?: boolean; upsert?: boolean } = {}
+  options: { single?: boolean; upsert?: boolean; onConflict?: string } = {}
 ): Promise<SupaFetchResult<T>> {
   return supaFetch<T>(table, {
     method: 'POST',
@@ -250,6 +255,7 @@ export async function supaInsert<T = unknown>(
     returning: true,
     single: options.single,
     upsert: options.upsert,
+    ...(options.onConflict ? { params: { on_conflict: options.onConflict } } : {}),
   });
 }
 
