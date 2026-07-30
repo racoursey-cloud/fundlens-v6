@@ -309,7 +309,9 @@ export async function generateReferenceSummaries(
       lines.push(`- Largest holdings: ${largest.join(', ')}`);
     }
 
-    // Top three sector exposures
+    // Top three sector exposures. sectorExposure is stored on the 0-100
+    // percent scale, proven live July 30 — emit the stored value directly,
+    // no rescale (B7 c6; returns and expense ratio remain fractions).
     const sectors = asObj(details.sectorExposure);
     if (sectors) {
       const top3 = Object.entries(sectors)
@@ -317,7 +319,7 @@ export async function generateReferenceSummaries(
         .filter((e): e is readonly [string, number] => e[1] !== null)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
-        .map(([s, w]) => `${s} ${(w * 100).toFixed(0)}%`);
+        .map(([s, w]) => `${s} ${w.toFixed(0)}%`);
       if (top3.length > 0) lines.push(`- Largest sector exposures: ${top3.join(', ')}`);
     }
 
