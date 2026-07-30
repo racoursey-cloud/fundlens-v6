@@ -9,8 +9,6 @@
  * badge, and all pipeline polling. Reference accounts see facts, not the
  * machinery — this shell makes no /api/pipeline/* calls at all.
  *
- * MyMixComingSoon lives here until B6 ships the real My Mix page; it is a
- * static stub with no inputs and no API calls.
  */
 
 import { NavLink, Outlet } from 'react-router-dom';
@@ -153,32 +151,6 @@ export function ReferenceShell() {
       </main>
 
       <ReferenceFooter />
-    </div>
-  );
-}
-
-// ─── My Mix stub (replaced by the real page in B6) ─────────────────────────
-
-export function MyMixComingSoon() {
-  return (
-    <div
-      style={{
-        maxWidth: 560,
-        margin: '0 auto',
-        padding: `${theme.spacing.xxl} ${theme.spacing.md}`,
-        textAlign: 'center',
-        fontFamily: theme.fonts.body,
-      }}
-    >
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: theme.colors.text, margin: '0 0 12px' }}>
-        My Mix is coming soon
-      </h1>
-      <p style={{ fontSize: 14, color: theme.colors.textMuted, lineHeight: 1.6, margin: 0 }}>
-        You&apos;ll be able to sketch an example mix of the funds in the plan
-        and see its combined cost and diversification — for your own
-        reference only. Nothing you enter is graded, compared, or
-        recommended, and nothing is saved unless you choose to save it.
-      </p>
     </div>
   );
 }
