@@ -244,6 +244,36 @@ export const updateProfile = (updates: Partial<UserProfile>) =>
     body: JSON.stringify(updates),
   });
 
+// Example Mix (B6) — the caller's own saved example allocation (B5 routes).
+// Server contract: GET 200 → { allocation: row }; GET with nothing saved →
+// 404 { error: 'No saved example mix' }; PUT validates then answers
+// { allocation: row }; DELETE answers { deleted: true } whether or not a
+// row existed.
+export interface ExampleAllocationRow {
+  user_id: string;
+  allocations: Array<{ fund_id: string; pct: number }>;
+  updated_at: string;
+}
+
+export const fetchExampleAllocation = () =>
+  apiFetch<{ allocation: ExampleAllocationRow }>('/api/example-allocation');
+
+export const saveExampleAllocation = (allocations: Array<{ fund_id: string; pct: number }>) =>
+  apiFetch<{ allocation: ExampleAllocationRow }>('/api/example-allocation', {
+    method: 'PUT',
+    body: JSON.stringify({ allocations }),
+  });
+
+export const deleteExampleAllocation = () =>
+  apiFetch<{ deleted: boolean }>('/api/example-allocation', {
+    method: 'DELETE',
+  });
+
+/** The literal 404 body the GET route sends for a blank first visit —
+ *  mirrors the isAccessRestricted pattern above. */
+export const isNoSavedMix = (error: string | null): boolean =>
+  error === 'No saved example mix';
+
 export const completeSetup = (data: {
   weights: { costEfficiency: number; holdingsQuality: number; positioning: number; momentum: number };
   riskTolerance: number;
