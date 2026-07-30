@@ -18,6 +18,9 @@
  *     GET  /api/profile               — current user's profile
  *     PUT  /api/profile               — update user's profile (weights, risk, etc.)
  *     POST /api/profile/setup         — complete setup wizard
+ *     GET  /api/example-allocation    — the caller's saved example mix
+ *     PUT  /api/example-allocation    — save or replace the caller's example mix
+ *     DELETE /api/example-allocation  — delete the caller's example mix
  *     GET  /api/pipeline/status       — latest pipeline run status
  *     POST /api/pipeline/run          — trigger a fresh pipeline run
  *     POST /api/pipeline/retry        — retry a failed pipeline run
@@ -39,7 +42,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth, AuthenticatedRequest } from '../engine/auth.js';
-import { supaFetch, supaSelect, supaInsert, supaUpdate } from '../engine/supabase.js';
+import { supaFetch, supaSelect, supaInsert, supaUpdate, supaDelete } from '../engine/supabase.js';
 import { DEFAULT_FACTOR_WEIGHTS, ADMIN_EMAILS, RISK_MIN, RISK_MAX } from '../engine/constants.js';
 import {
   shapeFundForReference,
@@ -571,6 +574,165 @@ router.post('/api/profile/setup', requireAuth, requireFullTier, async (req: Requ
   }
 
   res.json({ profile: data, message: 'Setup complete' });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXAMPLE MIX (B-series B5)
+// ═══════════════════════════════════════════════════════════════════════════
+// The user's self-authored "example mix": one private row per account in the
+// example_allocations table (B1 migration). The table is written only through
+// these three routes; the nightly pipeline and the Briefs engine never read
+// or write it. All three routes are requireAuth only — both tiers may use
+// them, because it is the caller's own data. Every database touch is scoped
+// to the JWT's userId ((req as AuthenticatedRequest).userId) and nothing
+// else: no route ever accepts a user id from the request body or query.
+
+/**
+ * GET /api/example-allocation
+ * Returns the caller's saved example mix, or 404 if none is saved.
+ */
+router.get('/api/example-allocation', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = req as AuthenticatedRequest;
+
+  const { data, error } = await supaFetch('example_allocations', {
+    params: { user_id: `eq.${userId}` },
+    single: true,
+  });
+
+  if (error) {
+    console.error('[routes] Failed to fetch example allocation:', error);
+    res.status(500).json({ error: 'Could not load your example mix. Please try again later.' });
+    return;
+  }
+
+  // A2 Task 6 behavior: a single-row request matching zero rows returns
+  // error:null, so a missing row is detected by !data.
+  if (!data) {
+    res.status(404).json({ error: 'No saved example mix' });
+    return;
+  }
+
+  res.json({ allocation: data });
+});
+
+/**
+ * PUT /api/example-allocation
+ * Saves (or replaces) the caller's example mix.
+ *
+ * Body: { allocations: [{ fund_id, pct }, ...] }
+ * Validation, in order — each failure is a 400 with a plain-words message:
+ *   1. allocations is a non-empty array of objects
+ *   2. every fund_id is a string; no fund_id appears twice
+ *   3. every pct is a finite number, at least 0, with at most one decimal
+ *      place (more precision is rejected, never silently rounded)
+ *   4. the percentages sum to 100, within 0.05 either way
+ *   5. every fund_id exists in the active fund set (fetched server-side;
+ *      if that fetch fails the request is a 500 — never validated against
+ *      a stale or empty list)
+ */
+router.put('/api/example-allocation', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { allocations } = req.body || {};
+
+  // 1. Non-empty array of objects
+  if (
+    !Array.isArray(allocations) ||
+    allocations.length === 0 ||
+    allocations.some(a => a === null || typeof a !== 'object' || Array.isArray(a))
+  ) {
+    res.status(400).json({ error: 'Send a non-empty list of funds, each with a fund_id and a pct.' });
+    return;
+  }
+
+  // 2. Every fund_id is a string; no duplicates
+  const fundIds = allocations.map(a => a.fund_id);
+  if (fundIds.some(id => typeof id !== 'string')) {
+    res.status(400).json({ error: 'Every fund in the list needs a fund_id (text).' });
+    return;
+  }
+  if (new Set(fundIds).size !== fundIds.length) {
+    res.status(400).json({ error: 'Each fund can appear only once in the mix.' });
+    return;
+  }
+
+  // 3. Every pct is a finite number, ≥ 0, at most one decimal place.
+  //    The one-decimal test allows for floating-point representation
+  //    (12.1 is stored as the nearest double), so it checks that pct × 10
+  //    is within a hair of a whole number rather than demanding exactness.
+  for (const a of allocations) {
+    const pct = a.pct;
+    if (typeof pct !== 'number' || !Number.isFinite(pct) || pct < 0) {
+      res.status(400).json({ error: 'Every percentage must be a number of at least 0.' });
+      return;
+    }
+    if (Math.abs(pct * 10 - Math.round(pct * 10)) > 1e-9) {
+      res.status(400).json({ error: 'Percentages can have at most one decimal place (like 12.5).' });
+      return;
+    }
+  }
+
+  // 4. Sum within 100 ± 0.05
+  const sum = allocations.reduce((acc, a) => acc + a.pct, 0);
+  if (Math.abs(sum - 100) > 0.05) {
+    res.status(400).json({ error: `The percentages must add up to 100 (yours add up to ${sum.toFixed(1)}).` });
+    return;
+  }
+
+  // 5. Every fund_id exists in the active fund set — fetched fresh here.
+  //    A failed fetch is a 500, never a validation pass against a stale or
+  //    empty list.
+  const { data: activeFunds, error: fundsError } = await supaSelect<Array<{ id: string }>>('funds', {
+    is_active: 'eq.true',
+    select: 'id',
+  });
+  if (fundsError || !activeFunds) {
+    console.error('[routes] Failed to fetch active funds for mix validation:', fundsError);
+    res.status(500).json({ error: 'Could not check the fund list. Please try again later.' });
+    return;
+  }
+  const activeIds = new Set(activeFunds.map(f => f.id));
+  const unknown = fundIds.filter(id => !activeIds.has(id));
+  if (unknown.length > 0) {
+    res.status(400).json({ error: 'One or more funds in the mix are not in the current fund menu.' });
+    return;
+  }
+
+  // Upsert the caller's single row (example_allocations has a UNIQUE
+  // constraint on user_id). The explicit updated_at is required — the table
+  // has no trigger, so an upsert would not move it on its own.
+  const { data, error } = await supaInsert('example_allocations', {
+    user_id: userId,
+    allocations,
+    updated_at: new Date().toISOString(),
+  }, { upsert: true, onConflict: 'user_id', single: true });
+
+  if (error) {
+    console.error('[routes] Failed to save example allocation:', error);
+    res.status(500).json({ error: 'Could not save your example mix. Please try again later.' });
+    return;
+  }
+
+  res.json({ allocation: data });
+});
+
+/**
+ * DELETE /api/example-allocation
+ * Removes the caller's saved example mix. Deleting when nothing is saved is
+ * still a success — the state the caller asked for is the state they have.
+ */
+router.delete('/api/example-allocation', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = req as AuthenticatedRequest;
+
+  const { error } = await supaDelete('example_allocations', { user_id: `eq.${userId}` });
+
+  if (error) {
+    console.error('[routes] Failed to delete example allocation:', error);
+    res.status(500).json({ error: 'Could not delete your example mix. Please try again later.' });
+    return;
+  }
+
+  res.json({ deleted: true });
 });
 
 
