@@ -44,7 +44,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppShell } from './components/AppShell';
-import { ReferenceShell, MyMixComingSoon } from './components/ReferenceShell';
+import { ReferenceShell } from './components/ReferenceShell';
 import { Login } from './pages/Login';
 import { SetupWizard } from './pages/SetupWizard';
 import { AuthCallback } from './pages/AuthCallback';
@@ -55,6 +55,7 @@ import { Pipeline } from './pages/Pipeline';
 import { Help } from './pages/Help';
 import { FundLens } from './pages/FundLens';
 import { ReferenceFunds } from './pages/reference/Funds';
+import { ReferenceMyMix } from './pages/reference/MyMix';
 import { ReferenceHelp } from './pages/reference/Help';
 import { fetchProfile, isAccessRestricted, type UserProfile } from './api';
 import { theme } from './theme';
@@ -195,7 +196,7 @@ function TierRouter() {
       <Routes>
         <Route element={<ReferenceShell />}>
           <Route index element={<ReferenceFunds />} />
-          <Route path="mymix" element={<MyMixComingSoon />} />
+          <Route path="mymix" element={<ReferenceMyMix />} />
           <Route path="help" element={<ReferenceHelp />} />
         </Route>
         {/* Every full-tier path (/research, /fundlens, /settings, /pipeline,
