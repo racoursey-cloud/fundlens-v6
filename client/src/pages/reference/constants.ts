@@ -65,6 +65,10 @@ export function isCashSweepHolding(name: string): boolean {
 // Composition colors only: a sector's color says what the fund HOLDS,
 // never whether that is good or bad. Any sector missing from this map
 // renders the house #71717a gray and legends as "Other".
+//
+// 'Money market' and 'No sector data' are reference-only mix-level buckets
+// added in B6 (produced by client/src/engine/example-mix.ts, never present
+// in fund-level sector maps) and are not part of the full-tier copy.
 
 export const REFERENCE_SECTOR_COLORS: Record<string, string> = {
   Technology: '#3b82f6',
@@ -81,6 +85,8 @@ export const REFERENCE_SECTOR_COLORS: Record<string, string> = {
   'Precious Metals': '#eab308',
   'Fixed Income': '#64748b',
   'Cash & Equivalents': '#94a3b8',
+  'Money market': '#38bdf8',
+  'No sector data': '#c4b5fd',
   Other: '#71717a',
 };
 
