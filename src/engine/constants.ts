@@ -161,6 +161,14 @@ export const CLAUDE = {
   PROXY_ENDPOINT: '/api/claude',
 } as const;
 
+// ─── Reference Tier: Summary Flag (B-series B7) ─────────────────────────────
+// B7 feature flag. Gates BOTH the emission of summary_reference in reference
+// payloads (reference-shape.ts) AND the serving-side reference_summaries
+// lookups (routes.ts). Ships false. Flips only by Robert's deliberate edit
+// after HR sign-off. While false, reference payloads contain zero
+// AI-generated text.
+export const REFERENCE_SUMMARIES_ENABLED = false;
+
 // ─── Supabase Configuration ──────────────────────────────────────────────────
 // All Supabase calls route through supaFetch() via the proxy endpoint.
 // Only exception: magic link auth uses the Supabase JS client directly.

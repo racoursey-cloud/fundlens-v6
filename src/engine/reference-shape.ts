@@ -29,17 +29,20 @@
  *   - every evaluative string: reasoning text, rankings, percentile
  *     estimates, and the editorial fund summaries
  *
- * A neutral, Robert-reviewed summary field (summary_reference) is planned in
- * B7. It is NOT emitted by this file today. B7 adds the emission behind the
- * REFERENCE_SUMMARIES_ENABLED constant, which ships false — until that flag
- * is deliberately turned on after HR sign-off, reference payloads contain
- * zero AI-generated text.
+ * A neutral, Robert-reviewed summary field (summary_reference) is emitted by
+ * this file behind the REFERENCE_SUMMARIES_ENABLED constant (constants.ts,
+ * built in B7), which ships false. While the flag is false the key is absent
+ * from every reference payload — not null, absent — and zero AI-generated
+ * text reaches reference accounts. Emission begins only when Robert
+ * deliberately flips the flag after HR sign-off.
  *
  * Pure shaping — no API calls, no database access, no stored state.
  * routes.ts calls these functions only when the requesting account's
  * access tier is 'reference'; full-tier responses do not pass through
  * this file and are byte-identical to their pre-B2 form.
  */
+
+import { REFERENCE_SUMMARIES_ENABLED } from './constants.js';
 
 // ─── The allowlist ──────────────────────────────────────────────────────────
 // Every key path a reference payload may contain. This list and the shaping
@@ -81,6 +84,9 @@ export const REFERENCE_ALLOWLIST = [
   'as_of.report_date',
   'as_of.priced_as_of',
   'as_of.scored_at',
+  // Neutral, Robert-reviewed summary (B7) — emitted only while
+  // REFERENCE_SUMMARIES_ENABLED (constants.ts) is true
+  'summary_reference',
 ] as const;
 
 // ─── Input shapes (only the fields this file reads) ─────────────────────────
@@ -95,6 +101,10 @@ export interface ReferenceFundIdentity {
   ticker: string;
   name: string;
   expense_ratio: number | null;
+  /** B7: neutral summary text attached by routes.ts from the
+   *  reference_summaries table — only fetched while
+   *  REFERENCE_SUMMARIES_ENABLED is true; null when no row exists */
+  summary_reference?: string | null;
 }
 
 /** The score-row fields this file reads. factor_details is the raw JSON
@@ -158,6 +168,9 @@ export interface ReferenceFundView {
     priced_as_of: string;
     scored_at: string;
   };
+  /** B7: present (string or null) only while REFERENCE_SUMMARIES_ENABLED is
+   *  true; absent entirely — not null — while the flag is false */
+  summary_reference?: string | null;
 }
 
 export interface ReferenceHoldingView {
@@ -266,6 +279,12 @@ export function shapeFundForReference(
       priced_as_of: score.scored_at,
       scored_at: score.scored_at,
     },
+    // B7: conditional spread — flag true emits the key for every fund (null
+    // where no reference_summaries row exists); flag false leaves the key
+    // ABSENT from the object, not null (Fabio's ruling, July 30, 2026).
+    ...(REFERENCE_SUMMARIES_ENABLED
+      ? { summary_reference: fund.summary_reference ?? null }
+      : {}),
   };
 }
 
