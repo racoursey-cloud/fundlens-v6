@@ -752,12 +752,18 @@ router.put('/api/example-allocation', requireAuth, async (req: Request, res: Res
     return;
   }
 
+  // B8 c3: store only what the mix is. The validated array may still carry
+  // any extra keys the client sent alongside fund_id and pct; rebuild each
+  // entry to exactly those two keys so nothing else rides into the stored
+  // JSON.
+  const cleanAllocations = allocations.map(a => ({ fund_id: a.fund_id, pct: a.pct }));
+
   // Upsert the caller's single row (example_allocations has a UNIQUE
   // constraint on user_id). The explicit updated_at is required — the table
   // has no trigger, so an upsert would not move it on its own.
   const { data, error } = await supaInsert('example_allocations', {
     user_id: userId,
-    allocations,
+    allocations: cleanAllocations,
     updated_at: new Date().toISOString(),
   }, { upsert: true, onConflict: 'user_id', single: true });
 
