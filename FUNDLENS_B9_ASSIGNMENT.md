@@ -275,3 +275,24 @@ voice clearly marked as ours, every number faithful, every oddity explained.
 We don't direct. We only inform.
 
 *— Drafted by Fabio, July 31, 2026, for Robert's ratification. Fabio, for the record.*
+
+---
+
+## F5 Amendment (ratified July 31, 2026, by Robert)
+
+Ruling 11's restoration count becomes 81 across 18 of 23 funds, per
+`B9_RESTORATION_LEDGER_v2.md` (40 original + 41 F5 completion). Ruling 11 is
+extended to the two verified mangling artifacts: FSPGX's CSV quote-escapes
+removed and PRPFX's six ?? restored to the filed em dash — every non-apostrophe
+restoration listed in the ledger's Table 3, each verified against the linked
+filing. §4 c2 becomes the v2 seed (74,517 bytes, sha256
+`79da9abcea56dbeed38f21415ab17a23f15bb06f2b5b0fa0179875ab8156e1c5`); the
+committed file must byte-match what runs, per the Database law. §3's length
+figures were measured pre-restoration (VWIGX strategies 548 → 549 as seeded);
+the F5 report's expected verify table is the reference. F5-D and F5-E remain
+open: OIBIX's supplement fragment stands with the seed-header disclosure, and
+® symbols go to FOLLOWUPS, unless Robert rules otherwise before c2 runs.
+
+*— F5 finding and cure by Fabio (restored session); ratified by Robert; committed
+through Clyde. Cure lineage: seed v1 sha256 `ad0a4531…90436` → v2 sha256
+`79da9abc…56e1c5`.*
