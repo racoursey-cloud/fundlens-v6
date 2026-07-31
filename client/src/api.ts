@@ -140,6 +140,22 @@ export interface ReferenceFund {
     priced_as_of: string;
     scored_at: string;
   };
+  /** B9: the fund's SEC-filed description — verbatim Investment Objective
+   *  and Principal Investment Strategies with filing provenance. Null when
+   *  no row is seeded. translation_text (our voice, flag-gated server-side
+   *  by REFERENCE_TRANSLATIONS_ENABLED) is absent until the flag flips. */
+  description: ReferenceFundDescription | null;
+}
+
+/** B9: mirrors the description block of src/engine/reference-shape.ts */
+export interface ReferenceFundDescription {
+  objective_text: string;
+  strategies_text: string;
+  source_accession: string;
+  source_series_id: string;
+  /** Prospectus date (YYYY-MM-DD) */
+  filing_ddate: string;
+  translation_text?: string | null;
 }
 
 export interface ReferenceHolding {
@@ -233,6 +249,12 @@ export const fetchReferenceScores = () =>
 
 export const fetchReferenceFundDetail = (ticker: string) =>
   apiFetch<{ fund: ReferenceFund; holdings: ReferenceHolding[] }>(`/api/scores/${ticker}`);
+
+// B9: the ?all=1 variant — the server lifts the 50-row holdings cap (hard
+// ceiling 1000). Used by the reference detail Holdings tab and by My Mix
+// for full-list aggregation.
+export const fetchReferenceFundDetailFull = (ticker: string) =>
+  apiFetch<{ fund: ReferenceFund; holdings: ReferenceHolding[] }>(`/api/scores/${ticker}?all=1`);
 
 // Profile
 export const fetchProfile = () =>
