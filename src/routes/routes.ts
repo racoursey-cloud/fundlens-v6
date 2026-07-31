@@ -428,6 +428,22 @@ router.get('/api/profile', requireAuth, async (req: Request, res: Response) => {
     return;
   }
 
+  // B8 c2: reference accounts never receive the weighting or risk
+  // machinery — the five fields are removed by explicit name before
+  // responding (no pattern or prefix filtering). Everything else on the
+  // row is returned exactly as it is today; reference pages read no
+  // profile fields at all, and the app's only startup read is the tier.
+  if ((req as AuthenticatedRequest).accessTier !== 'full') {
+    const referenceProfile: Record<string, unknown> = { ...profile };
+    delete referenceProfile.weight_cost;
+    delete referenceProfile.weight_quality;
+    delete referenceProfile.weight_positioning;
+    delete referenceProfile.weight_momentum;
+    delete referenceProfile.risk_tolerance;
+    res.json({ profile: referenceProfile });
+    return;
+  }
+
   res.json({ profile });
 });
 
@@ -446,7 +462,9 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
   // B2: factor weights and risk tolerance are full-tier controls (plan §1.2
   // — reference accounts receive no weighting or risk machinery). A
   // reference account sending any of them is rejected outright;
-  // display_name and the other profile fields pass through as before.
+  // display_name passes through as before. B8 c2 widens the refused set:
+  // briefs_enabled and selected_fund_ids are also full-tier writes — a
+  // reference token cannot change Brief delivery or fund selections.
   if ((req as AuthenticatedRequest).accessTier !== 'full') {
     const fullTierFields = [
       'weight_cost',
@@ -454,9 +472,11 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
       'weight_positioning',
       'weight_momentum',
       'risk_tolerance',
+      'briefs_enabled',
+      'selected_fund_ids',
     ];
     if (fullTierFields.some(f => updates[f] !== undefined)) {
-      res.status(403).json({ error: 'Full access required to change weights or risk settings.' });
+      res.status(403).json({ error: 'Full access required to change these account settings.' });
       return;
     }
   }
