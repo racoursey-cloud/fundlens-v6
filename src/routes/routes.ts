@@ -781,6 +781,16 @@ router.delete('/api/example-allocation', requireAuth, async (req: Request, res: 
  * whether a run is currently in progress.
  */
 router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Response) => {
+  const { userId, userEmail, accessTier } = req as AuthenticatedRequest;
+
+  // B8 c1: tier first, then admin. Reference accounts get no pipeline data
+  // at all — the reference shell makes no pipeline calls (its own header
+  // says so), so nothing breaks by refusing outright.
+  if (accessTier !== 'full') {
+    res.status(403).json({ error: 'Full access required for this feature.' });
+    return;
+  }
+
   const { data: runs, error } = await supaSelect<PipelineRunRow[]>('pipeline_runs', {
     order: 'started_at.desc',
     limit: '5',
@@ -794,6 +804,24 @@ router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Respon
 
   const latestRun = runs && runs.length > 0 ? runs[0] : null;
   const isRunning = latestRun?.status === 'running';
+
+  // B8 c1: full-tier non-admins see run state, not run internals. The shell
+  // reads latestRun.status on mount to decide whether scores are live, so
+  // latestRun stays an object carrying only status and completed_at. Run
+  // identifiers, step messages, durations and run history are admin-only.
+  if (!(await isAdminUser(userId, userEmail))) {
+    res.json({
+      latestRun: latestRun
+        ? { status: latestRun.status, completed_at: latestRun.completed_at }
+        : null,
+      isRunning,
+      currentStep: null,
+      stepMessage: null,
+      totalSteps: null,
+      recentRuns: [],
+    });
+    return;
+  }
 
   // Read step data from in-memory map (instant, always in order)
   const stepData = isRunning && latestRun ? activePipelineSteps.get(latestRun.id) : null;
