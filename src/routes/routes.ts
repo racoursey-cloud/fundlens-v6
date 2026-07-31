@@ -1682,7 +1682,7 @@ router.post('/api/reference-summaries/generate', requireAuth, requireAdmin, pipe
  * sign-off. Responds with the per-fund outcome lists (B7 route pattern):
  * { generated, rejected, skipped, total }.
  */
-router.post('/api/reference-translations/generate', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+router.post('/api/reference-translations/generate', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
   console.log(`[routes] POST /api/reference-translations/generate — user: ${(req as AuthenticatedRequest).userEmail}`);
   const { generateReferenceTranslations } = await import('../engine/translations.js');
   const result = await generateReferenceTranslations();
