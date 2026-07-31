@@ -1,5 +1,5 @@
 # B9 — Reference Enrichment: Official Text, Visuals, Full-List Mix
-## Status: DRAFT — awaiting Robert's ratification · planned by Fabio (July 31, 2026) · built by Clyde
+## Status: RATIFIED — July 31, 2026, by Robert · planned by Fabio · built by Clyde
 
 Base: `main` at `ed782b6808b7caa173a5c561dcb92a3bb4217727` (the post-B8 pin).
 **Merge gate for this wave:** nothing merges to main until the August 1 02:00Z
