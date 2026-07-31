@@ -428,6 +428,22 @@ router.get('/api/profile', requireAuth, async (req: Request, res: Response) => {
     return;
   }
 
+  // B8 c2: reference accounts never receive the weighting or risk
+  // machinery — the five fields are removed by explicit name before
+  // responding (no pattern or prefix filtering). Everything else on the
+  // row is returned exactly as it is today; reference pages read no
+  // profile fields at all, and the app's only startup read is the tier.
+  if ((req as AuthenticatedRequest).accessTier !== 'full') {
+    const referenceProfile: Record<string, unknown> = { ...profile };
+    delete referenceProfile.weight_cost;
+    delete referenceProfile.weight_quality;
+    delete referenceProfile.weight_positioning;
+    delete referenceProfile.weight_momentum;
+    delete referenceProfile.risk_tolerance;
+    res.json({ profile: referenceProfile });
+    return;
+  }
+
   res.json({ profile });
 });
 
@@ -446,7 +462,9 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
   // B2: factor weights and risk tolerance are full-tier controls (plan §1.2
   // — reference accounts receive no weighting or risk machinery). A
   // reference account sending any of them is rejected outright;
-  // display_name and the other profile fields pass through as before.
+  // display_name passes through as before. B8 c2 widens the refused set:
+  // briefs_enabled and selected_fund_ids are also full-tier writes — a
+  // reference token cannot change Brief delivery or fund selections.
   if ((req as AuthenticatedRequest).accessTier !== 'full') {
     const fullTierFields = [
       'weight_cost',
@@ -454,9 +472,11 @@ router.put('/api/profile', requireAuth, async (req: Request, res: Response) => {
       'weight_positioning',
       'weight_momentum',
       'risk_tolerance',
+      'briefs_enabled',
+      'selected_fund_ids',
     ];
     if (fullTierFields.some(f => updates[f] !== undefined)) {
-      res.status(403).json({ error: 'Full access required to change weights or risk settings.' });
+      res.status(403).json({ error: 'Full access required to change these account settings.' });
       return;
     }
   }
@@ -732,12 +752,18 @@ router.put('/api/example-allocation', requireAuth, async (req: Request, res: Res
     return;
   }
 
+  // B8 c3: store only what the mix is. The validated array may still carry
+  // any extra keys the client sent alongside fund_id and pct; rebuild each
+  // entry to exactly those two keys so nothing else rides into the stored
+  // JSON.
+  const cleanAllocations = allocations.map(a => ({ fund_id: a.fund_id, pct: a.pct }));
+
   // Upsert the caller's single row (example_allocations has a UNIQUE
   // constraint on user_id). The explicit updated_at is required — the table
   // has no trigger, so an upsert would not move it on its own.
   const { data, error } = await supaInsert('example_allocations', {
     user_id: userId,
-    allocations,
+    allocations: cleanAllocations,
     updated_at: new Date().toISOString(),
   }, { upsert: true, onConflict: 'user_id', single: true });
 
@@ -781,6 +807,16 @@ router.delete('/api/example-allocation', requireAuth, async (req: Request, res: 
  * whether a run is currently in progress.
  */
 router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Response) => {
+  const { userId, userEmail, accessTier } = req as AuthenticatedRequest;
+
+  // B8 c1: tier first, then admin. Reference accounts get no pipeline data
+  // at all — the reference shell makes no pipeline calls (its own header
+  // says so), so nothing breaks by refusing outright.
+  if (accessTier !== 'full') {
+    res.status(403).json({ error: 'Full access required for this feature.' });
+    return;
+  }
+
   const { data: runs, error } = await supaSelect<PipelineRunRow[]>('pipeline_runs', {
     order: 'started_at.desc',
     limit: '5',
@@ -794,6 +830,24 @@ router.get('/api/pipeline/status', requireAuth, async (req: Request, res: Respon
 
   const latestRun = runs && runs.length > 0 ? runs[0] : null;
   const isRunning = latestRun?.status === 'running';
+
+  // B8 c1: full-tier non-admins see run state, not run internals. The shell
+  // reads latestRun.status on mount to decide whether scores are live, so
+  // latestRun stays an object carrying only status and completed_at. Run
+  // identifiers, step messages, durations and run history are admin-only.
+  if (!(await isAdminUser(userId, userEmail))) {
+    res.json({
+      latestRun: latestRun
+        ? { status: latestRun.status, completed_at: latestRun.completed_at }
+        : null,
+      isRunning,
+      currentStep: null,
+      stepMessage: null,
+      totalSteps: null,
+      recentRuns: [],
+    });
+    return;
+  }
 
   // Read step data from in-memory map (instant, always in order)
   const stepData = isRunning && latestRun ? activePipelineSteps.get(latestRun.id) : null;
