@@ -80,6 +80,16 @@ function isValidPctText(text: string): boolean {
 
 function fmtMixPct(pct: number): string {
   if (pct > 0 && pct < 0.05) return '<0.1%';
+  // F4 cure (Fabio ruling, July 31, 2026): dust-sized negatives — real
+  // short-position slivers like TGEPX's -0.0096% row — render at two
+  // decimals, faithful and self-explanatory ("-0.01%"), never "-0.0%".
+  // A value so small that two decimals would still round to "-0.00%"
+  // (RNWGX's -0.0008% row) prints at full four-decimal precision instead —
+  // the zero-print is the defect class this wave cures, in either sign.
+  if (pct < 0 && pct > -0.05) {
+    const twoDecimals = `${pct.toFixed(2)}%`;
+    return twoDecimals === '-0.00%' ? `${pct.toFixed(4)}%` : twoDecimals;
+  }
   return `${pct.toFixed(1)}%`;
 }
 
@@ -253,6 +263,10 @@ export function ReferenceMyMix() {
   const [holdingsFetchError, setHoldingsFetchError] = useState<string | null>(null);
 
   useEffect(() => {
+    // F3 cure: clear any stale error whenever the effect re-runs — a
+    // transient failure followed by a successful refetch must not leave
+    // the holdings sections stuck on the old error.
+    setHoldingsFetchError(null);
     // Serve session-cached lists synchronously; fetch only what's missing.
     const fromCache: Record<string, ReferenceHolding[]> = {};
     const toFetch: string[] = [];
