@@ -33,8 +33,17 @@ import {
   type PipelineRun,
   type FundDossierRow,
   type BenchmarkRunStatus,
+  type BenchmarkModelKey,
 } from '../api';
 import { theme } from '../theme';
+
+// CB cb4(a): display names for the benchmark model menu (keys mirror the
+// server's allowlist in benchmark.ts)
+const BENCH_MODEL_LABELS: Record<BenchmarkModelKey, string> = {
+  haiku: 'Haiku',
+  sonnet: 'Sonnet',
+  opus: 'Opus',
+};
 
 // ─── Status Dot ────────────────────────────────────────────────────────────
 
@@ -357,6 +366,8 @@ export function Pipeline() {
   // Completion used to exist only as an email; now the tab shows running
   // state and the last outcome, polled while a benchmark is in flight.
   const [benchStatus, setBenchStatus] = useState<BenchmarkRunStatus | null>(null);
+  // CB cb4(a): which model the next benchmark click runs on
+  const [benchModel, setBenchModel] = useState<BenchmarkModelKey>('haiku');
   const benchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadBenchStatus = useCallback(async () => {
@@ -425,10 +436,11 @@ export function Pipeline() {
   };
 
   // ── A5 Task 7 (temporary): trigger the classification benchmark ────────
+  // CB cb4(a): runs on the picked model (haiku default, exactly as before)
   const handleBenchmark = async () => {
     setActionMsg('');
     setActionError('');
-    const { data, error } = await runClassificationBenchmark();
+    const { data, error } = await runClassificationBenchmark(benchModel);
     if (error) {
       setActionError(error);
     } else {
@@ -512,11 +524,35 @@ export function Pipeline() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
+          {/* CB cb4(a): the benchmark model picker — feeds ?model= on the
+              trigger; production classification is untouched by any choice */}
+          <select
+            value={benchModel}
+            onChange={e => setBenchModel(e.target.value as BenchmarkModelKey)}
+            disabled={benchStatus?.running === true}
+            aria-label="Benchmark model"
+            title="Which model the next benchmark run measures. The production classifier is unchanged either way."
+            style={{
+              padding: '10px 12px',
+              background: 'transparent',
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radii.md,
+              color: theme.colors.textMuted,
+              fontSize: '13px',
+              fontWeight: 500,
+              fontFamily: theme.fonts.body,
+              cursor: benchStatus?.running === true ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {(Object.keys(BENCH_MODEL_LABELS) as BenchmarkModelKey[]).map(key => (
+              <option key={key} value={key}>{BENCH_MODEL_LABELS[key]}</option>
+            ))}
+          </select>
           {/* A5 Task 7 (temporary): removed once the benchmark report is filed */}
           <button
             onClick={handleBenchmark}
             disabled={isRunning}
-            title="Runs ~400 FMP-labeled equities through the production classification prompts and emails the agreement report. Read-only."
+            title="Runs ~400 FMP-labeled equities through the production classification prompts on the picked model and emails the agreement report. Read-only."
             style={{
               padding: '10px 16px',
               background: 'transparent',
@@ -650,10 +686,10 @@ export function Pipeline() {
           color: theme.colors.textMuted,
         }}>
           {benchStatus.running ? (
-            <>Classification benchmark running{benchStatus.startedAt ? ` since ${fmtDateTime(benchStatus.startedAt)}` : ''}…</>
+            <>Classification benchmark{benchStatus.model ? ` (${BENCH_MODEL_LABELS[benchStatus.model]})` : ''} running{benchStatus.startedAt ? ` since ${fmtDateTime(benchStatus.startedAt)}` : ''}…</>
           ) : (
             <>
-              Last benchmark: {benchStatus.finishedAt ? fmtDateTime(benchStatus.finishedAt) : '—'} —{' '}
+              Last benchmark{benchStatus.model ? ` (${BENCH_MODEL_LABELS[benchStatus.model]})` : ''}: {benchStatus.finishedAt ? fmtDateTime(benchStatus.finishedAt) : '—'} —{' '}
               <span style={{ color: benchStatus.outcome === 'success' ? theme.colors.success : theme.colors.error, fontWeight: 600 }}>
                 {benchStatus.outcome === 'success' ? 'completed' : 'failed'}
               </span>
@@ -1038,8 +1074,11 @@ export function Pipeline() {
             if (isV2 && Number(d.momentum_firewalled_weight_pct ?? 0) > 0) {
               v2Notes.push(`${Number(d.momentum_firewalled_weight_pct).toFixed(1)}% liquidity-firewalled (classification only)`);
             }
+            // CB cb4(b), ruling 2 (voice law on admin surfaces): the
+            // provenance label reads "AI-classified", not the model's name.
+            // The underlying column (industry_haiku_pct) is untouched schema.
             if (isV2 && (Number(d.industry_fmp_pct ?? 0) > 0 || Number(d.industry_haiku_pct ?? 0) > 0)) {
-              v2Notes.push(`industry tags: FMP ${Number(d.industry_fmp_pct ?? 0).toFixed(0)}% · Haiku ${Number(d.industry_haiku_pct ?? 0).toFixed(0)}% · none ${Number(d.industry_none_pct ?? 0).toFixed(0)}%`);
+              v2Notes.push(`industry tags: FMP ${Number(d.industry_fmp_pct ?? 0).toFixed(0)}% · AI-classified ${Number(d.industry_haiku_pct ?? 0).toFixed(0)}% · none ${Number(d.industry_none_pct ?? 0).toFixed(0)}%`);
             }
             return (
               <div key={d.id} style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
