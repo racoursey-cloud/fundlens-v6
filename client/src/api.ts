@@ -421,8 +421,16 @@ export const fetchLatestDossiers = () =>
 
 // A5 Task 7 (temporary): admin-only classification benchmark trigger.
 // The report arrives by admin email; this just kicks it off.
-export const runClassificationBenchmark = () =>
-  apiFetch<{ message: string }>('/api/benchmark/classification', { method: 'POST' });
+// CB (cb4 gap, disclosed): the order routes the model picker's choice
+// through this call's ?model= param — one optional argument, allowlisted
+// server-side (cb3); omitted = haiku, exactly the pre-CB behavior.
+export type BenchmarkModelKey = 'haiku' | 'sonnet' | 'opus';
+
+export const runClassificationBenchmark = (model?: BenchmarkModelKey) =>
+  apiFetch<{ message: string }>(
+    `/api/benchmark/classification${model ? `?model=${model}` : ''}`,
+    { method: 'POST' },
+  );
 
 // v8 A0 (Gap 4): benchmark visibility — running state and the last run's
 // outcome, so completion no longer exists only as an email. (The harness
@@ -435,6 +443,9 @@ export interface BenchmarkRunStatus {
   summary: string | null;
   /** Did the report/failure email actually send? */
   emailed: boolean | null;
+  /** CB: which menu model the running/last benchmark used; null before
+   *  the first post-CB run (mirrors benchmark.ts) */
+  model?: BenchmarkModelKey | null;
 }
 
 export const getBenchmarkStatus = () =>
