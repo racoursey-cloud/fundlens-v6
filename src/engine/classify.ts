@@ -1,9 +1,10 @@
 /**
- * FundLens v6 — Sector Classification (Claude Haiku)
+ * FundLens v6 — Sector Classification
  *
- * Classifies holdings into sectors using Claude Haiku. Each holding
- * gets a sector label (Technology, Healthcare, etc.) that feeds into
- * the Positioning factor.
+ * Classifies holdings into sectors on the classifier seat
+ * (CLAUDE.CLASSIFIER_MODEL — Opus since CB-S ruling 1, August 1, 2026,
+ * measured in, not assumed). Each holding gets a sector label
+ * (Technology, Healthcare, etc.) that feeds into the Positioning factor.
  *
  * MANDATORY: Sequential with 1.2s delays between Claude calls.
  * NEVER Promise.all() — has crashed production 5+ times.
@@ -263,13 +264,14 @@ function preClassifyByMetadata(holdings: ResolvedHolding[]): number {
  * by all models unchanged.
  *
  * @param holdings Array of resolved holdings (modified in place)
- * @param modelOverride Optional model id; default CLAUDE.CLASSIFICATION_MODEL
+ * @param modelOverride Optional model id; default CLAUDE.CLASSIFIER_MODEL
+ *   (the seat, CB-S s2 — the benchmark passes its menu picks explicitly)
  */
 export async function classifyHoldingSectors(
   holdings: ResolvedHolding[],
   modelOverride?: string
 ): Promise<void> {
-  const model = modelOverride ?? CLAUDE.CLASSIFICATION_MODEL;
+  const model = modelOverride ?? CLAUDE.CLASSIFIER_MODEL;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY environment variable is not set');
@@ -303,7 +305,9 @@ export async function classifyHoldingSectors(
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
-    console.log(`[classify] Batch ${i + 1}/${batches.length} (${batch.length} holdings)`);
+    // CB-S s2: the seat is named at batch start so every run's model is
+    // evident in the logs forever.
+    console.log(`[classify] Batch ${i + 1}/${batches.length} (${batch.length} holdings) on ${model}`);
 
     try {
       const classifications = await classifyBatch(client, batch, model);
@@ -544,7 +548,7 @@ export async function classifyHoldingIndustries(
   holdings: ResolvedHolding[],
   modelOverride?: string
 ): Promise<void> {
-  const model = modelOverride ?? CLAUDE.CLASSIFICATION_MODEL;
+  const model = modelOverride ?? CLAUDE.CLASSIFIER_MODEL;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY environment variable is not set');
@@ -564,7 +568,7 @@ export async function classifyHoldingIndustries(
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
-      console.log(`[classify] Industry batch ${i + 1}/${batches.length} (${batch.length} holdings${attempt === 1 ? ', retry' : ''})`);
+      console.log(`[classify] Industry batch ${i + 1}/${batches.length} (${batch.length} holdings${attempt === 1 ? ', retry' : ''}) on ${model}`);
 
       try {
         const classifications = await classifyIndustryBatch(client, batch, model);
