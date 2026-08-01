@@ -2,6 +2,7 @@
 -- superseded v1 header comments (structural SQL identical; Robert-approved
 -- drop, August 1, 2026), then reapply with the ratified order's exact text.
 DROP TABLE help_entries;
+
 -- B10 c1 — Help grounding corpus (reviewed explainer material; ruling 3)
 -- Source material handed to the reference Help agent — not the only
 -- servable text (ruling 8: answers are generated). Tier isolation layer (a):
