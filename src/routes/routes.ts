@@ -1501,10 +1501,15 @@ router.get('/api/monitor/cron', requireAuth, requireAdmin, async (req: Request, 
  * Send a message to the Help Agent and get a response.
  * Uses Claude Haiku with an admin-configurable system prompt.
  *
+ * B10 c4 (blocking cure): full-tier only. The April 2026 prompt openly
+ * describes 0–100 scores and tier badges; a reference account calling this
+ * route directly would hear about machinery its tier must not learn exists.
+ * Reference accounts get their own agent (POST /api/reference-help/ask).
+ *
  * Body: { message: string, history?: Array<{ role, content }> }
  * Returns: { reply: string }
  */
-router.post('/api/help/chat', requireAuth, helpChatRateLimit, async (req: Request, res: Response) => {
+router.post('/api/help/chat', requireAuth, requireFullTier, helpChatRateLimit, async (req: Request, res: Response) => {
   const { message, history } = req.body;
 
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
