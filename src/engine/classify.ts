@@ -256,11 +256,20 @@ function preClassifyByMetadata(holdings: ResolvedHolding[]): number {
  * Uses batched prompts — sends 10–15 holdings per Claude call
  * to reduce the total number of API calls.
  *
+ * CB cb1: modelOverride lets the benchmark harness run the EXACT same
+ * prompts on a challenger model. Every production caller passes nothing,
+ * so production behavior is byte-equivalent to before — the default is
+ * the frozen constant, and batching, sequencing, and delays are shared
+ * by all models unchanged.
+ *
  * @param holdings Array of resolved holdings (modified in place)
+ * @param modelOverride Optional model id; default CLAUDE.CLASSIFICATION_MODEL
  */
 export async function classifyHoldingSectors(
-  holdings: ResolvedHolding[]
+  holdings: ResolvedHolding[],
+  modelOverride?: string
 ): Promise<void> {
+  const model = modelOverride ?? CLAUDE.CLASSIFICATION_MODEL;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY environment variable is not set');
@@ -284,7 +293,7 @@ export async function classifyHoldingSectors(
     return;
   }
 
-  console.log(`[classify] Classifying ${needsClassification.length} holdings via Claude Haiku`);
+  console.log(`[classify] Classifying ${needsClassification.length} holdings via ${model}`);
 
   const client = new Anthropic({ apiKey });
 
@@ -297,7 +306,7 @@ export async function classifyHoldingSectors(
     console.log(`[classify] Batch ${i + 1}/${batches.length} (${batch.length} holdings)`);
 
     try {
-      const classifications = await classifyBatch(client, batch);
+      const classifications = await classifyBatch(client, batch, model);
 
       // Apply classifications to the holdings
       for (const holding of batch) {
@@ -353,7 +362,8 @@ function sanitizeHoldingText(text: string): string {
  */
 async function classifyBatch(
   client: Anthropic,
-  holdings: ResolvedHolding[]
+  holdings: ResolvedHolding[],
+  model: string
 ): Promise<Map<string, string>> {
   // SESSION 0 SECURITY: Sanitize holding names before embedding in prompt
   // Use ticker as the key when available, otherwise use the holding name.
@@ -377,7 +387,7 @@ async function classifyBatch(
     'Alphabet (Google) and Meta Platforms are Communication Services, not Technology.';
 
   const response = await client.messages.create({
-    model: CLAUDE.CLASSIFICATION_MODEL,
+    model,
     max_tokens: 1000,
     system: `You are a financial sector classifier. Classify each holding into exactly one sector from this list: ${sectorList}.${gicsPin} Respond with ONLY a JSON object mapping the key (ticker or name) to sector. No explanation.`,
     messages: [
@@ -524,17 +534,24 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
  *
  * The caller pre-filters (equity holdings with a name and no industry)
  * and deduplicates — one representative per (name, asset type).
+ *
+ * CB cb1: modelOverride as on classifyHoldingSectors — benchmark-only,
+ * default the frozen constant, production callers unchanged. Note the
+ * industrySource stamp stays 'haiku' regardless of override: production
+ * never overrides, and the benchmark reads .industry, not the stamp.
  */
 export async function classifyHoldingIndustries(
-  holdings: ResolvedHolding[]
+  holdings: ResolvedHolding[],
+  modelOverride?: string
 ): Promise<void> {
+  const model = modelOverride ?? CLAUDE.CLASSIFICATION_MODEL;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY environment variable is not set');
   }
   if (holdings.length === 0) return;
 
-  console.log(`[classify] A4 Task 5: classifying ${holdings.length} holdings into industries via Claude Haiku`);
+  console.log(`[classify] A4 Task 5: classifying ${holdings.length} holdings into industries via ${model}`);
 
   const client = new Anthropic({ apiKey });
 
@@ -550,7 +567,7 @@ export async function classifyHoldingIndustries(
       console.log(`[classify] Industry batch ${i + 1}/${batches.length} (${batch.length} holdings${attempt === 1 ? ', retry' : ''})`);
 
       try {
-        const classifications = await classifyIndustryBatch(client, batch);
+        const classifications = await classifyIndustryBatch(client, batch, model);
 
         for (const holding of batch) {
           const key = holding.ticker || holding.name;
@@ -607,7 +624,8 @@ export async function classifyHoldingIndustries(
  */
 async function classifyIndustryBatch(
   client: Anthropic,
-  holdings: ResolvedHolding[]
+  holdings: ResolvedHolding[],
+  model: string
 ): Promise<Map<string, string>> {
   const holdingsList = holdings
     .map(h => {
@@ -620,7 +638,7 @@ async function classifyIndustryBatch(
   const industryMenu = FMP_INDUSTRIES.join('; ');
 
   const response = await client.messages.create({
-    model: CLAUDE.CLASSIFICATION_MODEL,
+    model,
     max_tokens: 1500,
     system:
       `You are a financial industry classifier. Classify each company into exactly one industry ` +
