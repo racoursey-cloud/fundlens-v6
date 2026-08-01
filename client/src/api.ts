@@ -440,6 +440,44 @@ export interface BenchmarkRunStatus {
 export const getBenchmarkStatus = () =>
   apiFetch<BenchmarkRunStatus>('/api/benchmark/status');
 
+// Admin generate routes (B10-F1 f4) — thin wrappers over the three
+// existing admin-only endpoints, returning the per-item counts each route
+// already reports. Nothing generated here serves without review: summaries
+// and translations sit behind their false flags; help entries ground the
+// agent only after Robert flips status to approved.
+
+/** B7 summaries route: { generated, rejected, total } */
+export interface SummariesGenerateResult {
+  generated: number;
+  rejected: Array<{ ticker: string; word: string }>;
+  total: number;
+}
+
+/** B9 translations route: per-fund outcome lists */
+export interface TranslationsGenerateResult {
+  generated: string[];
+  rejected: Array<{ ticker: string; word: string }>;
+  skipped: Array<{ ticker: string; reason: string }>;
+  total: number;
+}
+
+/** B10 help-entries route: per-topic outcome lists */
+export interface HelpEntriesGenerateResult {
+  drafted: string[];
+  rejected: Array<{ slug: string; word: string }>;
+  skipped: Array<{ slug: string; reason: string }>;
+  total: number;
+}
+
+export const generateReferenceSummaries = () =>
+  apiFetch<SummariesGenerateResult>('/api/reference-summaries/generate', { method: 'POST' });
+
+export const generateReferenceTranslations = () =>
+  apiFetch<TranslationsGenerateResult>('/api/reference-translations/generate', { method: 'POST' });
+
+export const generateHelpEntries = () =>
+  apiFetch<HelpEntriesGenerateResult>('/api/help-entries/generate', { method: 'POST' });
+
 // Help Agent
 export interface HelpMessage {
   role: 'user' | 'assistant';
