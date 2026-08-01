@@ -185,13 +185,16 @@ export const CLAUDE = {
 // AI-generated text.
 export const REFERENCE_SUMMARIES_ENABLED = false;
 
-// ─── Reference Tier: Translation Flag (B-series B9) ─────────────────────────
+// ─── Reference Tier: Translation Flag (B-series B9; flipped in B9-T) ────────
 // B9 feature flag. Gates the emission of translation_text in reference
-// payloads (reference-shape.ts). The SEC-filed verbatim text serves live;
-// the app-authored plain-English translation ships behind this flag, OFF,
-// and serves only after Robert reviews every line and HR signs off. While
-// false, the zero-AI-text-at-launch ruling stays intact.
-export const REFERENCE_TRANSLATIONS_ENABLED = false;
+// payloads (reference-shape.ts). Flipped true August 1, 2026 (B9-T t1)
+// under Robert's proof-after-serving ruling, which supersedes B9 ruling
+// 5's per-line pre-review precondition: the operator proofs the live app;
+// corrections flow back through Fabio on Robert's typed word, served from
+// the table with no deploy. All 23 stored translations passed the
+// in-database fence sweep (zero banned stems, zero full-tier nouns)
+// before this flip reached the repo.
+export const REFERENCE_TRANSLATIONS_ENABLED = true;
 
 // ─── Reference Tier: Help AI Flag (B-series B10) ────────────────────────────
 // B10 kill switch (ruling 8: ON at launch — the Help chat serves generated
