@@ -155,6 +155,22 @@ export const CLAUDE = {
    *  max_tokens (prose calls raise their ceilings accordingly), and the
    *  model rejects temperature-style sampling parameters. */
   PROSE_MODEL: 'claude-sonnet-5',
+  /** CB-S s1 (ruling 1, August 1, 2026): the classifier seat, ruled on the
+   *  measured CB evidence (FUNDLENS_CB_COMPARISON.md): Opus beat Haiku by
+   *  +18.2 points industry-level agreement and +5.5 sector-level, zero
+   *  parser artifacts in 400 — under the decision rule set before any
+   *  number was seen. CLASSIFICATION_MODEL above stays defined and
+   *  unchanged as the benchmark's Haiku control. */
+  CLASSIFIER_MODEL: 'claude-opus-5',
+  /** CB-S s1 (ruling 4, August 1, 2026): the one shared Help chat seat —
+   *  both the reference Help chat (B10) and the legacy full-tier chat
+   *  (Session 12) call this model, by operator ruling (supersedes the B10
+   *  ruling 9 Sonnet seat note; the eval stands as evidence of record).
+   *  PROSE_MODEL is deliberately NOT moved: B9 translations and B10
+   *  corpus drafting stay on Sonnet — re-pointing PROSE_MODEL would have
+   *  re-seated them silently. Length caution cured by the Smart Brevity
+   *  prompt sections (ruling 5). */
+  HELP_CHAT_MODEL: 'claude-opus-5',
   /** Minimum delay between sequential Claude API calls (milliseconds) */
   CALL_DELAY_MS: 1200,
   /** All Claude calls route through this proxy endpoint */
