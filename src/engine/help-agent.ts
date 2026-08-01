@@ -1,9 +1,11 @@
 /**
  * FundLens v6 — Help Agent
  *
- * Configurable chat agent backed by Claude Haiku. The admin defines
- * the agent's scope and personality via a prompt file. This module
- * loads the prompt, manages conversation context, and streams responses.
+ * Configurable chat agent on the shared Help chat seat
+ * (CLAUDE.HELP_CHAT_MODEL — Opus since CB-S ruling 4, August 1, 2026).
+ * The admin defines the agent's scope and personality via a prompt file.
+ * This module loads the prompt, manages conversation context, and streams
+ * responses.
  *
  * Designed to be project-agnostic — swap the prompt file and the agent
  * works for any product (FundLens, football project, etc.).
@@ -21,6 +23,10 @@ import { alertClaudeApiFailure } from './admin-alert.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// CB-S s5: the seat is named once at startup so every deploy's log states
+// which model answers the full-tier Help chat.
+console.log(`[help-agent] Help chat seat: ${CLAUDE.HELP_CHAT_MODEL}`);
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -107,7 +113,7 @@ export async function helpChat(request: HelpChatRequest): Promise<HelpChatRespon
 
   try {
     const response = await client.messages.create({
-      model: CLAUDE.CLASSIFICATION_MODEL, // Haiku — fast + cheap
+      model: CLAUDE.HELP_CHAT_MODEL, // CB-S ruling 4: the shared Help chat seat
       max_tokens: 1024,
       system: systemPrompt,
       messages,
