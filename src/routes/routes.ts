@@ -88,6 +88,16 @@ const helpChatRateLimit = rateLimit({
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
+// B10 c8(a): the reference Help ask cadence — member cadence, the
+// helpChatRateLimit shape (ruling 6; D1 resolved by ruling 8).
+const helpAskRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,                    // 20 help questions per hour
+  message: { error: 'Help rate limit exceeded. Max 20 per hour.' },
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
+  validate: { trustProxy: false, xForwardedForHeader: false },
+});
+
 // ─── Admin-only middleware (A5 Task 4) ────────────────────────────────────
 // Admin identity is the is_admin flag on user_profiles (a5_task4 migration),
 // checked in the database with a 60-second in-memory cache so it doesn't add
@@ -1691,5 +1701,77 @@ router.post('/api/reference-translations/generate', requireAuth, requireAdmin, p
   console.log(`[routes] POST /api/reference-translations/generate — user: ${(req as AuthenticatedRequest).userEmail}`);
   const { generateReferenceTranslations } = await import('../engine/translations.js');
   const result = await generateReferenceTranslations();
+  res.json(result);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REFERENCE HELP (B-series B10)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/reference-help/ask
+ * B10 c8(b): one question to the reference Help agent (ruling 8 — the
+ * model writes the answer live, grounded and fenced in code; see
+ * src/engine/reference-help.ts for the fence layers and the exchange log).
+ * Every Claude-invoking route carries a rate limiter (F2's lesson);
+ * this one runs member cadence (ruling 6).
+ *
+ * Body: { message: string (non-empty, ≤ 2000 chars),
+ *         history?: Array<{ role: 'user'|'assistant', content: string }> }
+ * Returns: { reply, outcome } — nothing else.
+ */
+router.post('/api/reference-help/ask', requireAuth, helpAskRateLimit, async (req: Request, res: Response) => {
+  const { message, history } = req.body;
+
+  if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    res.status(400).json({ error: 'Message is required' });
+    return;
+  }
+
+  if (message.length > 2000) {
+    res.status(400).json({ error: 'Message too long (max 2000 characters)' });
+    return;
+  }
+
+  if (history !== undefined && !Array.isArray(history)) {
+    res.status(400).json({ error: 'History must be an array' });
+    return;
+  }
+
+  // Keep only well-formed history turns — malformed items are dropped, not
+  // an error, so a stale client can't wedge the chat.
+  const cleanHistory = Array.isArray(history)
+    ? history.filter(
+        (m): m is { role: 'user' | 'assistant'; content: string } =>
+          !!m &&
+          (m.role === 'user' || m.role === 'assistant') &&
+          typeof m.content === 'string'
+      )
+    : undefined;
+
+  const { askReferenceHelp } = await import('../engine/reference-help.js');
+  const { reply, outcome } = await askReferenceHelp({
+    userId: (req as AuthenticatedRequest).userId,
+    message: message.trim(),
+    history: cleanHistory,
+  });
+
+  res.json({ reply, outcome });
+});
+
+/**
+ * POST /api/help-entries/generate
+ * B10 c8(c): admin-only, rate-limited trigger for the grounding-corpus
+ * drafts (src/engine/help-drafts.ts — the §6 topic list, Translation
+ * register, draft rows only). Robert approves rows himself in the
+ * Supabase dashboard; only approved rows ever ground the agent. Responds
+ * with per-topic outcome lists (B7 route pattern):
+ * { drafted, rejected, skipped, total }.
+ */
+router.post('/api/help-entries/generate', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
+  console.log(`[routes] POST /api/help-entries/generate — user: ${(req as AuthenticatedRequest).userEmail}`);
+  const { generateHelpDrafts } = await import('../engine/help-drafts.js');
+  const result = await generateHelpDrafts();
   res.json(result);
 });
