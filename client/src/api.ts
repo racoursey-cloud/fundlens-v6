@@ -451,3 +451,26 @@ export const helpChat = (message: string, history?: HelpMessage[]) =>
     method: 'POST',
     body: JSON.stringify({ message, history }),
   });
+
+// Reference Help (B10) — the reference tier's grounded, code-fenced Help
+// agent (POST /api/reference-help/ask). outcome mirrors the server's
+// ReferenceHelpOutcome: 'answered' is a served generated reply; 'refused'
+// is the standing education-not-advice refusal; 'rejected' and 'error'
+// carry the trouble copy; 'maintenance' is the kill-switch line.
+export type ReferenceHelpOutcome =
+  | 'answered'
+  | 'refused'
+  | 'rejected'
+  | 'error'
+  | 'maintenance';
+
+export interface ReferenceHelpResponse {
+  reply: string;
+  outcome: ReferenceHelpOutcome;
+}
+
+export const askReferenceHelp = (message: string, history?: HelpMessage[]) =>
+  apiFetch<ReferenceHelpResponse>('/api/reference-help/ask', {
+    method: 'POST',
+    body: JSON.stringify({ message, history }),
+  });
