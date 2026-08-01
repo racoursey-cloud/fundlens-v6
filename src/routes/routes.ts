@@ -1563,10 +1563,12 @@ router.post('/api/benchmark/classification', requireAuth, requireAdmin, async (r
   const { startClassificationBenchmark } = await import('../engine/benchmark.js');
   const sampleTarget = parseInt(req.query.sample as string) || 400;
 
-  // CB cb3: ?model=haiku|sonnet|opus — allowlist only, default haiku.
-  // The menu itself lives in benchmark.ts; production classification is
-  // untouched by any value here.
-  const modelParam = (req.query.model as string | undefined) ?? 'haiku';
+  // CB cb3: ?model=haiku|sonnet|opus — allowlist only. CB-S s3: the
+  // default is opus, the production seat — an unpicked click measures the
+  // model actually in the chair; haiku is the deliberate historical
+  // control. The menu itself lives in benchmark.ts; production
+  // classification is untouched by any value here.
+  const modelParam = (req.query.model as string | undefined) ?? 'opus';
   if (modelParam !== 'haiku' && modelParam !== 'sonnet' && modelParam !== 'opus') {
     res.status(400).json({ error: 'Invalid model — use haiku, sonnet, or opus.' });
     return;
