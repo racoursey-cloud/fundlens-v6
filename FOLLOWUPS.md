@@ -22,3 +22,5 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-08-01 | Apex fundlens.app misroutes; production serves at www.fundlens.app — probes and docs must target www; rides the pending alias-hostname decision (S-B9 §8.1) | — |
 | 2026-08-01 | B9 F5-E: ® symbols dropped from filed fund names in the seeded fund_descriptions text — restore only if Robert wants the marks shown (B9 F5 amendment; entry logged late per B10 D2) | — |
 | 2026-08-01 | OIBIX −5.41% twelve-month figure queued as an acceptance-battery spot-check target — B9 queue item never landed here; entry logged late per B10 D2 | — |
+| 2026-08-01 | Dossier column industry_haiku_pct (and siblings, incl. the client mirror fields) names a model no longer in the classifier seat post-CB-S — cosmetic rename at a housekeeping boundary (CB-S s4) | — |
+| 2026-08-01 | Sector parser coerces unrecognized model replies to "Other" with no raw-reply record (CB finding, Sonnet runs) — raw-reply logging or synonym tolerance, future wave (CB-S s4) | — |

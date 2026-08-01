@@ -34,18 +34,20 @@ import { delay, ResolvedHolding } from './types.js';
 // One benchmark at a time — it makes a few hundred Claude calls.
 let benchmarkRunning = false;
 
-// ─── CB cb2: the challenger menu ────────────────────────────────────────────
-// The classifier seat is measured, not assumed (CB ruling 1). The menu is a
-// local map because constants.ts is frozen: the two seated constants are
-// referenced, the one challenger with no constant is named here. This map
-// feeds ONLY the benchmark — no production call path reads it.
+// ─── CB cb2: the model menu (CB-S s3: opus is the seat, haiku the control) ──
+// The classifier seat is measured, not assumed (CB ruling 1; ruled Opus in
+// CB-S ruling 1 on the numbers). The menu references constants only —
+// single source of truth: 'opus' points at the production seat
+// (CLASSIFIER_MODEL), 'haiku' stays as the historical control
+// (CLASSIFICATION_MODEL, unchanged by design). This map feeds ONLY the
+// benchmark — no production call path reads it.
 
 export type BenchmarkModelKey = 'haiku' | 'sonnet' | 'opus';
 
 const BENCHMARK_MODELS: Record<BenchmarkModelKey, string> = {
   haiku: CLAUDE.CLASSIFICATION_MODEL,
   sonnet: CLAUDE.PROSE_MODEL,
-  opus: 'claude-opus-5',
+  opus: CLAUDE.CLASSIFIER_MODEL,
 };
 
 const BENCHMARK_MODEL_LABELS: Record<BenchmarkModelKey, string> = {
@@ -137,7 +139,9 @@ function benchHolding(ticker: string, name: string): ResolvedHolding {
  */
 export function startClassificationBenchmark(
   sampleTarget = 400,
-  model: BenchmarkModelKey = 'haiku',
+  // CB-S s3 (Robert's correction at ratification): an unpicked benchmark
+  // click measures the model actually in production.
+  model: BenchmarkModelKey = 'opus',
 ): BenchmarkStatus {
   if (benchmarkRunning) {
     return { started: false, reason: 'A benchmark is already running.' };

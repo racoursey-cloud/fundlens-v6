@@ -24,9 +24,12 @@
  * (ruling 5 — with pre-review overridden, the log IS the review).
  * The nightly pipeline never touches this module or its tables.
  *
- * Claude law: one call per question on CLAUDE.PROSE_MODEL (the Sonnet
- * seat, ruling 9 / D3), last-10-message history window, loud failure
- * email on API error (the A2 Task 3 pattern, reused).
+ * Claude law: one call per question on CLAUDE.HELP_CHAT_MODEL (the Opus
+ * seat — CB-S ruling 4, August 1, 2026, superseding the B10 ruling 9
+ * Sonnet seat; the B10 eval stands as evidence of record), last-10-message
+ * history window, loud failure email on API error (the A2 Task 3 pattern,
+ * reused). Length caution cured by the prompt's Smart Brevity section
+ * (CB-S ruling 5).
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -291,6 +294,9 @@ async function logExchange(
     // it never blocks the member's reply.
     console.error('[reference-help] help_questions log write FAILED:', error);
   }
+  // CB-S s6: every exchange's console line names the seat, so the model
+  // answering members is evident in the logs forever.
+  console.log(`[reference-help] Exchange logged (${outcome}) — seat ${CLAUDE.HELP_CHAT_MODEL}`);
 }
 
 // ─── The ask ────────────────────────────────────────────────────────────────
@@ -434,7 +440,7 @@ async function callModel(
 ): Promise<string> {
   const client = new Anthropic();
   const response = await client.messages.create({
-    model: CLAUDE.PROSE_MODEL,
+    model: CLAUDE.HELP_CHAT_MODEL, // CB-S ruling 4: the shared Help chat seat
     max_tokens: 12000,
     system: systemPrompt,
     messages,
