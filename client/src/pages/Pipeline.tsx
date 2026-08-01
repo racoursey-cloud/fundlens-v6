@@ -27,6 +27,9 @@ import {
   fetchProfile,
   runClassificationBenchmark,
   getBenchmarkStatus,
+  generateReferenceSummaries,
+  generateReferenceTranslations,
+  generateHelpEntries,
   type PipelineRun,
   type FundDossierRow,
   type BenchmarkRunStatus,
@@ -122,6 +125,165 @@ function StatCard({ label, value, color }: { label: string; value: string | numb
       }}>
         {value}
       </div>
+    </div>
+  );
+}
+
+// ─── Generate panel (B10-F1 f5) ────────────────────────────────────────────
+// The browser-only operator's buttons for the three admin generate routes
+// (F1-d: the orders said "click the route"; nothing was clickable). Each
+// run reports the counts its route already returns. One run at a time —
+// pipelineRateLimit guards the server side (the three routes share it, so
+// clicks inside the 5-minute cooldown answer with the cooldown message).
+
+type GenerateKey = 'summaries' | 'translations' | 'help';
+
+interface GenerateOutcome {
+  summary: string;
+  details: string[];
+  isError: boolean;
+}
+
+const GENERATE_BUTTONS: Array<{ key: GenerateKey; label: string; description: string }> = [
+  {
+    key: 'summaries',
+    label: 'B7 summaries',
+    description:
+      'Drafts one neutral summary per fund into reference_summaries. Nothing serves until you review them and the summaries flag is deliberately turned on.',
+  },
+  {
+    key: 'translations',
+    label: 'B9 translations',
+    description:
+      "Drafts a plain-English translation of each fund's SEC-filed description. Nothing serves until you review every line and the translations flag is deliberately turned on.",
+  },
+  {
+    key: 'help',
+    label: 'B10 help entries',
+    description:
+      'Drafts the Help explainer topics as draft rows. Nothing grounds the Help chat until you approve each row (status → approved) in the Supabase dashboard.',
+  },
+];
+
+function GeneratePanel() {
+  const [inFlight, setInFlight] = useState<GenerateKey | null>(null);
+  const [outcomes, setOutcomes] = useState<Partial<Record<GenerateKey, GenerateOutcome>>>({});
+
+  const run = async (key: GenerateKey) => {
+    if (inFlight) return;
+    setInFlight(key);
+    let outcome: GenerateOutcome;
+
+    if (key === 'summaries') {
+      const { data, error } = await generateReferenceSummaries();
+      outcome = !data
+        ? { summary: error ?? 'No response from the server.', details: [], isError: true }
+        : {
+            summary: `${data.generated} generated · ${data.rejected.length} rejected · ${data.total} funds`,
+            details: data.rejected.map(r => `${r.ticker}: rejected on "${r.word}"`),
+            isError: false,
+          };
+    } else if (key === 'translations') {
+      const { data, error } = await generateReferenceTranslations();
+      outcome = !data
+        ? { summary: error ?? 'No response from the server.', details: [], isError: true }
+        : {
+            summary: `${data.generated.length} generated · ${data.rejected.length} rejected · ${data.skipped.length} skipped · ${data.total} funds`,
+            details: [
+              ...data.rejected.map(r => `${r.ticker}: rejected on "${r.word}"`),
+              ...data.skipped.map(s => `${s.ticker}: skipped — ${s.reason}`),
+            ],
+            isError: false,
+          };
+    } else {
+      const { data, error } = await generateHelpEntries();
+      outcome = !data
+        ? { summary: error ?? 'No response from the server.', details: [], isError: true }
+        : {
+            summary: `${data.drafted.length} drafted · ${data.rejected.length} rejected · ${data.skipped.length} skipped · ${data.total} topics`,
+            details: [
+              ...data.rejected.map(r => `${r.slug}: rejected on "${r.word}"`),
+              ...data.skipped.map(s => `${s.slug}: skipped — ${s.reason}`),
+            ],
+            isError: false,
+          };
+    }
+
+    setOutcomes(prev => ({ ...prev, [key]: outcome }));
+    setInFlight(null);
+  };
+
+  return (
+    <div style={{
+      background: theme.colors.surface,
+      border: `1px solid ${theme.colors.border}`,
+      borderRadius: theme.radii.lg,
+      overflow: 'hidden',
+      marginTop: '24px',
+    }}>
+      <div style={{
+        padding: '14px 20px',
+        borderBottom: `1px solid ${theme.colors.border}`,
+      }}>
+        <span style={{ fontSize: '14px', fontWeight: 600, color: theme.colors.text }}>
+          Generate
+        </span>
+        <span style={{ fontSize: '12px', color: theme.colors.textDim, marginLeft: '10px' }}>
+          Draft AI text for the reference tier — everything stores dark until you review it
+        </span>
+      </div>
+
+      {GENERATE_BUTTONS.map(({ key, label, description }) => {
+        const outcome = outcomes[key];
+        const running = inFlight === key;
+        return (
+          <div key={key} style={{
+            padding: '14px 20px',
+            borderBottom: `1px solid ${theme.colors.border}`,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '16px',
+          }}>
+            <button
+              onClick={() => run(key)}
+              disabled={inFlight !== null}
+              style={{
+                padding: '8px 16px',
+                background: 'transparent',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radii.md,
+                color: theme.colors.textMuted,
+                fontSize: '13px',
+                fontWeight: 500,
+                fontFamily: theme.fonts.body,
+                cursor: inFlight !== null ? 'not-allowed' : 'pointer',
+                opacity: inFlight !== null && !running ? 0.5 : 1,
+                flexShrink: 0,
+                minWidth: '150px',
+              }}
+            >
+              {running ? 'Generating…' : label}
+            </button>
+            <div style={{ flex: 1, fontSize: '12px', lineHeight: 1.5 }}>
+              <div style={{ color: theme.colors.textDim }}>{description}</div>
+              {outcome && (
+                <div style={{
+                  marginTop: '6px',
+                  fontFamily: theme.fonts.mono,
+                  color: outcome.isError ? theme.colors.error : theme.colors.success,
+                }}>
+                  {outcome.summary}
+                </div>
+              )}
+              {outcome && outcome.details.length > 0 && (
+                <div style={{ marginTop: '4px', color: theme.colors.textDim, fontFamily: theme.fonts.mono }}>
+                  {outcome.details.join(' · ')}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -777,6 +939,9 @@ export function Pipeline() {
           )}
         </div>
       </div>
+
+      {/* ═══ Generate panel (B10-F1 f5) — the three admin draft routes ═══════ */}
+      <GeneratePanel />
 
       {/* ═══ Fund Data Quality — Dossier scorecard (A3 Task 5) ═══════════════ */}
       {dossiers.length > 0 && (
