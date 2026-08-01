@@ -20,3 +20,5 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-08-01 | DonutChart hover shows share-of-chart on normalized >100% sector rings while the legend prints filed values — optional filed-value hover, future wave (B9 review) | — |
 | 2026-08-01 | ADAXX About attribution shows filing date and EDGAR link but not the SEC-filed series name (no schema column) — add only if Robert wants it shown (B9 review) | — |
 | 2026-08-01 | Apex fundlens.app misroutes; production serves at www.fundlens.app — probes and docs must target www; rides the pending alias-hostname decision (S-B9 §8.1) | — |
+| 2026-08-01 | Dataset flattening drops ® trademark symbols — FSPGX "Russell 1000®" confirmed against the filing; FXAIX/VADFX/HRAUX/WEGRX/WFPRX suspected same class — verify-and-restore at the 2026q3 refresh (F5-E, amendment default) | — |
+| 2026-08-01 | OIBIX strategies text is its latest filing's 497 supplement fragment, standing with the seed-header disclosure per the F5 amendment — re-source decision revisits at the 2026q3 refresh (F5-D) | — |
