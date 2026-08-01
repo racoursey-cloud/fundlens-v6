@@ -1,11 +1,14 @@
 /**
- * FundLens — Reference Help (B3; chat added in B10 c10)
+ * FundLens — Reference Help (B3; chat added in B10 c10; Ask moved first
+ * in B10-F1 f3, operator direction F1-e)
  *
- * B3's FAQ and glossary stay exactly as ratified. Below them, B10 adds the
- * Help chat (ruling 8: AI-driven, grounded, fenced in code) — the
- * full-tier HelpChat interaction pattern (message thread, input, send)
- * restyled inline to the reference shell. Calls POST /api/reference-help/ask
- * only; the legacy /api/help/chat is full-tier-only (B10 c4).
+ * B3's FAQ and glossary stay exactly as ratified, below the chat. The
+ * Help chat (ruling 8: AI-driven, grounded, fenced in code) renders
+ * first — the full-tier HelpChat interaction pattern (message thread,
+ * input, send) restyled inline to the reference shell. The FAQ heading
+ * carries one line of furniture text so the seam reads deliberately.
+ * Calls POST /api/reference-help/ask only; the legacy /api/help/chat is
+ * full-tier-only (B10 c4).
  *
  * Honesty rule on labeling: the "written by AI" our-voice label sits ONLY
  * on generated replies (outcome 'answered'). The standing refusal, trouble
@@ -228,11 +231,11 @@ function HelpAskSection() {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, color: theme.colors.text, margin: `${theme.spacing.xxl} 0 ${theme.spacing.xs}` }}>
+      <h2 style={{ fontSize: 18, fontWeight: 700, color: theme.colors.text, margin: `0 0 ${theme.spacing.xs}` }}>
         Ask a question
       </h2>
       <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: `0 0 ${theme.spacing.md}`, lineHeight: 1.5 }}>
-        Not covered above? Ask about the app, the funds' listed facts, or what an investing term means.
+        Ask about the app, the funds' listed facts, or what an investing term means.
       </p>
 
       <div
@@ -451,9 +454,27 @@ export function ReferenceHelp() {
       <h1 style={{ fontSize: 24, fontWeight: 700, color: theme.colors.text, margin: `0 0 ${theme.spacing.sm}` }}>
         Help
       </h1>
-      <p style={{ fontSize: 14, color: theme.colors.textMuted, margin: `0 0 ${theme.spacing.xl}`, lineHeight: 1.5 }}>
-        Common questions about FundLens Reference.
-      </p>
+
+      {/* B10-F1 f3 (F1-e): the Ask section renders FIRST. Flag false →
+          the chat is absent and the page renders B3's FAQ-only layout,
+          original intro line included. */}
+      {REFERENCE_HELP_AI_ENABLED ? (
+        <>
+          <HelpAskSection />
+          {/* The FAQ heading with its one line of furniture text, so the
+              seam between the chat and the fixed answers reads deliberately */}
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: theme.colors.text, margin: `${theme.spacing.xxl} 0 ${theme.spacing.xs}` }}>
+            Common questions
+          </h2>
+          <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: `0 0 ${theme.spacing.md}`, lineHeight: 1.5 }}>
+            Common questions, answered the same way every time.
+          </p>
+        </>
+      ) : (
+        <p style={{ fontSize: 14, color: theme.colors.textMuted, margin: `0 0 ${theme.spacing.xl}`, lineHeight: 1.5 }}>
+          Common questions about FundLens Reference.
+        </p>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {FAQS.map((faq, i) => (
@@ -485,10 +506,6 @@ export function ReferenceHelp() {
           />
         ))}
       </div>
-
-      {/* B10 c10: the Help chat, below the FAQ and glossary. Flag false →
-          this section is absent and the page renders as B3's FAQ-only state. */}
-      {REFERENCE_HELP_AI_ENABLED && <HelpAskSection />}
     </div>
   );
 }
