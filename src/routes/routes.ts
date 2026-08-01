@@ -72,6 +72,20 @@ const pipelineRateLimit = rateLimit({
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
+// B10-F2 g1 (Robert's ruling, August 1, 2026): the admin generate routes
+// leave the five-minute pipelineRateLimit for this 30-second guard. F2's
+// lesson keeps its substance — every Claude-invoking route carries a
+// limiter — but a deliberate re-click after reading the counts sails
+// through; only double-clicks and overlapping runs are swallowed.
+// pipeline/run and pipeline/retry keep the five-minute guard untouched.
+const generateRateLimit = rateLimit({
+  windowMs: 30 * 1000,        // 30-second cooldown window
+  max: 1,                     // 1 run per 30 seconds
+  message: { error: 'Generate cooldown — wait 30 seconds between runs.' },
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
+  validate: { trustProxy: false, xForwardedForHeader: false },
+});
+
 const briefRateLimit = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 5,                         // 5 brief generations per day
@@ -1603,7 +1617,7 @@ router.post('/api/help/reload', requireAuth, requireAdmin, async (_req: Request,
  * Returns { generated, rejected, total } — rejected carries { ticker, word }
  * for each summary the banned-vocabulary post-check refused.
  */
-router.post('/api/reference-summaries/generate', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
+router.post('/api/reference-summaries/generate', requireAuth, requireAdmin, generateRateLimit, async (req: Request, res: Response) => {
   console.log(`[routes] POST /api/reference-summaries/generate — user: ${(req as AuthenticatedRequest).userEmail}`);
 
   // Latest completed pipeline run — same lookup as the scores list route
@@ -1697,7 +1711,7 @@ router.post('/api/reference-summaries/generate', requireAuth, requireAdmin, pipe
  * sign-off. Responds with the per-fund outcome lists (B7 route pattern):
  * { generated, rejected, skipped, total }.
  */
-router.post('/api/reference-translations/generate', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
+router.post('/api/reference-translations/generate', requireAuth, requireAdmin, generateRateLimit, async (req: Request, res: Response) => {
   console.log(`[routes] POST /api/reference-translations/generate — user: ${(req as AuthenticatedRequest).userEmail}`);
   const { generateReferenceTranslations } = await import('../engine/translations.js');
   const result = await generateReferenceTranslations();
@@ -1769,7 +1783,7 @@ router.post('/api/reference-help/ask', requireAuth, helpAskRateLimit, async (req
  * with per-topic outcome lists (B7 route pattern):
  * { drafted, rejected, skipped, total }.
  */
-router.post('/api/help-entries/generate', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
+router.post('/api/help-entries/generate', requireAuth, requireAdmin, generateRateLimit, async (req: Request, res: Response) => {
   console.log(`[routes] POST /api/help-entries/generate — user: ${(req as AuthenticatedRequest).userEmail}`);
   const { generateHelpDrafts } = await import('../engine/help-drafts.js');
   const result = await generateHelpDrafts();
