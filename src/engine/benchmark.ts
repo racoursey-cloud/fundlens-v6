@@ -22,7 +22,7 @@
  * classify.ts, which never uses Promise.all().
  */
 
-import { PIPELINE } from './constants.js';
+import { CLAUDE, PIPELINE } from './constants.js';
 import { supaSelect } from './supabase.js';
 import { getFmpCache } from './cache.js';
 import { classifyHoldingSectors, classifyHoldingIndustries } from './classify.js';
@@ -33,6 +33,26 @@ import { delay, ResolvedHolding } from './types.js';
 
 // One benchmark at a time — it makes a few hundred Claude calls.
 let benchmarkRunning = false;
+
+// ─── CB cb2: the challenger menu ────────────────────────────────────────────
+// The classifier seat is measured, not assumed (CB ruling 1). The menu is a
+// local map because constants.ts is frozen: the two seated constants are
+// referenced, the one challenger with no constant is named here. This map
+// feeds ONLY the benchmark — no production call path reads it.
+
+export type BenchmarkModelKey = 'haiku' | 'sonnet' | 'opus';
+
+const BENCHMARK_MODELS: Record<BenchmarkModelKey, string> = {
+  haiku: CLAUDE.CLASSIFICATION_MODEL,
+  sonnet: CLAUDE.PROSE_MODEL,
+  opus: 'claude-opus-5',
+};
+
+const BENCHMARK_MODEL_LABELS: Record<BenchmarkModelKey, string> = {
+  haiku: 'Haiku',
+  sonnet: 'Sonnet',
+  opus: 'Opus',
+};
 
 export interface BenchmarkStatus {
   started: boolean;
@@ -56,6 +76,9 @@ export interface BenchmarkRunStatus {
   summary: string | null;
   /** Did the report/failure email actually send? (Gap 2 boolean, surfaced) */
   emailed: boolean | null;
+  /** CB cb2: which menu model the running/most recent benchmark used —
+   *  null only before the first post-CB run */
+  model: BenchmarkModelKey | null;
 }
 
 let lastStartedAt: string | null = null;
@@ -63,6 +86,7 @@ let lastFinishedAt: string | null = null;
 let lastOutcome: 'success' | 'failed' | null = null;
 let lastSummary: string | null = null;
 let lastEmailed: boolean | null = null;
+let lastModel: BenchmarkModelKey | null = null;
 
 /** Current benchmark state for the admin UI (Gap 4). */
 export function getBenchmarkStatus(): BenchmarkRunStatus {
@@ -73,6 +97,7 @@ export function getBenchmarkStatus(): BenchmarkRunStatus {
     outcome: lastOutcome,
     summary: lastSummary,
     emailed: lastEmailed,
+    model: lastModel,
   };
 }
 
@@ -110,7 +135,10 @@ function benchHolding(ticker: string, name: string): ResolvedHolding {
  * arrives by admin email when the sequential classification finishes
  * (~400 holdings ÷ 25 per batch × 2 passes ≈ 32 Haiku calls, a few minutes).
  */
-export function startClassificationBenchmark(sampleTarget = 400): BenchmarkStatus {
+export function startClassificationBenchmark(
+  sampleTarget = 400,
+  model: BenchmarkModelKey = 'haiku',
+): BenchmarkStatus {
   if (benchmarkRunning) {
     return { started: false, reason: 'A benchmark is already running.' };
   }
@@ -120,9 +148,10 @@ export function startClassificationBenchmark(sampleTarget = 400): BenchmarkStatu
   lastOutcome = null;
   lastSummary = null;
   lastEmailed = null;
+  lastModel = model;
   const clamped = Math.max(50, Math.min(500, sampleTarget));
 
-  runBenchmark(clamped)
+  runBenchmark(clamped, model)
     .catch(async err => {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[benchmark] Failed: ${msg}`);
@@ -132,8 +161,9 @@ export function startClassificationBenchmark(sampleTarget = 400): BenchmarkStatu
       // real send outcome — a failed benchmark whose failure email also
       // fails must not be doubly invisible.
       const emailed = await sendAdminAlert(
-        'A5 Task 7 benchmark FAILED',
-        `The classification benchmark stopped with an error: <strong>${msg}</strong>. ` +
+        `Classification benchmark FAILED (${BENCHMARK_MODEL_LABELS[model]})`,
+        `The classification benchmark on ${BENCHMARK_MODEL_LABELS[model]} ` +
+        `(${BENCHMARK_MODELS[model]}) stopped with an error: <strong>${msg}</strong>. ` +
         `Nothing was changed anywhere — the benchmark is read-only. Re-run it from the Pipeline tab.`
       );
       lastEmailed = emailed;
@@ -149,8 +179,10 @@ export function startClassificationBenchmark(sampleTarget = 400): BenchmarkStatu
   return { started: true };
 }
 
-async function runBenchmark(sampleTarget: number): Promise<void> {
-  console.log(`[benchmark] A5 Task 7: starting classification benchmark (target ${sampleTarget} equities)`);
+async function runBenchmark(sampleTarget: number, model: BenchmarkModelKey): Promise<void> {
+  const modelId = BENCHMARK_MODELS[model];
+  const label = BENCHMARK_MODEL_LABELS[model];
+  console.log(`[benchmark] Starting classification benchmark on ${label} (${modelId}), target ${sampleTarget} equities`);
 
   // ── 1. Sample FMP-labeled equities from holdings_cache (out-of-sample:
   //       Haiku never classified these in production) ──
@@ -204,15 +236,16 @@ async function runBenchmark(sampleTarget: number): Promise<void> {
     `pool was ${pool.length} unique FMP-labeled tickers)`
   );
 
-  // ── 3. Production sector pass (exact prompt, sequential, 1.2s delays) ──
+  // ── 3. Production sector pass (exact prompt, sequential, 1.2s delays;
+  //       CB cb2: on the chosen model via cb1's override) ──
   const sectorHoldings = sample.map(s => benchHolding(s.ticker, s.name));
-  await classifyHoldingSectors(sectorHoldings);
+  await classifyHoldingSectors(sectorHoldings, modelId);
 
   await delay(PIPELINE.CLAUDE_CALL_DELAY_MS);
 
   // ── 4. Production industry pass (exact prompt + retry, sequential) ──
   const industryHoldings = sample.map(s => benchHolding(s.ticker, s.name));
-  await classifyHoldingIndustries(industryHoldings);
+  await classifyHoldingIndustries(industryHoldings, modelId);
 
   // ── 5. Score agreement ──
   let sectorAgree = 0, sectorDisagree = 0;
@@ -222,24 +255,24 @@ async function runBenchmark(sampleTarget: number): Promise<void> {
 
   for (let i = 0; i < sample.length; i++) {
     const s = sample[i];
-    const haikuSector = sectorHoldings[i].sector;
-    const haikuIndustry = industryHoldings[i].industry;
+    const modelSector = sectorHoldings[i].sector;
+    const modelIndustry = industryHoldings[i].industry;
 
-    if (s.fmpSector && haikuSector) {
-      if (haikuSector === s.fmpSector) sectorAgree++;
+    if (s.fmpSector && modelSector) {
+      if (modelSector === s.fmpSector) sectorAgree++;
       else {
         sectorDisagree++;
-        sectorMisses.push(`${s.ticker} "${s.name}": FMP=${s.fmpSector} vs Haiku=${haikuSector}`);
+        sectorMisses.push(`${s.ticker} "${s.name}": FMP=${s.fmpSector} vs ${label}=${modelSector}`);
       }
     }
 
     if (!FMP_INDUSTRY_SET.has(s.fmpIndustry)) {
       industryOffMenuFmp++; // FMP label itself is off the pinned 159 menu
-    } else if (haikuIndustry) {
-      if (haikuIndustry === s.fmpIndustry) industryAgree++;
+    } else if (modelIndustry) {
+      if (modelIndustry === s.fmpIndustry) industryAgree++;
       else {
         industryDisagree++;
-        industryMisses.push(`${s.ticker} "${s.name}": FMP=${s.fmpIndustry} vs Haiku=${haikuIndustry}`);
+        industryMisses.push(`${s.ticker} "${s.name}": FMP=${s.fmpIndustry} vs ${label}=${modelIndustry}`);
       }
     }
   }
@@ -249,7 +282,7 @@ async function runBenchmark(sampleTarget: number): Promise<void> {
   const industryTotal = industryAgree + industryDisagree;
 
   const summary =
-    `A5 Task 7 classification benchmark — ${sample.length} out-of-sample FMP-labeled equities\n` +
+    `Classification benchmark — model ${label} (${modelId}) — ${sample.length} out-of-sample FMP-labeled equities\n` +
     `Sector-level agreement:   ${sectorAgree}/${sectorTotal} = ${pct(sectorAgree, sectorTotal)}%\n` +
     `Industry-level agreement (159 menu): ${industryAgree}/${industryTotal} = ${pct(industryAgree, industryTotal)}%\n` +
     `FMP labels off the pinned menu (excluded): ${industryOffMenuFmp}`;
@@ -264,10 +297,11 @@ async function runBenchmark(sampleTarget: number): Promise<void> {
   // v8 A0 (Gap 2): the success log is gated on the REAL send outcome —
   // "Report emailed" was previously printed even when the send failed.
   const emailed = await sendAdminAlert(
-    'A5 Task 7 benchmark report: Haiku classification agreement',
+    `Classification benchmark report: ${label} (${modelId}) agreement`,
     `<pre>${esc(summary)}</pre>` +
-    `<p>The disagreement lists below are the raw material for the report's ` +
-    `arguable-vs-plainly-wrong split and for Decision 2 (Line 2 vocabulary).</p>` +
+    `<p>The disagreement lists below are the raw material for the CB ` +
+    `three-model comparison (CB §4) — same sample construction, same ground ` +
+    `truth, side by side across reports.</p>` +
     listHtml('Sector disagreements', sectorMisses) +
     listHtml('Industry disagreements', industryMisses)
   );
