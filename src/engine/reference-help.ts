@@ -86,10 +86,14 @@ export const STANDING_REFUSAL =
   "to pick or what's right for your situation. For personal advice, talk " +
   'to a qualified financial adviser.';
 
-/** Trouble copy — post-check rejection or API error. */
+/** Trouble copy — post-check rejection or API error. Reworded in B10-F1
+ *  (F1-a): the ratified original contained the banned stem "good";
+ *  code-served lines are exempt from the post-check, but the copy holds
+ *  itself to the same standard. "below" — the FAQ sits under the chat
+ *  since F1-e. */
 export const TROUBLE_COPY =
-  "I couldn't put together a good answer for that just now. Your question " +
-  'has been recorded — try rewording it, or check the questions above.';
+  "I couldn't finish a clean answer to that one just now. Your question " +
+  'has been recorded — try rewording it, or check the questions below.';
 
 /** Maintenance copy — the kill switch is off. */
 export const MAINTENANCE_COPY =
@@ -308,12 +312,13 @@ export async function askReferenceHelp(
 
   const question = request.message.trim();
 
+  let systemPrompt: string;
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   let reply = '';
   try {
-    const systemPrompt = loadReferenceHelpPrompt() + await buildGroundingBlock();
+    systemPrompt = loadReferenceHelpPrompt() + await buildGroundingBlock();
 
     // Last-10-message history window (the help-agent.ts pattern)
-    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
     if (request.history) {
       for (const msg of request.history.slice(-10)) {
         messages.push({ role: msg.role, content: msg.content });
@@ -321,17 +326,7 @@ export async function askReferenceHelp(
     }
     messages.push({ role: 'user', content: question });
 
-    const client = new Anthropic();
-    const response = await client.messages.create({
-      model: CLAUDE.PROSE_MODEL,
-      max_tokens: 12000,
-      system: systemPrompt,
-      messages,
-    });
-    for (const block of response.content) {
-      if (block.type === 'text') reply += block.text;
-    }
-    reply = reply.trim();
+    reply = await callModel(systemPrompt, messages);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[reference-help] Claude API error: ${msg}`);
@@ -360,16 +355,97 @@ export async function askReferenceHelp(
   // serving. A hit is loud — the log line and the logged row both name
   // the tripped word.
   const tripped = findBannedWord(reply) ?? findFullTierNoun(reply);
-  if (tripped !== null) {
+  if (tripped === null) {
+    await logExchange(request.userId, question, reply, 'answered', null);
+    return { reply, outcome: 'answered' };
+  }
+
+  // B10-F1 (F1-c): one silent retry before the trouble copy. The retry
+  // names the tripped word and instructs a rewrite without it; the fenced
+  // draft rides in the retry prompt (prompt-side only — it is never
+  // served or stored). Sequential by law: 1.2s delay, one extra call
+  // worst-case.
+  console.error(
+    `[reference-help] Generated reply tripped fence word "${tripped}" — one silent retry.`
+  );
+  let retryReply = '';
+  try {
+    await delay(CLAUDE.CALL_DELAY_MS);
+    const retryMessages = [
+      ...messages,
+      { role: 'assistant' as const, content: reply },
+      {
+        role: 'user' as const,
+        content:
+          `Your reply used the word "${tripped}", which must never appear — ` +
+          `not that word and not any word beginning with those letters. ` +
+          `Rewrite the answer without it: same substance, same length, all ` +
+          `other rules unchanged. Return only the rewritten answer.`,
+      },
+    ];
+    retryReply = await callModel(systemPrompt, retryMessages);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[reference-help] Claude API error on retry: ${msg}`);
+    alertClaudeApiFailure('Reference Help', msg).catch(() => {});
+    // The first draft was fenced AND the retry errored — outcome is the
+    // API error; reject_reason still records the word that forced the
+    // retry, so the review log carries both facts.
+    await logExchange(request.userId, question, TROUBLE_COPY, 'error', tripped);
+    return { reply: TROUBLE_COPY, outcome: 'error' };
+  }
+
+  if (!retryReply) {
+    console.error('[reference-help] Empty reply from model on retry');
+    await logExchange(request.userId, question, TROUBLE_COPY, 'error', tripped);
+    return { reply: TROUBLE_COPY, outcome: 'error' };
+  }
+
+  if (retryReply.includes('[ADVICE]')) {
+    await logExchange(request.userId, question, STANDING_REFUSAL, 'refused', null);
+    return { reply: STANDING_REFUSAL, outcome: 'refused' };
+  }
+
+  const trippedAgain = findBannedWord(retryReply) ?? findFullTierNoun(retryReply);
+  if (trippedAgain !== null) {
     console.error(
-      `[reference-help] REJECTED generated reply — tripped fence word "${tripped}". Reply not served.`
+      `[reference-help] REJECTED retry reply — tripped fence word "${trippedAgain}" ` +
+      `(first trip "${tripped}"). Reply not served.`
     );
     // answer_text records what the member actually saw (the trouble copy);
-    // the fenced draft itself is deliberately not stored.
-    await logExchange(request.userId, question, TROUBLE_COPY, 'rejected', tripped);
+    // both fenced drafts are deliberately not stored. reject_reason names
+    // both tripped words (F1-c: e.g. "good; best").
+    await logExchange(
+      request.userId, question, TROUBLE_COPY, 'rejected', `${tripped}; ${trippedAgain}`,
+    );
     return { reply: TROUBLE_COPY, outcome: 'rejected' };
   }
 
-  await logExchange(request.userId, question, reply, 'answered', null);
-  return { reply, outcome: 'answered' };
+  // Clean retry — served and logged 'answered' like any clean first pass.
+  await logExchange(request.userId, question, retryReply, 'answered', null);
+  return { reply: retryReply, outcome: 'answered' };
+}
+
+// ─── The model call (one place, first pass and retry alike) ────────────────
+
+async function callModel(
+  systemPrompt: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+): Promise<string> {
+  const client = new Anthropic();
+  const response = await client.messages.create({
+    model: CLAUDE.PROSE_MODEL,
+    max_tokens: 12000,
+    system: systemPrompt,
+    messages,
+  });
+  let text = '';
+  for (const block of response.content) {
+    if (block.type === 'text') text += block.text;
+  }
+  return text.trim();
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
