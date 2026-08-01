@@ -20,3 +20,5 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-08-01 | DonutChart hover shows share-of-chart on normalized >100% sector rings while the legend prints filed values — optional filed-value hover, future wave (B9 review) | — |
 | 2026-08-01 | ADAXX About attribution shows filing date and EDGAR link but not the SEC-filed series name (no schema column) — add only if Robert wants it shown (B9 review) | — |
 | 2026-08-01 | Apex fundlens.app misroutes; production serves at www.fundlens.app — probes and docs must target www; rides the pending alias-hostname decision (S-B9 §8.1) | — |
+| 2026-08-01 | B9 F5-E: ® symbols dropped from filed fund names in the seeded fund_descriptions text — restore only if Robert wants the marks shown (B9 F5 amendment; entry logged late per B10 D2) | — |
+| 2026-08-01 | OIBIX −5.41% twelve-month figure queued as an acceptance-battery spot-check target — B9 queue item never landed here; entry logged late per B10 D2 | — |
