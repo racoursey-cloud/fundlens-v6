@@ -177,6 +177,14 @@ export const REFERENCE_SUMMARIES_ENABLED = false;
 // false, the zero-AI-text-at-launch ruling stays intact.
 export const REFERENCE_TRANSLATIONS_ENABLED = false;
 
+// ─── Reference Tier: Help AI Flag (B-series B10) ────────────────────────────
+// B10 kill switch (ruling 8: ON at launch — the Help chat serves generated
+// text). Flipped false by Robert's deliberate edit: the reference Help chat
+// UI hides, the ask route answers with the maintenance line and makes zero
+// Claude calls, and the page degrades to B3's FAQ-only state. Scoped to Help
+// only — the B7 and B9 flags above are untouched and stay false.
+export const REFERENCE_HELP_AI_ENABLED = true;
+
 // ─── Supabase Configuration ──────────────────────────────────────────────────
 // All Supabase calls route through supaFetch() via the proxy endpoint.
 // Only exception: magic link auth uses the Supabase JS client directly.
