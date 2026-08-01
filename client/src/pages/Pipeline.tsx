@@ -366,8 +366,11 @@ export function Pipeline() {
   // Completion used to exist only as an email; now the tab shows running
   // state and the last outcome, polled while a benchmark is in flight.
   const [benchStatus, setBenchStatus] = useState<BenchmarkRunStatus | null>(null);
-  // CB cb4(a): which model the next benchmark click runs on
-  const [benchModel, setBenchModel] = useState<BenchmarkModelKey>('haiku');
+  // CB cb4(a): which model the next benchmark click runs on.
+  // CB-S s3 (unpicked click measures the production seat): the picker
+  // starts on opus — the UI always sends its selection explicitly, so the
+  // route default alone could not honor the ruling for Robert's clicks.
+  const [benchModel, setBenchModel] = useState<BenchmarkModelKey>('opus');
   const benchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadBenchStatus = useCallback(async () => {
