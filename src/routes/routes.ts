@@ -1562,7 +1562,17 @@ router.post('/api/help/chat', requireAuth, requireFullTier, helpChatRateLimit, a
 router.post('/api/benchmark/classification', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const { startClassificationBenchmark } = await import('../engine/benchmark.js');
   const sampleTarget = parseInt(req.query.sample as string) || 400;
-  const status = startClassificationBenchmark(sampleTarget);
+
+  // CB cb3: ?model=haiku|sonnet|opus — allowlist only, default haiku.
+  // The menu itself lives in benchmark.ts; production classification is
+  // untouched by any value here.
+  const modelParam = (req.query.model as string | undefined) ?? 'haiku';
+  if (modelParam !== 'haiku' && modelParam !== 'sonnet' && modelParam !== 'opus') {
+    res.status(400).json({ error: 'Invalid model — use haiku, sonnet, or opus.' });
+    return;
+  }
+
+  const status = startClassificationBenchmark(sampleTarget, modelParam);
 
   if (!status.started) {
     res.status(409).json({ error: status.reason });
