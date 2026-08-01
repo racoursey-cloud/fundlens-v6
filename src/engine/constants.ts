@@ -169,6 +169,14 @@ export const CLAUDE = {
 // AI-generated text.
 export const REFERENCE_SUMMARIES_ENABLED = false;
 
+// ─── Reference Tier: Translation Flag (B-series B9) ─────────────────────────
+// B9 feature flag. Gates the emission of translation_text in reference
+// payloads (reference-shape.ts). The SEC-filed verbatim text serves live;
+// the app-authored plain-English translation ships behind this flag, OFF,
+// and serves only after Robert reviews every line and HR signs off. While
+// false, the zero-AI-text-at-launch ruling stays intact.
+export const REFERENCE_TRANSLATIONS_ENABLED = false;
+
 // ─── Supabase Configuration ──────────────────────────────────────────────────
 // All Supabase calls route through supaFetch() via the proxy endpoint.
 // Only exception: magic link auth uses the Supabase JS client directly.

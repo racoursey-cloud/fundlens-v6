@@ -19,18 +19,28 @@
  *
  * Renders inside ReferenceShell's Outlet: header, tabs, and footer come
  * from the shell.
+ *
+ * B9 c11: holdings math runs on the funds' COMPLETE lists — each chosen
+ * fund's ?all=1 detail is fetched (cached per session) and fed to the
+ * engine's fullHoldingsByTicker input. The overlap section and the new
+ * "All holdings across the mix" list wait on those fetches with a plain
+ * loading line; the cost, sector, and concentration panels never do.
+ * Dust floor: computed mix percentages below 0.05% print "<0.1%", never
+ * "0.0%".
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import {
   fetchFunds,
   fetchReferenceScores,
+  fetchReferenceFundDetailFull,
   fetchExampleAllocation,
   saveExampleAllocation,
   deleteExampleAllocation,
   isNoSavedMix,
   type Fund,
   type ReferenceFund,
+  type ReferenceHolding,
   type ExampleAllocationRow,
 } from '../../api';
 import {
@@ -61,6 +71,33 @@ function isValidPctText(text: string): boolean {
   const n = Number(text);
   return Number.isFinite(n) && n >= 0 && hasAtMostOneDecimal(n);
 }
+
+// ─── B9 dust floor ─────────────────────────────────────────────────────────
+// Everywhere a computed mix percentage renders: values below 0.05% print
+// "<0.1%", never "0.0%". (The running Total is the user's own typed sum —
+// the number the save gate validates — so it stays exact.) Negative
+// combined weights (short positions aggregated as filed) print as filed.
+
+function fmtMixPct(pct: number): string {
+  if (pct > 0 && pct < 0.05) return '<0.1%';
+  // F4 cure (Fabio ruling, July 31, 2026): dust-sized negatives — real
+  // short-position slivers like TGEPX's -0.0096% row — render at two
+  // decimals, faithful and self-explanatory ("-0.01%"), never "-0.0%".
+  // A value so small that two decimals would still round to "-0.00%"
+  // (RNWGX's -0.0008% row) prints at full four-decimal precision instead —
+  // the zero-print is the defect class this wave cures, in either sign.
+  if (pct < 0 && pct > -0.05) {
+    const twoDecimals = `${pct.toFixed(2)}%`;
+    return twoDecimals === '-0.00%' ? `${pct.toFixed(4)}%` : twoDecimals;
+  }
+  return `${pct.toFixed(1)}%`;
+}
+
+// ─── B9 session cache for full holdings lists (?all=1) ─────────────────────
+// Module-level: survives page remounts within the session, so each fund's
+// full list is fetched at most once per visit.
+
+const fullHoldingsCache = new Map<string, ReferenceHolding[]>();
 
 // ─── Donut slices from the mix-level sector map ────────────────────────────
 // FundDetail's slice builder is module-private, so this page carries its
@@ -210,6 +247,70 @@ export function ReferenceMyMix() {
   );
   const hasMix = entries.some(e => Number.isFinite(e.pct) && e.pct > 0);
   const slices = useMemo(() => buildMixSlices(result.sector_exposure_pct), [result]);
+
+  // ── B9 c11: full holdings lists for the chosen funds (?all=1, cached) ──
+  const chosenTickers = useMemo(
+    () =>
+      entries
+        .filter(e => Number.isFinite(e.pct) && e.pct > 0)
+        .map(e => tickerById.get(e.fund_id))
+        .filter((t): t is string => t !== undefined),
+    [entries, tickerById],
+  );
+  const chosenKey = chosenTickers.slice().sort().join(',');
+
+  const [fullHoldings, setFullHoldings] = useState<Record<string, ReferenceHolding[]>>({});
+  const [holdingsFetchError, setHoldingsFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // F3 cure: clear any stale error whenever the effect re-runs — a
+    // transient failure followed by a successful refetch must not leave
+    // the holdings sections stuck on the old error.
+    setHoldingsFetchError(null);
+    // Serve session-cached lists synchronously; fetch only what's missing.
+    const fromCache: Record<string, ReferenceHolding[]> = {};
+    const toFetch: string[] = [];
+    for (const t of chosenTickers) {
+      const cached = fullHoldingsCache.get(t);
+      if (cached !== undefined) fromCache[t] = cached;
+      else toFetch.push(t);
+    }
+    if (Object.keys(fromCache).length > 0) {
+      setFullHoldings(prev => ({ ...fromCache, ...prev }));
+    }
+    if (toFetch.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      for (const t of toFetch) {
+        const res = await fetchReferenceFundDetailFull(t);
+        if (cancelled) return;
+        if (res.data) {
+          const list = res.data.holdings || [];
+          fullHoldingsCache.set(t, list);
+          setFullHoldings(prev => ({ ...prev, [t]: list }));
+        } else {
+          setHoldingsFetchError(res.error || 'Could not load the full holdings lists.');
+          return;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chosenKey]);
+
+  // The holdings sections wait for every chosen fund's full list; the
+  // cost, sector, and concentration panels never do.
+  const holdingsReady = chosenTickers.every(t => t in fullHoldings);
+  const resultFull = useMemo(
+    () =>
+      holdingsReady
+        ? computeExampleMix(funds, refFunds, entries, fullHoldings)
+        : null,
+    [holdingsReady, funds, refFunds, entries, fullHoldings],
+  );
 
   const handleSave = async () => {
     setSaving(true);
@@ -450,8 +551,8 @@ export function ReferenceMyMix() {
                 (≈ ${Math.round(result.blended_expense_dollars_per_10k)} per year per $10,000 invested)
                 {result.expense_ratio_known_mix_pct < 100 - 1e-9 && (
                   <span style={{ color: theme.colors.textMuted }}>
-                    {' '}— this figure covers the {result.expense_ratio_known_mix_pct.toFixed(1)}%
-                    of the mix with a known expense ratio
+                    {' '}— this figure covers the {fmtMixPct(result.expense_ratio_known_mix_pct)}
+                    {' '}of the mix with a known expense ratio
                   </span>
                 )}
               </p>
@@ -474,7 +575,7 @@ export function ReferenceMyMix() {
                       <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 12, color: theme.colors.text, flex: 1 }}>{s.label}</span>
                       <span style={{ fontSize: 12, fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
-                        {s.pct.toFixed(1)}%
+                        {fmtMixPct(s.pct)}
                       </span>
                     </div>
                   ))}
@@ -487,12 +588,21 @@ export function ReferenceMyMix() {
             )}
           </div>
 
-          {/* Overlap: holdings appearing in two or more chosen funds */}
+          {/* Overlap: holdings appearing in two or more chosen funds —
+              B9 c11: computed from the funds' complete lists, so overlap
+              below any fund's top ten now surfaces. Waits on the ?all=1
+              fetches with a plain loading line. */}
           <div style={{ marginBottom: 14 }}>
             <SectionLabel text="Held through more than one fund" />
-            {result.overlaps.length > 0 ? (
+            {holdingsFetchError ? (
+              <p style={{ fontSize: 13, color: theme.colors.error, margin: 0 }}>{holdingsFetchError}</p>
+            ) : resultFull === null ? (
+              <p style={{ fontSize: 13, color: theme.colors.textDim, margin: 0 }}>
+                Loading the funds&apos; full holdings lists…
+              </p>
+            ) : resultFull.overlaps.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {result.overlaps.map(o => (
+                {resultFull.overlaps.map(o => (
                   <div key={o.key} style={{ fontSize: 13, color: theme.colors.text }}>
                     {o.name ?? o.key}
                     {o.ticker && (
@@ -500,13 +610,13 @@ export function ReferenceMyMix() {
                         {' '}({o.ticker})
                       </span>
                     )}
-                    {' '}— {o.combined_weight_pct.toFixed(1)}% of the mix combined
+                    {' '}— {fmtMixPct(o.combined_weight_pct)} of the mix combined
                     <div style={{ fontSize: 12, color: theme.colors.textMuted, marginTop: 2 }}>
                       {o.appears_in.map((a, i) => (
                         <span key={`${a.fund_ticker}-${i}`}>
                           {i > 0 && ' · '}
                           <span style={{ fontFamily: theme.fonts.mono }}>{a.fund_ticker}</span>
-                          {': '}{a.contribution_pct.toFixed(1)}% of the mix
+                          {': '}{fmtMixPct(a.contribution_pct)} of the mix
                         </span>
                       ))}
                     </div>
@@ -517,6 +627,94 @@ export function ReferenceMyMix() {
               <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
                 No holding appears in more than one of the chosen funds.
               </p>
+            )}
+          </div>
+
+          {/* B9 c11: the full aggregated holdings list across the mix */}
+          <div style={{ marginBottom: 14 }}>
+            <SectionLabel text="All holdings across the mix" />
+            {holdingsFetchError ? (
+              <p style={{ fontSize: 13, color: theme.colors.error, margin: 0 }}>{holdingsFetchError}</p>
+            ) : resultFull === null ? (
+              <p style={{ fontSize: 13, color: theme.colors.textDim, margin: 0 }}>
+                Loading the funds&apos; full holdings lists…
+              </p>
+            ) : resultFull.holdings.length === 0 ? (
+              <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
+                — nothing to list yet
+              </p>
+            ) : (
+              <div>
+                <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '0 0 4px' }}>
+                  Small slivers are normal — a fund holds hundreds of
+                  positions, and your mix holds a slice of each.
+                </p>
+                <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '0 0 8px' }}>
+                  Showing all {resultFull.holdings.length} holdings across the
+                  mix, ranked by combined weight.
+                </p>
+                <div
+                  style={{
+                    maxHeight: 360,
+                    overflowY: 'auto',
+                    border: `1px solid ${theme.colors.border}`,
+                    borderRadius: theme.radii.sm,
+                  }}
+                >
+                  {resultFull.holdings.map((h, idx) => (
+                    <div
+                      key={h.key}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '5px 10px',
+                        borderBottom:
+                          idx < resultFull.holdings.length - 1
+                            ? `1px solid ${theme.colors.border}`
+                            : 'none',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: theme.colors.text,
+                          flex: 1,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {h.name ?? h.key}
+                      </span>
+                      {h.ticker && (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontFamily: theme.fonts.mono,
+                            color: theme.colors.textDim,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {h.ticker}
+                        </span>
+                      )}
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontFamily: theme.fonts.mono,
+                          color: theme.colors.textMuted,
+                          flexShrink: 0,
+                          minWidth: 52,
+                          textAlign: 'right',
+                        }}
+                      >
+                        {fmtMixPct(h.combined_weight_pct)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 

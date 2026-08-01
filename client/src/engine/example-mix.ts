@@ -32,11 +32,16 @@
  *     (the pipeline maps pct_of_nav rounded to one decimal).
  *   - mix pcts are on the 0–100 scale (the server requires them to sum to
  *     100 ± 0.05).
+ *   - B9 c10: full holdings rows (ReferenceHolding, from ?all=1) carry pct
+ *     on the same 0–100 percent-of-fund scale (pct_of_nav served as-is),
+ *     so the combined-weight math is identical on either input. Negative
+ *     rows (short positions) aggregate as filed — faithfulness over
+ *     tidiness.
  */
 
 import { computeHHI } from '../utils/hhi';
 import { MONEY_MARKET_TICKERS } from '../pages/reference/constants';
-import type { Fund, ReferenceFund } from '../api';
+import type { Fund, ReferenceFund, ReferenceHolding } from '../api';
 
 // ─── Input and output shapes ───────────────────────────────────────────────
 
@@ -119,11 +124,18 @@ function toEntries(mix: ExampleMixInput): ExampleMixEntry[] {
  * reference view, is treated as having no known expense ratio and no
  * sector data — its full mix weight lands in a bucket rather than being
  * silently renormalized away.
+ *
+ * B9 c10: fullHoldingsByTicker optionally supplies a fund's COMPLETE
+ * holdings list (the ?all=1 fetch). When present for a fund, holdings
+ * aggregation and overlap detection walk that full list (same
+ * combined-weight math); when absent, the stored top-ten behavior stands
+ * unchanged. Expense, sector, and HHI math never depend on it.
  */
 export function computeExampleMix(
   funds: Fund[],
   referenceFunds: ReferenceFund[],
   mix: ExampleMixInput,
+  fullHoldingsByTicker?: Record<string, ReferenceHolding[]>,
 ): ExampleMixResult {
   const entries = toEntries(mix);
 
@@ -181,8 +193,15 @@ export function computeExampleMix(
     //    Group by ticker, falling back to the exact name when ticker is
     //    null. A row with neither identity, or with a null weight, carries
     //    nothing that can be grouped or combined and is skipped.
+    //    B9 c10: when the fund's complete list is supplied, walk it instead
+    //    of the stored top ten — same math, full depth.
     if (view) {
-      for (const h of view.top_holdings) {
+      const fullList = ticker !== undefined ? fullHoldingsByTicker?.[ticker] : undefined;
+      const rows: Array<{ name: string | null; ticker: string | null; weight: number | null }> =
+        fullList !== undefined
+          ? fullList.map(h => ({ name: h.name, ticker: h.ticker, weight: h.pct }))
+          : view.top_holdings;
+      for (const h of rows) {
         const key = h.ticker ?? h.name;
         if (key === null || h.weight === null) continue;
         const contribution = (pct / 100) * h.weight;

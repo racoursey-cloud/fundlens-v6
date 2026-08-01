@@ -155,6 +155,28 @@ function isValidUUID(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
+// ─── B9 c5(c): fund_descriptions attach for reference shaping ─────────────
+// The SEC-filed description row attached onto the reference fund identity
+// before shaping. Verbatim text serves live (no flag — B9 ruling 5);
+// translation emission is gated inside reference-shape.ts. Module-local
+// intersection type so this commit builds before c6 adds the field to
+// ReferenceFundIdentity itself (the B7 attach pattern, sequence reversed
+// by the B9 build order).
+
+interface ReferenceDescriptionRow {
+  fund_id?: string;
+  objective_text: string;
+  strategies_text: string;
+  source_accession: string;
+  source_series_id: string;
+  filing_ddate: string;
+  translation_text: string | null;
+}
+
+type IdentityWithDescription = ReferenceFundIdentity & {
+  description?: ReferenceDescriptionRow | null;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FUNDS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -279,6 +301,18 @@ router.get('/api/scores', requireAuth, async (req: Request, res: Response) => {
       }
     }
 
+    // B9 c5(c): attach each fund's SEC-filed description row (all rows, one
+    // query) onto the embedded identity before shaping — null where no row.
+    const { data: descRows } = await supaSelect<ReferenceDescriptionRow[]>('fund_descriptions', {
+      select: 'fund_id,objective_text,strategies_text,source_accession,source_series_id,filing_ddate,translation_text',
+    });
+    const descByFund = new Map((descRows || []).map(d => [d.fund_id, d]));
+    for (const row of scoreRows) {
+      if (row.funds) {
+        (row.funds as IdentityWithDescription).description = descByFund.get(row.fund_id) ?? null;
+      }
+    }
+
     res.json({
       funds: shapeFundListForReference(scoreRows, dossiers || []),
       asOf: latestRun.completed_at,
@@ -336,11 +370,16 @@ router.get('/api/scores/:ticker', requireAuth, async (req: Request, res: Respons
     return;
   }
 
-  // Also fetch the fund's current holdings for the detail view
+  // Also fetch the fund's current holdings for the detail view.
+  // B9 c5(a): ?all=1 lifts the 50-row cap for the full-list surfaces
+  // (reference Holdings tab, My Mix full aggregation) with a hard ceiling
+  // of 1000. Without the param the query is byte-identical to before, for
+  // both tiers.
+  const wantAllHoldings = req.query.all === '1';
   const { data: holdings } = await supaSelect('holdings_cache', {
     fund_id: `eq.${fund.id}`,
     order: 'pct_of_nav.desc',
-    limit: '50',
+    limit: wantAllHoldings ? '1000' : '50',
   });
 
   // B2: reference accounts get the allowlist shape (reference-shape.ts)
@@ -370,6 +409,21 @@ router.get('/api/scores/:ticker', requireAuth, async (req: Request, res: Respons
       });
       referenceFund = { ...fund, summary_reference: summaryRow?.summary_reference ?? null };
     }
+
+    // B9 c5(c): the single description row for this fund, attached onto the
+    // identity handed to the shaper — null where no row exists.
+    const { data: descRow } = await supaFetch<ReferenceDescriptionRow>('fund_descriptions', {
+      params: {
+        fund_id: `eq.${fund.id}`,
+        select: 'objective_text,strategies_text,source_accession,source_series_id,filing_ddate,translation_text',
+        limit: '1',
+      },
+      single: true,
+    });
+    referenceFund = {
+      ...referenceFund,
+      description: descRow ?? null,
+    } as IdentityWithDescription;
 
     res.json({
       fund: shapeFundForReference(referenceFund, score, dossier ?? null),
@@ -1614,4 +1668,23 @@ router.post('/api/reference-summaries/generate', requireAuth, requireAdmin, pipe
   }
 
   res.json({ generated, rejected, total: inputs.length });
+});
+
+/**
+ * POST /api/reference-translations/generate
+ * B9 c5(b): admin-only trigger for the plain-English translation drafts.
+ *
+ * Invokes the c4 engine (src/engine/translations.ts): one sequential
+ * Claude call per active fund with a stored description, 1.2s delays,
+ * banned-vocabulary post-check rejecting writes on a hit. Stored drafts
+ * serve nothing until REFERENCE_TRANSLATIONS_ENABLED (constants.ts, ships
+ * false) is deliberately flipped after Robert's line-by-line review and HR
+ * sign-off. Responds with the per-fund outcome lists (B7 route pattern):
+ * { generated, rejected, skipped, total }.
+ */
+router.post('/api/reference-translations/generate', requireAuth, requireAdmin, pipelineRateLimit, async (req: Request, res: Response) => {
+  console.log(`[routes] POST /api/reference-translations/generate — user: ${(req as AuthenticatedRequest).userEmail}`);
+  const { generateReferenceTranslations } = await import('../engine/translations.js');
+  const result = await generateReferenceTranslations();
+  res.json(result);
 });

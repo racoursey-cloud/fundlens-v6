@@ -19,6 +19,10 @@
  *     % sector-classified, and whether the data-quality gate passed
  *   - the dates the data speaks as of: the SEC EDGAR filing's report date,
  *     the priced-as-of date, and when scoring ran
+ *   - the fund's own SEC-filed description (B9): Investment Objective and
+ *     Principal Investment Strategies verbatim, with the filing's
+ *     accession, series id, and prospectus date (conduit principle —
+ *     their words, unchanged)
  *
  * What reference accounts can NEVER receive (excluded forever, plan §B2):
  *   - composite_default — the overall score
@@ -42,7 +46,7 @@
  * this file and are byte-identical to their pre-B2 form.
  */
 
-import { REFERENCE_SUMMARIES_ENABLED } from './constants.js';
+import { REFERENCE_SUMMARIES_ENABLED, REFERENCE_TRANSLATIONS_ENABLED } from './constants.js';
 
 // ─── The allowlist ──────────────────────────────────────────────────────────
 // Every key path a reference payload may contain. This list and the shaping
@@ -87,6 +91,16 @@ export const REFERENCE_ALLOWLIST = [
   // Neutral, Robert-reviewed summary (B7) — emitted only while
   // REFERENCE_SUMMARIES_ENABLED (constants.ts) is true
   'summary_reference',
+  // SEC-filed description (B9) — verbatim filed text, emitted whenever the
+  // fund_descriptions row exists (no flag: their words, served live)
+  'description.objective_text',
+  'description.strategies_text',
+  'description.source_accession',
+  'description.source_series_id',
+  'description.filing_ddate',
+  // Our plain-English translation (B9) — emitted only while
+  // REFERENCE_TRANSLATIONS_ENABLED (constants.ts) is true
+  'description.translation_text',
 ] as const;
 
 // ─── Input shapes (only the fields this file reads) ─────────────────────────
@@ -105,6 +119,19 @@ export interface ReferenceFundIdentity {
    *  reference_summaries table — only fetched while
    *  REFERENCE_SUMMARIES_ENABLED is true; null when no row exists */
   summary_reference?: string | null;
+  /** B9: the fund_descriptions row attached by routes.ts — the SEC-filed
+   *  verbatim text plus the flag-gated translation; null when no row */
+  description?: ReferenceDescriptionSource | null;
+}
+
+/** The fund_descriptions fields this file reads (B9) */
+export interface ReferenceDescriptionSource {
+  objective_text: string;
+  strategies_text: string;
+  source_accession: string;
+  source_series_id: string;
+  filing_ddate: string;
+  translation_text: string | null;
 }
 
 /** The score-row fields this file reads. factor_details is the raw JSON
@@ -171,6 +198,18 @@ export interface ReferenceFundView {
   /** B7: present (string or null) only while REFERENCE_SUMMARIES_ENABLED is
    *  true; absent entirely — not null — while the flag is false */
   summary_reference?: string | null;
+  /** B9: the SEC-filed description, emitted whenever the row exists (their
+   *  words serve live — no flag); null when the fund has no stored row.
+   *  translation_text inside it appears only while
+   *  REFERENCE_TRANSLATIONS_ENABLED is true — absent, not null, otherwise. */
+  description: {
+    objective_text: string;
+    strategies_text: string;
+    source_accession: string;
+    source_series_id: string;
+    filing_ddate: string;
+    translation_text?: string | null;
+  } | null;
 }
 
 export interface ReferenceHoldingView {
@@ -285,6 +324,23 @@ export function shapeFundForReference(
     ...(REFERENCE_SUMMARIES_ENABLED
       ? { summary_reference: fund.summary_reference ?? null }
       : {}),
+    // B9: the SEC-filed description emits whenever the row exists — the
+    // verbatim text is not flag-gated (conduit principle; ruling 5). The
+    // translation key rides inside it ONLY while
+    // REFERENCE_TRANSLATIONS_ENABLED is true; while false the key is
+    // absent, not null, and zero AI text reaches reference payloads.
+    description: fund.description
+      ? {
+          objective_text: fund.description.objective_text,
+          strategies_text: fund.description.strategies_text,
+          source_accession: fund.description.source_accession,
+          source_series_id: fund.description.source_series_id,
+          filing_ddate: fund.description.filing_ddate,
+          ...(REFERENCE_TRANSLATIONS_ENABLED
+            ? { translation_text: fund.description.translation_text ?? null }
+            : {}),
+        }
+      : null,
   };
 }
 
