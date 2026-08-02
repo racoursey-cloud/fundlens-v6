@@ -139,8 +139,13 @@ const VENUE_SUFFIX_COUNTRY: Record<string, string> = {
 /**
  * H1 h3: can this candidate ticker be shown to a member?
  * (a) whitespace — bond-ID strings are not tickers;
- * (b) a currency-line code tail (USD/EUR/GBP/CHF) on a candidate longer
- *     than 4 chars — vendor currency lines, not tickers;
+ * (b) a currency-line code tail (USD/EUR/GBP/CHF) on a candidate of 6+
+ *     chars — vendor currency lines, not tickers. H1-F1 f1 amendment:
+ *     the threshold is ≥6, NOT >4 — legitimate 5-letter OTC tickers end
+ *     in "CHF" (the CICHF class: CICHF is China Construction Bank, with
+ *     OVCHF, BACHF, LICHF, UNCHF, WTCHF, NNCHF, AHCHF, DACHF, BJCHF,
+ *     MXCHF, YZCHF all live and correct in production); every observed
+ *     garbage code is ≥6 chars.
  * (c) a known venue suffix whose venue country contradicts the security's
  *     home country (from its ISIN prefix) — the wrong listing line.
  * homeCountry null = country unknown → check (c) cannot judge and passes.
@@ -148,7 +153,7 @@ const VENUE_SUFFIX_COUNTRY: Record<string, string> = {
  */
 export function isDisplayableTicker(ticker: string, homeCountry: string | null): boolean {
   if (/\s/.test(ticker)) return false;
-  if (ticker.length > 4 && /(USD|EUR|GBP|CHF)$/.test(ticker.toUpperCase())) return false;
+  if (ticker.length >= 6 && /(USD|EUR|GBP|CHF)$/.test(ticker.toUpperCase())) return false;
   const dot = ticker.lastIndexOf('.');
   if (dot > 0 && homeCountry) {
     const venueCountry = VENUE_SUFFIX_COUNTRY[ticker.slice(dot + 1).toUpperCase()];
