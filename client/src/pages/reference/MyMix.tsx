@@ -22,8 +22,8 @@
  *
  * B9 c11: holdings math runs on the funds' COMPLETE lists — each chosen
  * fund's ?all=1 detail is fetched (cached per session) and fed to the
- * engine's fullHoldingsByTicker input. The overlap section and the new
- * "All holdings across the mix" list wait on those fetches with a plain
+ * engine's fullHoldingsByTicker input. The overlap section and the
+ * "Holdings across the mix" list wait on those fetches with a plain
  * loading line; the cost, sector, and concentration panels never do.
  * Dust floor: computed mix percentages below 0.05% print "<0.1%", never
  * "0.0%".
@@ -630,9 +630,12 @@ export function ReferenceMyMix() {
             )}
           </div>
 
-          {/* B9 c11: the full aggregated holdings list across the mix */}
+          {/* B9 c11: the aggregated holdings list across the mix.
+              H1 h2: never claims "all" — a contributing fund past the B9
+              c5(a) 1,000-row ceiling (VFWAX: 3,918 filed) contributes its
+              largest 1,000, so the list is the largest holdings, not all. */}
           <div style={{ marginBottom: 14 }}>
-            <SectionLabel text="All holdings across the mix" />
+            <SectionLabel text="Holdings across the mix" />
             {holdingsFetchError ? (
               <p style={{ fontSize: 13, color: theme.colors.error, margin: 0 }}>{holdingsFetchError}</p>
             ) : resultFull === null ? (
@@ -650,8 +653,8 @@ export function ReferenceMyMix() {
                   positions, and your mix holds a slice of each.
                 </p>
                 <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '0 0 8px' }}>
-                  Showing all {resultFull.holdings.length} holdings across the
-                  mix, ranked by combined weight.
+                  Showing the {resultFull.holdings.length} largest holdings
+                  across the mix, ranked by combined weight.
                 </p>
                 <div
                   style={{

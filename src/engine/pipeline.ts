@@ -35,7 +35,7 @@ import { delay, ResolvedHolding, FundRow, NmfpFundData, HoldingsPipelineResult }
 import { computeDossier } from './dossier.js';
 import type { FundDossier, DossierInput } from './dossier.js';
 import { runHoldingsPipeline } from './holdings.js';
-import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics } from './fmp.js';
+import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics, checkProfileNameAgreement } from './fmp.js';
 import { FmpRatios, FmpKeyMetrics, FmpProfile } from './fmp.js';
 import { supaUpdate } from './supabase.js';
 import { fetchExpenseRatio, fetchFinnhubExpenseRatio, KNOWN_EXPENSE_RATIOS } from './finnhub.js';
@@ -359,11 +359,16 @@ export async function runFullPipeline(
   }
 
   // Step 4d (A4 Task 3): harvest profile fields onto every enrichable holding
+  // H1 h6: gated on name agreement — a profile describing a different
+  // company than the filed name (FUISF Fubon→Fujitsu, TGBMF TCC→Taseko) is
+  // treated as absent for this holding; nothing from it is harvested, and
+  // classification falls through to the existing paths.
   for (const [, holdings] of fundHoldings) {
     for (const h of holdings) {
       if (!h.ticker || h.listingTier === 'home') continue;
       const prof = fundamentals.get(h.ticker)?.profile;
       if (!prof) continue;
+      if (!checkProfileNameAgreement(h.ticker, h.name, prof)) continue;
       h.industry = prof.industry || null;
       h.industrySource = prof.industry ? 'fmp' : null;
       h.isAdr = prof.isAdr ?? null;
@@ -397,6 +402,9 @@ export async function runFullPipeline(
       if (!h.ticker || h.listingTier === 'home') continue;
       const prof = fundamentals.get(h.ticker)?.profile;
       if (!prof) continue;
+      // H1 h6: a mismatched profile is absent here too — the wrong
+      // company's volume must not set this holding's eligibility.
+      if (!checkProfileNameAgreement(h.ticker, h.name, prof)) continue;
       h.momentumEligible = (prof.averageVolume ?? 0) >= MOMENTUM_MIN_AVG_VOLUME;
       if (!h.momentumEligible) firewalledWeight += h.pctOfNav;
     }

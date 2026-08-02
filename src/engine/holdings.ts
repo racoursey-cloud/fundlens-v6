@@ -39,6 +39,56 @@ import {
 /** Max depth for fund-of-funds look-through (spec §2.4.4: capped at depth 1) */
 const MAX_LOOKTHROUGH_DEPTH = 1;
 
+// ─── H1 h5: same-fund ticker collision guard ────────────────────────────────
+// One ticker claimed by two DIFFERENT companies inside one fund (TRP:
+// TC Energy + Torrent Pharmaceuticals) means at least one claim is wrong.
+// The lower-weight claimant is demoted to a null ticker — a null is honest,
+// a wrong ticker is not. Same-issuer lots (two share classes, name
+// variants) share a significant name token and are never demoted. Runs on
+// the built holdings (post-cache), so the shared cusip_cache is untouched —
+// a ticker valid in another fund's context stays cached.
+
+const COLLISION_STOP_TOKENS = new Set([
+  'corp', 'corporation', 'inc', 'incorporated', 'ltd', 'limited', 'plc',
+  'co', 'company', 'companies', 'holdings', 'holding', 'group', 'the',
+  'and', 'of', 'class', 'cl', 'ord', 'shs', 'adr', 'sponsored', 'spon',
+  'reg', 'registered', 'sa', 'se', 'ag', 'nv', 'ab', 'asa', 'spa', 'oyj',
+  'llc', 'lp', 'new',
+]);
+
+function significantNameTokens(name: string): Set<string> {
+  return new Set(
+    name
+      .toLowerCase()
+      // Non-decomposing letters fold BEFORE the NFD strip — ø, æ, ß, ł, đ
+      // (and siblings œ, ð) have no combining-mark decomposition, so
+      // without this map "Ørsted" and "Orsted" tokenize differently and
+      // same-issuer lots would false-collide (H1 in-slice cure).
+      .replace(/ø/g, 'o')
+      .replace(/æ/g, 'ae')
+      .replace(/ß/g, 'ss')
+      .replace(/ł/g, 'l')
+      .replace(/đ/g, 'd')
+      .replace(/œ/g, 'oe')
+      .replace(/ð/g, 'd')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(' ')
+      .filter(t => t.length >= 2 && !COLLISION_STOP_TOKENS.has(t))
+  );
+}
+
+/** True when the two names plausibly belong to the same issuer. Empty
+ *  token sets are no evidence of difference — fail safe, no demotion. */
+function sharesSignificantToken(a: string, b: string): boolean {
+  const ta = significantNameTokens(a);
+  const tb = significantNameTokens(b);
+  if (ta.size === 0 || tb.size === 0) return true;
+  for (const t of ta) if (tb.has(t)) return true;
+  return false;
+}
+
 /**
  * Minimum weight for a sub-fund holding to trigger look-through.
  * If a fund-of-funds holds less than 1% in a sub-fund, skip the
@@ -281,6 +331,29 @@ export async function runHoldingsPipeline(
         // denominator in the Dossier
         structurallyUnresolvable: structUnresolvable,
       });
+    }
+
+    // ── H1 h5: demote same-fund ticker collisions (see helpers above) ──
+    const claimantsByTicker = new Map<string, ResolvedHolding[]>();
+    for (const h of resolvedHoldings) {
+      if (!h.ticker) continue;
+      const list = claimantsByTicker.get(h.ticker);
+      if (list) list.push(h);
+      else claimantsByTicker.set(h.ticker, [h]);
+    }
+    for (const [ticker, claimants] of claimantsByTicker) {
+      if (claimants.length < 2) continue;
+      const sorted = [...claimants].sort((a, b) => b.pctOfNav - a.pctOfNav);
+      const keeper = sorted[0];
+      for (const other of sorted.slice(1)) {
+        if (sharesSignificantToken(keeper.name, other.name)) continue;
+        other.ticker = null;
+        other.listingTier = null;
+        console.log(
+          `[holdings] H1 h5: same-fund ticker collision on ${ticker} — ` +
+          `"${other.name}" demoted to null ticker (kept "${keeper.name}", higher weight)`
+        );
+      }
     }
 
     if (unresolvedCusips.length > 0) {
