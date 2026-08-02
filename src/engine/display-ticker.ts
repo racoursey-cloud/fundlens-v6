@@ -88,6 +88,13 @@ const SOVEREIGN_NAME_PATTERNS: RegExp[] = [
   /\bFEDERAL REPUBLIC\b/i,
   /\bSOVEREIGN\b/i,
   /^(UNITED STATES|U\.?S\.?) TREASURY\b/i,
+  // H1-F2 in-slice extension (August 2): production rows that vouched
+  // through rule 4 — "CANADA, HER MAJESTY IN RIGHT OF" (PFL.TO, DRRYX)
+  // and "Argentina Treasury Bond BONTE" (BNEFF, OIBIX). Word-bounded and
+  // debt-scoped like the rest, so Treasury Wine Estates (equity) is safe.
+  /\bHER MAJESTY\b/i,
+  /\bIN RIGHT OF\b/i,
+  /\bTREASURY (BILL|BOND|NOTE)S?\b/i,
 ];
 
 /** Country-name-only rows ("SWITZERLAND", "ROMANIA," …). Compared against
