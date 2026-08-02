@@ -189,11 +189,20 @@ function wrapperPenalty(d: FigiResult): number {
   return 0;
 }
 
-/** Home-country (ISO 3166 alpha-2) from an ISIN's first two letters. */
-function isinCountry(isin: string | null | undefined): string | null {
+/** Home-country (ISO 3166 alpha-2) from an ISIN's first two letters.
+ *  H1-F2 v1: exported — the display-ticker policy reuses the f4 country
+ *  machinery. */
+export function isinCountry(isin: string | null | undefined): string | null {
   if (!isin || isin.length < 2) return null;
   const cc = isin.slice(0, 2).toUpperCase();
   return /^[A-Z]{2}$/.test(cc) ? cc : null;
+}
+
+/** H1-F2 v1: the venue country of a ticker's dot-suffix (from the h3 map),
+ *  or null when the suffix is unknown — unknown is never an affirmation.
+ *  Exported for the display-ticker policy (rule 3 suffix-strip). */
+export function venueSuffixCountry(suffix: string): string | null {
+  return VENUE_SUFFIX_COUNTRY[suffix.toUpperCase()] ?? null;
 }
 
 // ─── H1-F1 f4: CINS country fallback ────────────────────────────────────────
