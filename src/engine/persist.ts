@@ -248,7 +248,13 @@ export async function persistPipelineResults(
       // Transient — merge key only; stripped before insert (no DB columns)
       isin: holding.isin ?? null,
       sedol: holding.sedol ?? null,
-      ticker: holding.ticker,
+      // H1-F2 v5: the member-visible ticker column carries the vouched-for
+      // display value (positive validation, display-ticker.ts) — or null,
+      // the honest dash. The resolved ticker still drives enrichment
+      // in-pipeline; cusip_cache keeps raw vendor truth. Rows built before
+      // the pass ran (displayTicker undefined) fall back to null, never to
+      // the unvouched resolved ticker.
+      ticker: holding.displayTicker ?? null,
       pct_of_nav: holding.pctOfNav,
       value_usd: holding.valueUsd,
       asset_category: holding.assetCategory,
