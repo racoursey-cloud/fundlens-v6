@@ -184,6 +184,80 @@ export interface FmpHistoricalPrices {
   historical: FmpDailyPrice[];
 }
 
+// ─── H1 h6: wrong-company profile guard ─────────────────────────────────────
+// A ticker can point at the wrong company (FUISF: Fubon filed, FMP says
+// Fujitsu; TGBMF: TCC Group filed, FMP says Taseko Mines). Before a
+// profile's sector/industry is consumed for a holding — and before any
+// future company panel serves its text — the holding's filed name and the
+// profile's companyName must agree. The rule: normalized significant-token
+// overlap. Both names are lowercased, diacritics stripped, split on
+// non-alphanumerics; legal-form and share-class stopwords and one-letter
+// tokens are dropped. Agreement = any shared token, OR one name's token
+// (≥4 chars) is a prefix of the other's ("Fujitsu"/"Fujitsu Limited").
+// A name with NO significant tokens gives no evidence of mismatch — the
+// check passes (fail open preserves existing behavior for vendor-mangled
+// names; those are FOLLOWUPS material, not silent data loss).
+
+const PROFILE_NAME_STOP_TOKENS = new Set([
+  'corp', 'corporation', 'inc', 'incorporated', 'ltd', 'limited', 'plc',
+  'co', 'company', 'companies', 'holdings', 'holding', 'group', 'the',
+  'and', 'of', 'class', 'cl', 'ord', 'shs', 'adr', 'sponsored', 'spon',
+  'reg', 'registered', 'sa', 'se', 'ag', 'nv', 'ab', 'asa', 'spa', 'oyj',
+  'llc', 'lp', 'new',
+]);
+
+function profileNameTokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter(t => t.length >= 2 && !PROFILE_NAME_STOP_TOKENS.has(t));
+}
+
+/**
+ * H1 h6: does this FMP profile plausibly describe the filed holding?
+ * Exported so the rule is provable standalone and reusable by any future
+ * surface that serves profile text.
+ */
+export function profileMatchesHoldingName(
+  holdingName: string,
+  companyName: string | null | undefined
+): boolean {
+  if (!companyName) return true; // no name to disagree with — fail open
+  const ha = profileNameTokens(holdingName);
+  const pa = profileNameTokens(companyName);
+  if (ha.length === 0 || pa.length === 0) return true;
+  for (const t of ha) {
+    for (const p of pa) {
+      if (t === p) return true;
+      if (t.length >= 4 && p.startsWith(t)) return true;
+      if (p.length >= 4 && t.startsWith(p)) return true;
+    }
+  }
+  return false;
+}
+
+/** Once-per-ticker mismatch logging in the ordered format. Returns the
+ *  match verdict so call sites gate in one line. */
+const profileMismatchLogged = new Set<string>();
+export function checkProfileNameAgreement(
+  ticker: string,
+  holdingName: string,
+  profile: { companyName?: string | null } | null | undefined
+): boolean {
+  if (!profile) return false;
+  if (profileMatchesHoldingName(holdingName, profile.companyName)) return true;
+  if (!profileMismatchLogged.has(ticker)) {
+    profileMismatchLogged.add(ticker);
+    console.log(
+      `[fmp] profile mismatch: ${ticker} filed=${holdingName} fmp=${profile.companyName}`
+    );
+  }
+  return false;
+}
+
 // ─── API Client ─────────────────────────────────────────────────────────────
 
 /**
