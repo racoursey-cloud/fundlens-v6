@@ -254,7 +254,11 @@ export function ReferenceFundDetail({ fund }: { fund: ReferenceFund }) {
         </p>
       ) : tab === 'holdings' ? (
         <div>
-          <HoldingsTable holdings={holdings} showNegativeExplainer={hasNegativeRows} />
+          <HoldingsTable
+            holdings={holdings}
+            showNegativeExplainer={hasNegativeRows}
+            filedCount={fund.holdings_count}
+          />
           <Provenance fund={fund} />
         </div>
       ) : (
@@ -364,15 +368,22 @@ function RuleLine() {
 function HoldingsTable({
   holdings,
   showNegativeExplainer,
+  filedCount,
 }: {
   holdings: ReferenceHolding[];
   showNegativeExplainer: boolean;
+  /** H1 h1: dossier holdings_total from the payload — when the filed count
+   *  exceeds the rows served (the B9 c5(a) 1,000-row ceiling: VFWAX 3,918,
+   *  MWTSX 1,512), the count line must not say "all". */
+  filedCount: number | null;
 }) {
   return (
     <div>
-      {/* Plain count line — the full filed list, nothing withheld */}
+      {/* Count-line honesty (H1 h1): "all" only when it is all */}
       <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '0 0 8px' }}>
-        Showing all {holdings.length} holdings as filed
+        {filedCount != null && filedCount > holdings.length
+          ? `Showing the ${holdings.length} largest of ${filedCount} filed holdings`
+          : `Showing all ${holdings.length} holdings as filed`}
       </p>
       <div style={{ overflowX: 'auto', maxHeight: 420, overflowY: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
