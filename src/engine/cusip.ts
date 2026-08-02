@@ -139,8 +139,13 @@ const VENUE_SUFFIX_COUNTRY: Record<string, string> = {
 /**
  * H1 h3: can this candidate ticker be shown to a member?
  * (a) whitespace — bond-ID strings are not tickers;
- * (b) a currency-line code tail (USD/EUR/GBP/CHF) on a candidate longer
- *     than 4 chars — vendor currency lines, not tickers;
+ * (b) a currency-line code tail (USD/EUR/GBP/CHF) on a candidate of 6+
+ *     chars — vendor currency lines, not tickers. H1-F1 f1 amendment:
+ *     the threshold is ≥6, NOT >4 — legitimate 5-letter OTC tickers end
+ *     in "CHF" (the CICHF class: CICHF is China Construction Bank, with
+ *     OVCHF, BACHF, LICHF, UNCHF, WTCHF, NNCHF, AHCHF, DACHF, BJCHF,
+ *     MXCHF, YZCHF all live and correct in production); every observed
+ *     garbage code is ≥6 chars.
  * (c) a known venue suffix whose venue country contradicts the security's
  *     home country (from its ISIN prefix) — the wrong listing line.
  * homeCountry null = country unknown → check (c) cannot judge and passes.
@@ -148,7 +153,7 @@ const VENUE_SUFFIX_COUNTRY: Record<string, string> = {
  */
 export function isDisplayableTicker(ticker: string, homeCountry: string | null): boolean {
   if (/\s/.test(ticker)) return false;
-  if (ticker.length > 4 && /(USD|EUR|GBP|CHF)$/.test(ticker.toUpperCase())) return false;
+  if (ticker.length >= 6 && /(USD|EUR|GBP|CHF)$/.test(ticker.toUpperCase())) return false;
   const dot = ticker.lastIndexOf('.');
   if (dot > 0 && homeCountry) {
     const venueCountry = VENUE_SUFFIX_COUNTRY[ticker.slice(dot + 1).toUpperCase()];
@@ -191,6 +196,31 @@ function isinCountry(isin: string | null | undefined): string | null {
   return /^[A-Z]{2}$/.test(cc) ? cc : null;
 }
 
+// ─── H1-F1 f4: CINS country fallback ────────────────────────────────────────
+// Foreign holdings keyed by raw CINS (a CUSIP whose first character is a
+// letter) escaped the venue-contradiction check: isinCountry() reads only
+// ISINs, so DGE.PA (G42089113), BAY.WA (D0712D163), BMW.SW (D12096109),
+// and REN.AS (G7493L105) came back with a null home country and survived
+// f2. The CINS first character IS a country/region code — the
+// single-country letters map; regional letters (M Mideast, P S.America,
+// U US-other, V Africa-other, X Europe-other, Y Asia) return null because
+// a region is not a country and null keeps the guard honest (cannot
+// judge → passes). Digit-leading domestic CUSIPs return null.
+
+const CINS_COUNTRY: Record<string, string> = {
+  A: 'AT', B: 'BE', C: 'CA', D: 'DE', E: 'ES', F: 'FR', G: 'GB', H: 'CH',
+  J: 'JP', K: 'DK', L: 'LU', N: 'NL', Q: 'AU', R: 'NO', S: 'ZA', T: 'IT',
+  W: 'SE',
+};
+
+/** Country from a raw 9-char CINS key, or null (regional letter, digit
+ *  lead, or a prefixed pseudo-id like "ISIN:"/"SEDOL:"/"NAME:", which the
+ *  shape test rejects via its colon). Exported for the standalone proof. */
+export function cinsCountry(id: string | null | undefined): string | null {
+  if (!id || !/^[A-Za-z][0-9A-Za-z]{8}$/.test(id)) return null;
+  return CINS_COUNTRY[id.charAt(0).toUpperCase()] ?? null;
+}
+
 // ─── A6 Task 3: negative-cache hygiene ──────────────────────────────────────
 // July 5, 2026: eleven VWIGX/VFWAX identifiers (Spotify, Tencent, Samsung,
 // L'Oréal…) failed lookup inside one 40-second API-outage window and the
@@ -212,6 +242,48 @@ const TRANSIENT_WARNING = 'transient:';
 
 function isTransientFailure(r: CusipResolution): boolean {
   return !r.resolved && (r.warning?.startsWith(TRANSIENT_WARNING) ?? false);
+}
+
+// ─── H1-F1 f2: cache-hygiene staleness verdict ──────────────────────────────
+// The cache short-circuits resolution, so rows cached before the H1 guards
+// existed never re-enter the guarded paths — ASMH, DGE.PA, TRI4EUR and
+// their classes persisted through the first post-H1 refresh (S-H1 sweep,
+// August 2). A positive cached row that would fail today's rules is
+// treated as STALE: returned as a cache miss, so the identifier re-enters
+// the guarded resolution chain and the fresh result overwrites the row via
+// the existing cusipCacheSave(). No purge ceremony, no hand edits — the
+// staleness rule is the durable, no-hands cure for any future stale entry.
+// Negative rows (resolved=false) are untouched: A6 Task 3 governs those.
+
+/**
+ * Is this positive cached row stale under the H1 rules?
+ * (a) its ticker fails isDisplayableTicker (home country from an "ISIN:"
+ *     cache key where known — real-CUSIP keys carry no country and the
+ *     whitespace/currency checks still bite); or
+ * (b) its cached NAME carries a wrapper marker — 'ADRhedged' (contains,
+ *     case-insensitive) or word-boundary ETP/ETN — the ASMH class, whose
+ *     ticker alone looks clean. Plain 'ETF'/'FUND' names are NOT markers:
+ *     real fund-of-funds holdings carry those words legitimately, and the
+ *     h4 wrapper penalty governs fresh ranking.
+ * Exported so the verdict can be proven standalone.
+ */
+export function cachedResolutionIsStale(row: {
+  cusip: string;
+  ticker: string | null;
+  name: string | null;
+  resolved: boolean;
+}): boolean {
+  if (!row.resolved || !row.ticker) return false;
+  // H1-F1 f4: ISIN keys carry the country in their prefix; raw-CINS keys
+  // carry it in their first letter. isinCountry first where an ISIN exists.
+  const homeCountry = row.cusip.startsWith('ISIN:')
+    ? isinCountry(row.cusip.slice('ISIN:'.length))
+    : cinsCountry(row.cusip);
+  if (!isDisplayableTicker(row.ticker, homeCountry)) return true;
+  const name = row.name || '';
+  if (/adrhedged/i.test(name)) return true;
+  if (/\b(ETP|ETN)\b/i.test(name)) return true;
+  return false;
 }
 
 // ─── Supabase Cache Functions ─────────────────────────────────────────────
@@ -257,6 +329,15 @@ export async function cusipCacheLookup(
           ? Date.now() - new Date(row.resolved_at).getTime()
           : Infinity;
         if (ageMs > NEGATIVE_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000) continue;
+      }
+
+      // H1-F1 f2: a positive row failing today's rules is a cache miss —
+      // it re-resolves through the guarded paths and overwrites itself.
+      if (cachedResolutionIsStale(row)) {
+        console.log(
+          `[cusip] cache-hygiene re-resolve: ${row.ticker || row.name || 'unknown'} for ${row.cusip}`
+        );
+        continue;
       }
       result.set(row.cusip, {
         cusip: row.cusip,
@@ -477,8 +558,11 @@ export async function resolveCusips(
         );
 
         // H1 h3: home country (from the filing ISIN, where known) rides
-        // along so the display guard can judge venue-suffix candidates
-        const homeCountries = batch.map(id => isinCountry(isinMap?.get(id)));
+        // along so the display guard can judge venue-suffix candidates.
+        // H1-F1 f4: ISIN miss → the CINS first letter is the fallback.
+        const homeCountries = batch.map(
+          id => isinCountry(isinMap?.get(id)) ?? cinsCountry(id)
+        );
         const batchResults = await callOpenFigi(batch, apiKey, homeCountries);
         newResolutions.push(...batchResults);
 
@@ -580,7 +664,8 @@ export async function resolveCusips(
             'ID_ISIN',
             isinCusipPairs.map(p => p.isin),
             apiKey,
-            isinCusipPairs.map(p => isinCountry(p.isin)) // H1 h3
+            // H1 h3; H1-F1 f4: CINS fallback where the ISIN prefix fails
+            isinCusipPairs.map(p => isinCountry(p.isin) ?? cinsCountry(p.cusip))
           );
 
           // Merge successful ISIN resolutions back into newResolutions by CUSIP
