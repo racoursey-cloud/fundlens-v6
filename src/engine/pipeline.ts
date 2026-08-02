@@ -36,6 +36,7 @@ import { computeDossier } from './dossier.js';
 import type { FundDossier, DossierInput } from './dossier.js';
 import { runHoldingsPipeline } from './holdings.js';
 import { fetchFundamentalsBundle, fetchHistoricalPrices, fetchProfile, fetchRatios, fetchKeyMetrics, checkProfileNameAgreement } from './fmp.js';
+import { computeDisplayTicker } from './display-ticker.js';
 import { FmpRatios, FmpKeyMetrics, FmpProfile } from './fmp.js';
 import { supaUpdate } from './supabase.js';
 import { fetchExpenseRatio, fetchFinnhubExpenseRatio, KNOWN_EXPENSE_RATIOS } from './finnhub.js';
@@ -414,6 +415,31 @@ export async function runFullPipeline(
         `(classification only; too thin for price series)`
       );
     }
+  }
+
+  // ── H1-F2 v4: display-ticker validation pass ──────────────────────────────
+  // Positive validation (Robert's August 2 ruling): every built holding —
+  // cached or fresh — gets a vouched-for displayTicker, or null for the
+  // honest dash. Runs AFTER enrichment so the h6 name-agreement requirement
+  // sees the profiles; enrichment above keyed on h.ticker and is untouched
+  // (scope guard). persist writes displayTicker to holdings_cache.ticker —
+  // the member-visible column; cusip_cache keeps raw vendor truth.
+  {
+    let vouched = 0;
+    let dashed = 0;
+    for (const [, holdings] of fundHoldings) {
+      for (const h of holdings) {
+        const prof = h.ticker ? fundamentals.get(h.ticker)?.profile ?? null : null;
+        h.displayTicker = computeDisplayTicker(h, prof);
+        if (h.ticker) {
+          if (h.displayTicker) vouched++;
+          else dashed++;
+        }
+      }
+    }
+    console.log(
+      `[pipeline] H1-F2 display validation: ${vouched} tickers vouched, ${dashed} resolved-but-dashed`
+    );
   }
 
   // ── Step 5: Classify holdings into sectors via Claude Haiku (with cache) ──
