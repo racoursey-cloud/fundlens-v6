@@ -60,6 +60,17 @@ function significantNameTokens(name: string): Set<string> {
   return new Set(
     name
       .toLowerCase()
+      // Non-decomposing letters fold BEFORE the NFD strip — ø, æ, ß, ł, đ
+      // (and siblings œ, ð) have no combining-mark decomposition, so
+      // without this map "Ørsted" and "Orsted" tokenize differently and
+      // same-issuer lots would false-collide (H1 in-slice cure).
+      .replace(/ø/g, 'o')
+      .replace(/æ/g, 'ae')
+      .replace(/ß/g, 'ss')
+      .replace(/ł/g, 'l')
+      .replace(/đ/g, 'd')
+      .replace(/œ/g, 'oe')
+      .replace(/ð/g, 'd')
       .normalize('NFD')
       .replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9]+/g, ' ')
