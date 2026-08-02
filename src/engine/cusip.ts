@@ -108,6 +108,62 @@ function fmpExchangeTier(exchangeShortName: string | null | undefined): ListingT
   return 'home';
 }
 
+// ─── H1 h3: candidate-ticker display guard ──────────────────────────────────
+// A ticker the app would display must look like a ticker. The August 2
+// audit found bond-ID strings ("TVSLIN 6 09/01/26"), currency-line codes
+// (TRI4EUR, TITUSD), and wrong-country venue lines (DGE.PA for a GB
+// security) accepted as tickers. Every resolution path — OpenFIGI by-ID,
+// OpenFIGI search, FMP ISIN search, FMP name fallback — now passes each
+// candidate through isDisplayableTicker() before accepting it; a reject
+// falls through to the next candidate, or to a null ticker (the em-dash
+// display — honest where a wrong ticker is not).
+
+/** Venue-suffix → venue country, for the wrong-country check (c). Codes
+ *  outside this map are not judged (a class-share ".B" or an unknown code
+ *  is no evidence of contradiction). */
+const VENUE_SUFFIX_COUNTRY: Record<string, string> = {
+  PA: 'FR', // Euronext Paris
+  WA: 'PL', // Warsaw
+  SW: 'CH', // SIX Swiss
+  F: 'DE',  // Frankfurt
+  DE: 'DE', // Xetra
+  AS: 'NL', // Euronext Amsterdam
+  L: 'GB',  // London
+  MI: 'IT', MC: 'ES', BR: 'BE', LS: 'PT',
+  ST: 'SE', HE: 'FI', CO: 'DK', OL: 'NO', VI: 'AT', IR: 'IE',
+  T: 'JP', HK: 'HK', KS: 'KR', KQ: 'KR', TW: 'TW', SS: 'CN', SZ: 'CN',
+  TO: 'CA', V: 'CA', AX: 'AU', NZ: 'NZ', SA: 'BR', MX: 'MX', JO: 'ZA',
+  BK: 'TH', JK: 'ID', KL: 'MY', SI: 'SG', NS: 'IN', BO: 'IN', TA: 'IL',
+};
+
+/**
+ * H1 h3: can this candidate ticker be shown to a member?
+ * (a) whitespace — bond-ID strings are not tickers;
+ * (b) a currency-line code tail (USD/EUR/GBP/CHF) on a candidate longer
+ *     than 4 chars — vendor currency lines, not tickers;
+ * (c) a known venue suffix whose venue country contradicts the security's
+ *     home country (from its ISIN prefix) — the wrong listing line.
+ * homeCountry null = country unknown → check (c) cannot judge and passes.
+ * Exported so the guard can be proven standalone.
+ */
+export function isDisplayableTicker(ticker: string, homeCountry: string | null): boolean {
+  if (/\s/.test(ticker)) return false;
+  if (ticker.length > 4 && /(USD|EUR|GBP|CHF)$/.test(ticker.toUpperCase())) return false;
+  const dot = ticker.lastIndexOf('.');
+  if (dot > 0 && homeCountry) {
+    const venueCountry = VENUE_SUFFIX_COUNTRY[ticker.slice(dot + 1).toUpperCase()];
+    if (venueCountry && venueCountry !== homeCountry.toUpperCase()) return false;
+  }
+  return true;
+}
+
+/** Home-country (ISO 3166 alpha-2) from an ISIN's first two letters. */
+function isinCountry(isin: string | null | undefined): string | null {
+  if (!isin || isin.length < 2) return null;
+  const cc = isin.slice(0, 2).toUpperCase();
+  return /^[A-Z]{2}$/.test(cc) ? cc : null;
+}
+
 // ─── A6 Task 3: negative-cache hygiene ──────────────────────────────────────
 // July 5, 2026: eleven VWIGX/VFWAX identifiers (Spotify, Tencent, Samsung,
 // L'Oréal…) failed lookup inside one 40-second API-outage window and the
@@ -340,9 +396,23 @@ export async function resolveCusips(
               tierRank(fmpExchangeTier(a.exchangeShortName || a.exchange)) -
               tierRank(fmpExchangeTier(b.exchangeShortName || b.exchange))
           );
-          const best = ranked[0];
-          const tier = fmpExchangeTier(best.exchangeShortName || best.exchange);
-          if (!best.symbol || tier === 'home') continue;
+          // H1 h3: first us/otc candidate that passes the display guard
+          const homeCountry = isinCountry(isin);
+          let best: (typeof ranked)[number] | null = null;
+          let bestTier: ListingTier | null = null;
+          for (const cand of ranked) {
+            if (!cand.symbol) continue;
+            const tier = fmpExchangeTier(cand.exchangeShortName || cand.exchange);
+            if (tier === 'home') continue;
+            if (!isDisplayableTicker(cand.symbol, homeCountry)) {
+              console.log(`[cusip] display-guard reject: ${cand.symbol} for ${cand.name || isin}`);
+              continue;
+            }
+            best = cand;
+            bestTier = tier;
+            break;
+          }
+          if (!best || !bestTier) continue;
 
           newResolutions.push({
             cusip: id,
@@ -351,7 +421,7 @@ export async function resolveCusips(
             securityType: null,
             resolved: true,
             warning: 'Resolved via FMP ISIN search',
-            listingTier: tier,
+            listingTier: bestTier,
           });
           resolvedByFmpIsin.add(id);
         } catch {
@@ -379,7 +449,10 @@ export async function resolveCusips(
           `[cusip] OpenFIGI batch ${i + 1}/${batches.length} (${batch.length} CUSIPs)`
         );
 
-        const batchResults = await callOpenFigi(batch, apiKey);
+        // H1 h3: home country (from the filing ISIN, where known) rides
+        // along so the display guard can judge venue-suffix candidates
+        const homeCountries = batch.map(id => isinCountry(isinMap?.get(id)));
+        const batchResults = await callOpenFigi(batch, apiKey, homeCountries);
         newResolutions.push(...batchResults);
 
         // Delay between batches to respect rate limits
@@ -398,10 +471,12 @@ export async function resolveCusips(
       for (let i = 0; i < isinBatches.length; i++) {
         const batch = isinBatches[i];
         await delay(PIPELINE.API_CALL_DELAY_MS);
+        const isins = batch.map(id => id.slice('ISIN:'.length));
         const results = await callOpenFigiById(
           'ID_ISIN',
-          batch.map(id => id.slice('ISIN:'.length)),
-          apiKey
+          isins,
+          apiKey,
+          isins.map(isinCountry) // H1 h3
         );
         // Re-key each result to its full "ISIN:" id (the call returns raw ISINs;
         // results are index-matched to the request)
@@ -477,7 +552,8 @@ export async function resolveCusips(
           const isinResults = await callOpenFigiById(
             'ID_ISIN',
             isinCusipPairs.map(p => p.isin),
-            apiKey
+            apiKey,
+            isinCusipPairs.map(p => isinCountry(p.isin)) // H1 h3
           );
 
           // Merge successful ISIN resolutions back into newResolutions by CUSIP
@@ -608,7 +684,19 @@ async function tryFmpSearchFallback(
         const ranked = [...results].sort(
           (a, b) => tierRank(fmpExchangeTier(a.exchangeShortName)) - tierRank(fmpExchangeTier(b.exchangeShortName))
         );
-        const bestResult = ranked[0];
+        // H1 h3: first candidate passing the display guard (no ISIN context
+        // on this path — the whitespace and currency-code checks still bite)
+        let bestResult: (typeof ranked)[number] | null = null;
+        for (const cand of ranked) {
+          if (!cand.symbol) continue;
+          if (!isDisplayableTicker(cand.symbol, null)) {
+            console.log(`[cusip] display-guard reject: ${cand.symbol} for ${cand.name || searchQuery}`);
+            continue;
+          }
+          bestResult = cand;
+          break;
+        }
+        if (!bestResult) continue;
 
         // Update the resolution in-place (it's the same object in allResolutions)
         const idx = allResolutions.findIndex(r => r.cusip === resolution.cusip);
@@ -656,7 +744,8 @@ async function tryFmpSearchFallback(
  */
 async function callOpenFigi(
   cusips: string[],
-  apiKey: string
+  apiKey: string,
+  homeCountries?: Array<string | null>
 ): Promise<CusipResolution[]> {
   const jobs: FigiMappingJob[] = cusips.map(cusip => ({
     idType: 'ID_CUSIP',
@@ -691,13 +780,13 @@ async function callOpenFigi(
       if (!retryResponse.ok) {
         throw new Error(`OpenFIGI API returned HTTP ${retryResponse.status} on retry`);
       }
-      return parseOpenFigiResponse(cusips, await retryResponse.json());
+      return parseOpenFigiResponse(cusips, await retryResponse.json(), homeCountries);
     }
     throw new Error(`OpenFIGI API returned HTTP ${response.status}`);
   }
 
   const responseData = await response.json();
-  return parseOpenFigiResponse(cusips, responseData);
+  return parseOpenFigiResponse(cusips, responseData, homeCountries);
 }
 
 /**
@@ -709,7 +798,8 @@ async function callOpenFigi(
 async function callOpenFigiById(
   idType: 'ID_ISIN' | 'ID_SEDOL',
   values: string[],
-  apiKey: string
+  apiKey: string,
+  homeCountries?: Array<string | null>
 ): Promise<CusipResolution[]> {
   const jobs: FigiMappingJob[] = values.map(value => ({
     idType,
@@ -751,7 +841,7 @@ async function callOpenFigiById(
           warning: `${TRANSIENT_WARNING} OpenFIGI ${idType} retry failed: HTTP ${retryResponse.status}`,
         }));
       }
-      return parseOpenFigiResponse(values, await retryResponse.json());
+      return parseOpenFigiResponse(values, await retryResponse.json(), homeCountries);
     }
     console.warn(`[cusip] OpenFIGI ${idType} batch failed with HTTP ${response.status}`);
     // A6 Task 3: same rule — a failed batch is not a "no match" verdict.
@@ -766,7 +856,7 @@ async function callOpenFigiById(
   }
 
   const responseData = await response.json();
-  return parseOpenFigiResponse(values, responseData);
+  return parseOpenFigiResponse(values, responseData, homeCountries);
 }
 
 /**
@@ -782,7 +872,8 @@ async function callOpenFigiById(
  */
 function parseOpenFigiResponse(
   cusips: string[],
-  responseData: Record<string, unknown>[]
+  responseData: Record<string, unknown>[],
+  homeCountries?: Array<string | null>
 ): CusipResolution[] {
   const resolutions: CusipResolution[] = [];
 
@@ -838,19 +929,41 @@ function parseOpenFigiResponse(
         tierRank(figiTier(a)) - tierRank(figiTier(b)) ||
         (a.marketSector === 'Equity' ? 0 : 1) - (b.marketSector === 'Equity' ? 0 : 1)
     );
-    const bestMatch = ranked[0];
 
-    const ticker = bestMatch.ticker || null;
+    // H1 h3: the first ranked candidate whose ticker passes the display
+    // guard wins; rejects fall through to the next candidate. All candidates
+    // rejected → null ticker (unresolved — the FMP name fallback may still
+    // try, and its winner faces the same guard).
+    const homeCountry = homeCountries?.[i] ?? null;
+    let bestMatch: FigiResult | null = null;
+    let ticker: string | null = null;
+    let guardRejected = false;
+    for (const cand of ranked) {
+      if (!cand.ticker) continue;
+      if (!isDisplayableTicker(cand.ticker, homeCountry)) {
+        guardRejected = true;
+        console.log(`[cusip] display-guard reject: ${cand.ticker} for ${cand.name || cusip}`);
+        continue;
+      }
+      bestMatch = cand;
+      ticker = cand.ticker;
+      break;
+    }
+    const meta = bestMatch ?? ranked[0];
 
     resolutions.push({
       cusip,
       ticker,
-      name: bestMatch.name || null,
-      securityType: bestMatch.securityType || null,
+      name: meta.name || null,
+      securityType: meta.securityType || null,
       // Only mark as resolved if we actually got a usable ticker
       resolved: ticker !== null,
-      warning: ticker ? null : 'OpenFIGI matched but no ticker returned',
-      listingTier: ticker ? figiTier(bestMatch) : null,
+      warning: ticker
+        ? null
+        : guardRejected
+          ? 'Display guard rejected all ticker candidates'
+          : 'OpenFIGI matched but no ticker returned',
+      listingTier: ticker && bestMatch ? figiTier(bestMatch) : null,
     });
   }
 
