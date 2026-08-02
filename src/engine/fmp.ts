@@ -209,6 +209,17 @@ const PROFILE_NAME_STOP_TOKENS = new Set([
 function profileNameTokens(name: string): string[] {
   return name
     .toLowerCase()
+    // Non-decomposing letters fold BEFORE the NFD strip — ø, æ, ß, ł, đ
+    // (and siblings œ, ð) have no combining-mark decomposition, so without
+    // this map "Møller-Mærsk" filed vs "Moller-Maersk" from FMP would
+    // false-mismatch and drop a correct profile (H1 in-slice cure).
+    .replace(/ø/g, 'o')
+    .replace(/æ/g, 'ae')
+    .replace(/ß/g, 'ss')
+    .replace(/ł/g, 'l')
+    .replace(/đ/g, 'd')
+    .replace(/œ/g, 'oe')
+    .replace(/ð/g, 'd')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
