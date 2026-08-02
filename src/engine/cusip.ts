@@ -157,6 +157,33 @@ export function isDisplayableTicker(ticker: string, homeCountry: string | null):
   return true;
 }
 
+/**
+ * H1 h4: the wrong-line guard (the ASMH class). A filed ordinary share must
+ * never resolve to a third-party wrapper product — an ETP, ETF, fund, unit
+ * trust, or hedged-receipt line that happens to share the issuer (ASML's
+ * ordinary/OTC line is ASMLF; ASMH is a wrapper ETP). Candidates whose FIGI
+ * securityType/securityType2 marks such a line rank BEHIND every direct
+ * line, outranking even the tier preference — so a wrapper is chosen only
+ * when no direct line exists at all (a holding that genuinely IS a fund
+ * still resolves, since all its candidates carry the penalty equally).
+ * ADR/GDR depositary receipts are direct lines and carry no penalty.
+ */
+function wrapperPenalty(d: FigiResult): number {
+  const st = `${d.securityType || ''} ${d.securityType2 || ''}`.toUpperCase();
+  if (st.includes('ADR') || st.includes('GDR')) return 0;
+  if (
+    st.includes('ETP') ||
+    st.includes('ETF') ||
+    st.includes('FUND') ||
+    st.includes('UIT') ||
+    st.includes('UNIT TRUST') ||
+    st.includes('HEDGED')
+  ) {
+    return 1;
+  }
+  return 0;
+}
+
 /** Home-country (ISO 3166 alpha-2) from an ISIN's first two letters. */
 function isinCountry(isin: string | null | undefined): string | null {
   if (!isin || isin.length < 2) return null;
@@ -924,8 +951,11 @@ function parseOpenFigiResponse(
     // prefer Equity within a tier (preserves the old US-equity-first rule).
     // A home-exchange match is still accepted — it is a real identity —
     // but its tier marks it as not FMP-enrichable.
+    // H1 h4: the wrapper penalty sorts FIRST — a direct line on any tier
+    // beats a wrapper product on the best tier (ASMLF over ASMH).
     const ranked = [...data].sort(
       (a, b) =>
+        wrapperPenalty(a) - wrapperPenalty(b) ||
         tierRank(figiTier(a)) - tierRank(figiTier(b)) ||
         (a.marketSector === 'Equity' ? 0 : 1) - (b.marketSector === 'Equity' ? 0 : 1)
     );
