@@ -196,6 +196,31 @@ function isinCountry(isin: string | null | undefined): string | null {
   return /^[A-Z]{2}$/.test(cc) ? cc : null;
 }
 
+// ─── H1-F1 f4: CINS country fallback ────────────────────────────────────────
+// Foreign holdings keyed by raw CINS (a CUSIP whose first character is a
+// letter) escaped the venue-contradiction check: isinCountry() reads only
+// ISINs, so DGE.PA (G42089113), BAY.WA (D0712D163), BMW.SW (D12096109),
+// and REN.AS (G7493L105) came back with a null home country and survived
+// f2. The CINS first character IS a country/region code — the
+// single-country letters map; regional letters (M Mideast, P S.America,
+// U US-other, V Africa-other, X Europe-other, Y Asia) return null because
+// a region is not a country and null keeps the guard honest (cannot
+// judge → passes). Digit-leading domestic CUSIPs return null.
+
+const CINS_COUNTRY: Record<string, string> = {
+  A: 'AT', B: 'BE', C: 'CA', D: 'DE', E: 'ES', F: 'FR', G: 'GB', H: 'CH',
+  J: 'JP', K: 'DK', L: 'LU', N: 'NL', Q: 'AU', R: 'NO', S: 'ZA', T: 'IT',
+  W: 'SE',
+};
+
+/** Country from a raw 9-char CINS key, or null (regional letter, digit
+ *  lead, or a prefixed pseudo-id like "ISIN:"/"SEDOL:"/"NAME:", which the
+ *  shape test rejects via its colon). Exported for the standalone proof. */
+export function cinsCountry(id: string | null | undefined): string | null {
+  if (!id || !/^[A-Za-z][0-9A-Za-z]{8}$/.test(id)) return null;
+  return CINS_COUNTRY[id.charAt(0).toUpperCase()] ?? null;
+}
+
 // ─── A6 Task 3: negative-cache hygiene ──────────────────────────────────────
 // July 5, 2026: eleven VWIGX/VFWAX identifiers (Spotify, Tencent, Samsung,
 // L'Oréal…) failed lookup inside one 40-second API-outage window and the
@@ -249,9 +274,11 @@ export function cachedResolutionIsStale(row: {
   resolved: boolean;
 }): boolean {
   if (!row.resolved || !row.ticker) return false;
+  // H1-F1 f4: ISIN keys carry the country in their prefix; raw-CINS keys
+  // carry it in their first letter. isinCountry first where an ISIN exists.
   const homeCountry = row.cusip.startsWith('ISIN:')
     ? isinCountry(row.cusip.slice('ISIN:'.length))
-    : null;
+    : cinsCountry(row.cusip);
   if (!isDisplayableTicker(row.ticker, homeCountry)) return true;
   const name = row.name || '';
   if (/adrhedged/i.test(name)) return true;
@@ -531,8 +558,11 @@ export async function resolveCusips(
         );
 
         // H1 h3: home country (from the filing ISIN, where known) rides
-        // along so the display guard can judge venue-suffix candidates
-        const homeCountries = batch.map(id => isinCountry(isinMap?.get(id)));
+        // along so the display guard can judge venue-suffix candidates.
+        // H1-F1 f4: ISIN miss → the CINS first letter is the fallback.
+        const homeCountries = batch.map(
+          id => isinCountry(isinMap?.get(id)) ?? cinsCountry(id)
+        );
         const batchResults = await callOpenFigi(batch, apiKey, homeCountries);
         newResolutions.push(...batchResults);
 
@@ -634,7 +664,8 @@ export async function resolveCusips(
             'ID_ISIN',
             isinCusipPairs.map(p => p.isin),
             apiKey,
-            isinCusipPairs.map(p => isinCountry(p.isin)) // H1 h3
+            // H1 h3; H1-F1 f4: CINS fallback where the ISIN prefix fails
+            isinCusipPairs.map(p => isinCountry(p.isin) ?? cinsCountry(p.cusip))
           );
 
           // Merge successful ISIN resolutions back into newResolutions by CUSIP
