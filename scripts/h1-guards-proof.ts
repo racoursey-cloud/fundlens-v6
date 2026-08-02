@@ -162,6 +162,13 @@ d('China govt as CBND.L → dash',
   computeDisplayTicker(mk({ ticker: 'CBND.L', name: 'CHINA PEOPLES REPUBLIC OF (GOVERNMENT)', assetCategory: 'DBT', isDebt: true }), null), null);
 d('CZECH REPUBLIC as TFAOF → dash (country-name row)',
   computeDisplayTicker(mk({ ticker: 'TFAOF', name: 'CZECH REPUBLIC', assetCategory: 'DBT', isDebt: true }), null), null);
+// H1-F2 in-slice extension: Crown/treasury-instrument sovereigns
+d('CANADA, HER MAJESTY IN RIGHT OF as PFL.TO → dash',
+  computeDisplayTicker(mk({ ticker: 'PFL.TO', name: 'CANADA, HER MAJESTY IN RIGHT OF', assetCategory: 'DBT', isDebt: true }), null), null);
+d('Argentina Treasury Bond BONTE as BNEFF → dash',
+  computeDisplayTicker(mk({ ticker: 'BNEFF', name: 'Argentina Treasury Bond BONTE', assetCategory: 'DBT', isDebt: true }), null), null);
+t('equity Treasury Wine Estates is NOT sovereign',
+  isSovereignRow(mk({ ticker: 'TSRYF', name: 'Treasury Wine Estates Ltd', assetCategory: 'EC' })), false);
 d('issuerCategory SOV → dash regardless of name',
   computeDisplayTicker(mk({ ticker: 'ABCDE', name: 'Anything At All', assetCategory: 'DBT', isDebt: true, issuerCategory: 'SOV' }), null), null);
 t('equity Republic Services is NOT sovereign',
