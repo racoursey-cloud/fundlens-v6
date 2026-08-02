@@ -160,8 +160,15 @@ export interface ResolvedHolding {
   sedol?: string | null;
   /** Bloomberg-format identifiers-ticker hint (stored, not yet consumed) */
   identifierTicker?: string | null;
-  /** Resolved ticker from OpenFIGI (null if unresolved) */
+  /** Resolved ticker from OpenFIGI (null if unresolved). Enrichment keys
+   *  on THIS field, always (H1-F2 scope guard). */
   ticker: string | null;
+  /** H1-F2: the vouched-for display ticker under the positive-validation
+   *  policy (display-ticker.ts), or null for the honest dash. Computed by
+   *  the pipeline's display-validation pass after enrichment; persist
+   *  writes THIS value to holdings_cache.ticker — the member-visible
+   *  column. Optional: absent until the pass runs. */
+  displayTicker?: string | null;
   /** Percentage of fund net assets in whole-percent units (e.g. 4.89 = 4.89% of NAV) */
   pctOfNav: number;
   /** Value in USD */

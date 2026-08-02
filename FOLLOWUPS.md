@@ -28,3 +28,5 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-08-02 | Home-tier codes colliding with major US tickers across funds (KMB, BHE, 3M class) — qualified display (e.g. "KMB · NSE") awaits a ruling; not cured in H1 (h5 note) | — |
 | 2026-08-02 | OpenFIGI placeholder lines ("Samsung Episholdings" / 0126Z0-class) and garbled vendor names surface as holding names — vendor-data hygiene, future wave (H1 h7) | — |
 | 2026-08-02 | BASA.DE (BASF) venue-code oddity survives h3 by design (matching venue country) — display question for a later ruling (H1 h7) | — |
+| 2026-08-02 | Pipeline run panel shows no resolution-phase progress — a healthy 20-minute quiet stretch reads as a hang and drew a user cancel; add phase progress, future wave (H1-F2) | — |
+| 2026-08-02 | H2 company panel must key on validated display tickers only — synergy note for the H2 build (H1-F2) | — |
