@@ -25,3 +25,6 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-08-01 | Dossier column industry_haiku_pct (and siblings, incl. the client mirror fields) names a model no longer in the classifier seat post-CB-S — cosmetic rename at a housekeeping boundary (CB-S s4) | — |
 | 2026-08-01 | Sector parser coerces unrecognized model replies to "Other" with no raw-reply record (CB finding, Sonnet runs) — raw-reply logging or synonym tolerance, future wave (CB-S s4) | — |
 | 2026-08-01 | B7 summaries machinery (REFERENCE_SUMMARIES_ENABLED, reference-shape emission path, generate route, Pipeline button, drafting half of fund-summaries.ts, reference_summaries table) is dead inventory ruled for dismantling — dedicated housekeeping wave; table drop by Database-law ceremony (B9-T t2) | — |
+| 2026-08-02 | Home-tier codes colliding with major US tickers across funds (KMB, BHE, 3M class) — qualified display (e.g. "KMB · NSE") awaits a ruling; not cured in H1 (h5 note) | — |
+| 2026-08-02 | OpenFIGI placeholder lines ("Samsung Episholdings" / 0126Z0-class) and garbled vendor names surface as holding names — vendor-data hygiene, future wave (H1 h7) | — |
+| 2026-08-02 | BASA.DE (BASF) venue-code oddity survives h3 by design (matching venue country) — display question for a later ruling (H1 h7) | — |
