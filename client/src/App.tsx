@@ -6,34 +6,40 @@
  *   - AuthProvider (session management)
  *   - React Router (page navigation)
  *   - TierRouter (B3): routes each account by its server-enforced tier
- *   - ProtectedRoute (auth guard, full tier — untouched by B3)
- *   - AppShell (full tier) / ReferenceShell (reference tier)
+ *   - ProtectedRoute (auth guard, full tier — untouched by B3 and by U1)
+ *   - Shell (U1-A): ONE shell for every account, modules by entitlement
  *
  * Route structure:
  *   /login            — public, magic link + 6-digit code auth
  *   /auth/callback    — Supabase redirect handler
  *   everything else   — TierRouter decides:
- *     reference tier  → ReferenceShell: Funds (index) | /mymix | /help;
- *                       every other path redirects to reference home
- *     full tier       — unchanged from pre-B3:
- *       /setup        — protected, setup wizard
- *       /             — protected, Your Brief (default)
- *       /fundlens /research /settings /help /pipeline (+legacy redirects)
+ *     reference tier  → Funds (index) | /mymix | /help; every other path
+ *                       redirects to home
+ *     full tier       → the same Funds and My Mix as the shared base, plus
+ *                       the modules that light up for the tier:
+ *                       /brief /research /settings /pipeline (admin)
+ *                       /fundlens survives this wave (retires in U1-B)
  *     gate-blocked    → the honest access-restricted screen (docket 3):
  *                       a 403 'Access restricted' account sees the truth on
  *                       every route, never a cheerful empty page
  *
- * B3 notes:
+ * U1-A notes (August 13, 2026):
+ *   - Everyone lands on Funds (ruling 6). Your Brief, which was the full
+ *     tier's index, moves one tab over to /brief; the legacy /briefs bookmark
+ *     follows it there rather than to the new home.
+ *   - The full tier's Help PAGE retires (ruling 1) in favour of the shell's
+ *     global chat icon, so /help redirects home for that tier. The fenced
+ *     reference Help page is untouched and stays the member surface.
+ *   - Two page trees became one: the reference pages ARE the shared base now,
+ *     mounted for both tiers from a single set of route declarations.
+ *
+ * B3 notes (carried, still true):
  *   - Reference routing ignores setup_completed entirely (ruled July 27,
  *     2026: the DB trigger stays untouched, so reference profiles are born
  *     setup_completed=false — ProtectedRoute would bounce them into the
  *     wizard, which is why the reference tree never mounts ProtectedRoute).
- *   - The full-tier tree below is the pre-B3 structure verbatim, still
- *     wrapped in ProtectedRoute; its own profile fetch and setup redirect
- *     behave exactly as before.
- *
- * Updated Session 11: added Thesis and Settings routes, moved Pipeline
- * out of primary navigation.
+ *   - The full-tier tree is still wrapped in ProtectedRoute; its own profile
+ *     fetch and setup redirect behave exactly as before.
  *
  * Destination: client/src/App.tsx
  */
@@ -43,8 +49,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
-import { AppShell } from './components/AppShell';
-import { ReferenceShell } from './components/ReferenceShell';
+import { Shell } from './components/Shell';
 import { Login } from './pages/Login';
 import { SetupWizard } from './pages/SetupWizard';
 import { AuthCallback } from './pages/AuthCallback';
@@ -52,11 +57,11 @@ import { YourBrief } from './pages/YourBrief';
 import { Research } from './pages/Research';
 import { Settings } from './pages/Settings';
 import { Pipeline } from './pages/Pipeline';
-import { Help } from './pages/Help';
 import { FundLens } from './pages/FundLens';
 import { ReferenceFunds } from './pages/reference/Funds';
 import { ReferenceMyMix } from './pages/reference/MyMix';
 import { ReferenceHelp } from './pages/reference/Help';
+import { deriveCapabilities } from './capabilities';
 import { fetchProfile, isAccessRestricted, type UserProfile } from './api';
 import { theme } from './theme';
 
@@ -132,10 +137,11 @@ function FullScreenNotice({ title, body, email }: { title: string; body: string;
   );
 }
 
-// ─── Tier router (B3) ──────────────────────────────────────────────────────
-// One profile fetch decides the tree. Full-tier accounts then proceed into
-// the untouched pre-B3 structure (ProtectedRoute performs its own fetch as
-// it always has — one small extra request, no behavior change).
+// ─── Tier router (B3; one shell since U1-A) ────────────────────────────────
+// One profile fetch decides the tree AND the capability set the shell renders
+// from. Full-tier accounts then proceed into the protected structure
+// (ProtectedRoute performs its own fetch as it always has — one small extra
+// request, no behavior change).
 
 function TierRouter() {
   const { user, loading: authLoading } = useAuth();
@@ -190,48 +196,63 @@ function TierRouter() {
     );
   }
 
-  // ── Reference tier: its own tree; setup_completed deliberately ignored ──
-  if (profile.access_tier === 'reference') {
+  // U1-A: entitlements derived in one place from access_tier + is_admin.
+  const capabilities = deriveCapabilities(profile);
+
+  // ── Reference tier: setup_completed deliberately ignored (B3) ──
+  if (capabilities.tier === 'reference') {
     return (
       <Routes>
-        <Route element={<ReferenceShell />}>
+        <Route element={<Shell capabilities={capabilities} />}>
           <Route index element={<ReferenceFunds />} />
           <Route path="mymix" element={<ReferenceMyMix />} />
           <Route path="help" element={<ReferenceHelp />} />
         </Route>
         {/* Every full-tier path (/research, /fundlens, /settings, /pipeline,
-            /setup, legacy /briefs and /thesis) and anything unknown lands
-            on reference home. */}
+            /setup, /brief, legacy /briefs and /thesis) and anything unknown
+            lands on reference home. */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
   }
 
-  // ── Full tier: the pre-B3 structure, verbatim ──
+  // ── Full tier: the shared base plus its modules ──
   return (
     <Routes>
-      {/* Setup wizard (protected, but outside AppShell) */}
+      {/* Setup wizard (protected, but outside the shell) */}
       <Route path="setup" element={
         <ProtectedRoute>
           <SetupWizard />
         </ProtectedRoute>
       } />
 
-      {/* Main app (protected, inside AppShell) */}
+      {/* Main app (protected, inside the shell) */}
       <Route element={
         <ProtectedRoute>
-          <AppShell />
+          <Shell capabilities={capabilities} />
         </ProtectedRoute>
       }>
-        <Route index element={<YourBrief />} />
-        <Route path="fundlens" element={<FundLens />} />
+        {/* The shared base — the same pages reference accounts see */}
+        <Route index element={<ReferenceFunds />} />
+        <Route path="mymix" element={<ReferenceMyMix />} />
+
+        {/* Modules that light up for this tier */}
+        <Route path="brief" element={<YourBrief />} />
         <Route path="research" element={<Research />} />
         <Route path="settings" element={<Settings />} />
-        <Route path="help" element={<Help />} />
         <Route path="pipeline" element={<Pipeline />} />
+
+        {/* U1-A: FundLens survives the wave as a route without a tab; it
+            retires in U1-B when its evaluative content re-homes into the
+            unified fund detail as a Scores tab. */}
+        <Route path="fundlens" element={<FundLens />} />
+
         {/* Redirects for old bookmarked URLs */}
         <Route path="thesis" element={<Navigate to="/research" replace />} />
-        <Route path="briefs" element={<Navigate to="/" replace />} />
+        <Route path="briefs" element={<Navigate to="/brief" replace />} />
+        {/* Ruling 1: the full-tier Help page retired — the chat icon in the
+            shell header replaced it. */}
+        <Route path="help" element={<Navigate to="/" replace />} />
       </Route>
 
       {/* Catch-all → redirect to home */}

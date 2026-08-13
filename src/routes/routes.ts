@@ -300,7 +300,24 @@ router.get('/api/scores', requireAuth, async (req: Request, res: Response) => {
   // facts only, alphabetical by ticker) with each fund's Dossier coverage
   // joined in. Full-tier responses take the original path below, unchanged
   // byte for byte.
-  if ((req as AuthenticatedRequest).accessTier !== 'full') {
+  //
+  // U1-A t1 (Robert's ruling, August 13, 2026): a FULL-tier caller may ask
+  // for that same shape with ?shape=reference. The unified shell serves the
+  // reference Funds grid and detail to every tier, and those pages read this
+  // payload; four of their fields (holdings_count, fallback_count, coverage,
+  // as_of.report_date) plus the SEC description exist only on this branch,
+  // because only this branch joins fund_dossiers and fund_descriptions.
+  //
+  // Direction of travel is the safety argument: the reference shape is a
+  // strict SUBSET of what a full-tier account is already entitled to, so this
+  // condition can only ever hand an account LESS than its tier allows, never
+  // more. Reference accounts enter the branch exactly as before — the param
+  // changes nothing for them and their payload stays byte-identical.
+  // reference-shape.ts, the B2 allowlist, and requireFullTier are untouched.
+  const wantsReferenceShape =
+    (req as AuthenticatedRequest).accessTier !== 'full' || req.query.shape === 'reference';
+
+  if (wantsReferenceShape) {
     const { data: dossiers } = await supaSelect<ReferenceDossierSource[]>('fund_dossiers', {
       pipeline_run_id: `eq.${latestRun.id}`,
       select: 'fund_id,report_date,holdings_total,fallback_count,resolved_of_resolvable_pct,classified_pct,passes_gate',
@@ -409,7 +426,15 @@ router.get('/api/scores/:ticker', requireAuth, async (req: Request, res: Respons
   // B2: reference accounts get the allowlist shape (reference-shape.ts)
   // with the Dossier from the same pipeline run as the score, and holdings
   // reduced to name/ticker/pct/sector. Full-tier response below unchanged.
-  if ((req as AuthenticatedRequest).accessTier !== 'full') {
+  //
+  // U1-A t1: ?shape=reference lets a full-tier caller take this same branch,
+  // on the subset-only reasoning documented at the list route above. The
+  // reference fund detail (About/Holdings/Sectors) is the shared base for
+  // both tiers from this wave forward, and it reads this payload.
+  const wantsReferenceShape =
+    (req as AuthenticatedRequest).accessTier !== 'full' || req.query.shape === 'reference';
+
+  if (wantsReferenceShape) {
     const { data: dossier } = await supaFetch<ReferenceDossierSource>('fund_dossiers', {
       params: {
         fund_id: `eq.${fund.id}`,

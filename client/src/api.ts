@@ -244,17 +244,29 @@ export const fetchFundScore = (ticker: string) =>
 
 // Reference-tier scores (B3): same endpoints, different response shape —
 // the server detects the account's tier and returns the allowlisted form.
+//
+// U1-A t2: every call below now carries ?shape=reference. These fetchers feed
+// the Funds grid, the fund detail, and My Mix — pages that are the shared base
+// for BOTH tiers from this wave forward, so they must receive the reference
+// shape whoever is asking. For a reference account the parameter changes
+// nothing: the server already routed it down that branch, and its payload is
+// byte-identical to its pre-U1 form. For a full-tier account it is the
+// difference between the facts these pages read and an empty page.
 export const fetchReferenceScores = () =>
-  apiFetch<{ funds: ReferenceFund[]; asOf: string | null }>('/api/scores');
+  apiFetch<{ funds: ReferenceFund[]; asOf: string | null }>('/api/scores?shape=reference');
 
 export const fetchReferenceFundDetail = (ticker: string) =>
-  apiFetch<{ fund: ReferenceFund; holdings: ReferenceHolding[] }>(`/api/scores/${ticker}`);
+  apiFetch<{ fund: ReferenceFund; holdings: ReferenceHolding[] }>(
+    `/api/scores/${ticker}?shape=reference`,
+  );
 
 // B9: the ?all=1 variant — the server lifts the 50-row holdings cap (hard
 // ceiling 1000). Used by the reference detail Holdings tab and by My Mix
 // for full-list aggregation.
 export const fetchReferenceFundDetailFull = (ticker: string) =>
-  apiFetch<{ fund: ReferenceFund; holdings: ReferenceHolding[] }>(`/api/scores/${ticker}?all=1`);
+  apiFetch<{ fund: ReferenceFund; holdings: ReferenceHolding[] }>(
+    `/api/scores/${ticker}?all=1&shape=reference`,
+  );
 
 // Profile
 export const fetchProfile = () =>

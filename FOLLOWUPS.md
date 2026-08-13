@@ -30,3 +30,7 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-08-02 | BASA.DE (BASF) venue-code oddity survives h3 by design (matching venue country) — display question for a later ruling (H1 h7) | — |
 | 2026-08-02 | Pipeline run panel shows no resolution-phase progress — a healthy 20-minute quiet stretch reads as a hang and drew a user cancel; add phase progress, future wave (H1-F2) | — |
 | 2026-08-02 | H2 company panel must key on validated display tickers only — synergy note for the H2 build (H1-F2) | — |
+| 2026-08-13 | MyMix.tsx docblock still says it renders inside ReferenceShell's Outlet — that shell retired in U1-A; comment-only (U1-A) | — |
+| 2026-08-13 | api.ts comment credits AppShell for casting around absent pipeline step fields — retired name, comment-only (U1-A) | — |
+| 2026-08-13 | api.ts exports fetchReferenceFundDetail (the non-`all=1` variant) with no caller — dead export (U1-A) | — |
+| 2026-08-13 | reference/Funds.tsx and reference/FundDetail.tsx docblocks call themselves the reference tier's pages — they are the shared base for both tiers since U1-A; comment-only (U1-A) | — |

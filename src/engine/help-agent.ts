@@ -20,6 +20,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { CLAUDE } from './constants.js';
 import { alertClaudeApiFailure } from './admin-alert.js';
+import { supaFetch, supaSelect } from './supabase.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -86,6 +87,115 @@ export function reloadHelpPrompt(): void {
   loadHelpPrompt();
 }
 
+// ─── Grounding (U1-A t10) ───────────────────────────────────────────────────
+// U1 ruling 1: "MINIMAL grounding investment — existing fund data + scoring
+// outputs." Robert's August 13, 2026 ruling made that literal — the chat is
+// fed the live numbers rather than left describing the app in the abstract.
+//
+// Deliberately minimal: two reads of tables the scores API already serves,
+// no new table, no new column, no pipeline work, no Claude call. The digest
+// is rebuilt per question so it can never go stale, and it is assembled
+// BEFORE the single Claude call below — the sequential-call law is untouched.
+//
+// Scope of what is included: exactly the figures a full-tier account already
+// sees in the app (composite, the four factor scores, tier, expense ratio,
+// trailing 12-month return). The z-scores and factor weights the prompt file
+// forbids the agent to discuss are not fetched into it at all. This surface
+// is requireFullTier — the reference fence is not in play here.
+
+interface GroundingScoreRow {
+  composite_default: number | null;
+  cost_efficiency: number | null;
+  holdings_quality: number | null;
+  positioning: number | null;
+  momentum: number | null;
+  tier: string | null;
+  factor_details: Record<string, unknown> | null;
+  funds?: { ticker: string; name: string; expense_ratio: number | null } | null;
+}
+
+/** "0.04%" from a decimal expense ratio; an em dash when absent */
+function fmtDecimalAsPct(value: unknown, digits: number): string {
+  return typeof value === 'number' && isFinite(value) ? `${(value * 100).toFixed(digits)}%` : '—';
+}
+
+/** "72" from a 0–100 score; an em dash when absent */
+function fmtScore(value: number | null | undefined): string {
+  return typeof value === 'number' && isFinite(value) ? value.toFixed(0) : '—';
+}
+
+/** The fund's trailing 12-month return, dug out of the score's detail blob */
+function twelveMonthReturn(details: Record<string, unknown> | null): unknown {
+  if (!details) return null;
+  const momentum = details.momentum;
+  if (momentum === null || typeof momentum !== 'object' || Array.isArray(momentum)) return null;
+  const returns = (momentum as Record<string, unknown>).returns;
+  if (returns === null || typeof returns !== 'object' || Array.isArray(returns)) return null;
+  return (returns as Record<string, unknown>).twelveMonth;
+}
+
+/**
+ * Build the live plan-data section appended to the system prompt.
+ *
+ * Returns an empty string on any failure — a chat that can still explain the
+ * app is better than no chat, and the agent is told below to decline any
+ * figure it has not been given rather than estimate one.
+ */
+async function buildFundGrounding(): Promise<string> {
+  try {
+    const { data: latestRun } = await supaFetch<{ id: string; completed_at: string | null }>(
+      'pipeline_runs',
+      {
+        params: { status: 'eq.completed', order: 'completed_at.desc', limit: '1' },
+        single: true,
+      },
+    );
+
+    if (!latestRun) return '';
+
+    const { data: scores } = await supaSelect<GroundingScoreRow[]>('fund_scores', {
+      pipeline_run_id: `eq.${latestRun.id}`,
+      select: '*, funds(ticker, name, expense_ratio)',
+      order: 'composite_default.desc',
+    });
+
+    const rows = (scores || []).filter(row => row.funds);
+    if (rows.length === 0) return '';
+
+    const lines = rows.map(row => {
+      const f = row.funds!;
+      return [
+        `${f.ticker} — ${f.name}`,
+        `expense ${fmtDecimalAsPct(f.expense_ratio, 2)}`,
+        `score ${fmtScore(row.composite_default)}${row.tier ? ` (${row.tier})` : ''}`,
+        `cost ${fmtScore(row.cost_efficiency)}, quality ${fmtScore(row.holdings_quality)}, positioning ${fmtScore(row.positioning)}, momentum ${fmtScore(row.momentum)}`,
+        `12-month return ${fmtDecimalAsPct(twelveMonthReturn(row.factor_details), 1)}`,
+      ].join(' | ');
+    });
+
+    const asOf = latestRun.completed_at ? latestRun.completed_at.slice(0, 10) : 'an earlier date';
+
+    return [
+      '---',
+      '',
+      '## The plan right now (live data, not memorized)',
+      '',
+      `These are the ${rows.length} funds in the plan as of the scoring run completed ${asOf}.`,
+      'Scores run 0–100 and are RELATIVE to the other funds in this plan, never absolute judgments.',
+      '',
+      ...lines,
+      '',
+      'Use these figures when the question is about a specific fund or a comparison between funds.',
+      'If a question needs a number that is not in this list, say plainly that you do not have it.',
+      'Never estimate, interpolate, or recall a figure from anywhere else — a wrong number here is worse than no answer.',
+    ].join('\n');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[help-agent] Could not build fund grounding: ${msg}`);
+    return '';
+  }
+}
+
 // ─── Chat API ───────────────────────────────────────────────────────────────
 
 /**
@@ -95,7 +205,9 @@ export function reloadHelpPrompt(): void {
  * @returns The agent's reply
  */
 export async function helpChat(request: HelpChatRequest): Promise<HelpChatResponse> {
-  const systemPrompt = loadHelpPrompt();
+  const promptFile = loadHelpPrompt();
+  const grounding = await buildFundGrounding();
+  const systemPrompt = grounding ? `${promptFile}\n\n${grounding}\n` : promptFile;
 
   // Build message history for context
   const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
