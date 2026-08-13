@@ -165,6 +165,39 @@ export interface ReferenceHolding {
   sector: string | null;
 }
 
+// ─── Holding company panel (H2) ────────────────────────────────────────────
+// Client mirror of the COMPANY_PANEL_ALLOWLIST in
+// src/engine/reference-shape.ts — the nine FMP profile fields the panel may
+// carry, plus the attribution literal. Deliberately absent, and excluded by
+// the assignment: price, market cap, ratings, and everything else that moves
+// or evaluates. Both tiers receive this shape (H2 ruling 2).
+
+export interface CompanyPanel {
+  companyName: string | null;
+  description: string | null;
+  city: string | null;
+  country: string | null;
+  sector: string | null;
+  industry: string | null;
+  exchange: string | null;
+  website: string | null;
+  ipoDate: string | null;
+  source: 'fmp';
+}
+
+/**
+ * The company behind one holding row. Cache-only server-side, so this is
+ * fast or it is a 404 — never a vendor round trip.
+ *
+ * `name` is the filed holding name and is REQUIRED: the server re-checks the
+ * h6 name-agreement guard against it before serving any description, and
+ * fails closed without it. Pass the name exactly as displayed in the row.
+ */
+export const fetchHoldingCompany = (ticker: string, name: string) =>
+  apiFetch<{ company: CompanyPanel }>(
+    `/api/holdings/company?ticker=${encodeURIComponent(ticker)}&name=${encodeURIComponent(name)}`,
+  );
+
 // ─── 403 discrimination (B3, docket 3) ─────────────────────────────────────
 // The server sends two distinct 403 bodies; pages must render honest states
 // for each instead of painting empty content over them.
