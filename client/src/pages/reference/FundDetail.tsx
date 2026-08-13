@@ -426,6 +426,24 @@ function HoldingsTable({
                     style={{ cursor: 'pointer', background: isExpanded ? theme.colors.surface : undefined }}
                   >
                     <td style={{ ...cellStyle, color: theme.colors.text }}>
+                      {/* H2-F1: the door has to be visible to be a door. Every
+                          row opens — including dash rows, which open to the
+                          Wikipedia fallback — but nothing on screen said so,
+                          and on the dash-heavy funds that is most of the page
+                          (CFSTX 1 ticker in 112 rows, TGEPX 5 in 297). */}
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          display: 'inline-block',
+                          width: 10,
+                          marginRight: 6,
+                          color: theme.colors.textDim,
+                          transform: isExpanded ? 'rotate(90deg)' : 'none',
+                          transition: 'transform 0.15s',
+                        }}
+                      >
+                        ▸
+                      </span>
                       {/* F4: literal 'N/A' filing names render as an em-dash */}
                       {h.name === 'N/A' ? '—' : h.name}
                       {/* F3: exact full-name sweep matches get the muted tag */}
