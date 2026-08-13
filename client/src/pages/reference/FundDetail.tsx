@@ -42,14 +42,16 @@
  * donut, and the sector drill.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
+  fetchHoldingCompany,
   fetchReferenceFundDetailFull,
+  type CompanyPanel,
   type ReferenceFund,
   type ReferenceHolding,
 } from '../../api';
 import { DonutChart, type DonutSlice, type DonutDrillItem } from '../../components/DonutChart';
-import { SourceQuote, OurVoice } from '../../components/SourceQuote';
+import { SourceQuote, OurVoice, VendorQuote } from '../../components/SourceQuote';
 import {
   MONEY_MARKET_TICKERS,
   isCashSweepHolding,
@@ -377,6 +379,10 @@ function HoldingsTable({
    *  MWTSX 1,512), the count line must not say "all". */
   filedCount: number | null;
 }) {
+  // H2: which holding row is drilled in (one at a time; click toggles) —
+  // the Funds grid's expansion pattern, one level down.
+  const [expandedRow, setExpandedRow] = useState<number | null>(null);
+
   return (
     <div>
       {/* Count-line honesty (H1 h1): "all" only when it is all */}
@@ -411,37 +417,52 @@ function HoldingsTable({
           </thead>
           <tbody>
             {/* Served order preserved — no re-sorting; negative rows as filed */}
-            {holdings.map((h, i) => (
-              <tr key={i}>
-                <td style={{ ...cellStyle, color: theme.colors.text }}>
-                  {/* F4: literal 'N/A' filing names render as an em-dash */}
-                  {h.name === 'N/A' ? '—' : h.name}
-                  {/* F3: exact full-name sweep matches get the muted tag */}
-                  {isCashSweepHolding(h.name) && (
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        padding: '1px 6px',
-                        borderRadius: theme.radii.sm,
-                        border: `1px solid ${theme.colors.border}`,
-                        color: theme.colors.textDim,
-                        fontSize: 10,
-                        letterSpacing: '0.04em',
-                        textTransform: 'uppercase',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      cash reserves
-                    </span>
+            {holdings.map((h, i) => {
+              const isExpanded = expandedRow === i;
+              return (
+                <Fragment key={i}>
+                  <tr
+                    onClick={() => setExpandedRow(prev => (prev === i ? null : i))}
+                    style={{ cursor: 'pointer', background: isExpanded ? theme.colors.surface : undefined }}
+                  >
+                    <td style={{ ...cellStyle, color: theme.colors.text }}>
+                      {/* F4: literal 'N/A' filing names render as an em-dash */}
+                      {h.name === 'N/A' ? '—' : h.name}
+                      {/* F3: exact full-name sweep matches get the muted tag */}
+                      {isCashSweepHolding(h.name) && (
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            padding: '1px 6px',
+                            borderRadius: theme.radii.sm,
+                            border: `1px solid ${theme.colors.border}`,
+                            color: theme.colors.textDim,
+                            fontSize: 10,
+                            letterSpacing: '0.04em',
+                            textTransform: 'uppercase',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          cash reserves
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ ...cellStyle, fontFamily: theme.fonts.mono }}>{h.ticker ?? '—'}</td>
+                    <td style={{ ...cellStyle, textAlign: 'right', fontFamily: theme.fonts.mono }}>
+                      {h.pct.toFixed(2)}%
+                    </td>
+                    <td style={cellStyle}>{h.sector ?? '—'}</td>
+                  </tr>
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={4} style={{ padding: 0, borderBottom: `1px solid ${theme.colors.border}` }}>
+                        <HoldingCompanyPanel holding={h} />
+                      </td>
+                    </tr>
                   )}
-                </td>
-                <td style={{ ...cellStyle, fontFamily: theme.fonts.mono }}>{h.ticker ?? '—'}</td>
-                <td style={{ ...cellStyle, textAlign: 'right', fontFamily: theme.fonts.mono }}>
-                  {h.pct.toFixed(2)}%
-                </td>
-                <td style={cellStyle}>{h.sector ?? '—'}</td>
-              </tr>
-            ))}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -460,6 +481,138 @@ const cellStyle: React.CSSProperties = {
   color: theme.colors.textMuted,
   verticalAlign: 'top',
 };
+
+// ─── H2: the holding company panel ─────────────────────────────────────────
+// Information, never evaluation — the same posture as the About tab one level
+// up. FMP's description serves verbatim in a quote block under attribution;
+// the facts are the non-moving ones only (no price, no market cap, no
+// ratings). Wikipedia is the independent second door and stays secondary.
+
+/** Wikipedia name search — lands on a search page for obscure names, which
+ *  is honest: it says "here is where to look", never "here is the company". */
+function wikipediaSearchUrl(name: string): string {
+  return `https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(name)}`;
+}
+
+function HoldingCompanyPanel({ holding }: { holding: ReferenceHolding }) {
+  const [company, setCompany] = useState<CompanyPanel | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // H1-F2 followup, honored: the panel keys on VALIDATED display tickers
+  // only. holdings_cache.ticker carries the vouched display value or null,
+  // so a dashed row asks the server nothing — there is no identifier the app
+  // is willing to stand behind, and a lookup on an unvouched code is exactly
+  // how the wrong company reaches a member.
+  const lookupTicker = holding.ticker;
+
+  useEffect(() => {
+    if (!lookupTicker) {
+      setCompany(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setCompany(null);
+    // The filed name rides along: the server re-checks the h6 name-agreement
+    // guard against it and fails closed without it.
+    fetchHoldingCompany(lookupTicker, holding.name).then(res => {
+      if (cancelled) return;
+      setCompany(res.data?.company ?? null);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lookupTicker, holding.name]);
+
+  // F4 convention: a literal 'N/A' filing name is not a name. With no company
+  // name either, there is nothing to search for and no link is offered.
+  const filedName = holding.name === 'N/A' ? null : holding.name;
+  const searchName = company?.companyName ?? filedName;
+
+  const wikipediaLink = searchName ? (
+    <a
+      href={wikipediaSearchUrl(searchName)}
+      target="_blank"
+      rel="noopener"
+      style={{ color: theme.colors.textDim, textDecoration: 'underline' }}
+    >
+      Search Wikipedia ↗
+    </a>
+  ) : null;
+
+  // The non-moving facts, each rendered only where FMP carries it.
+  const facts: string[] = [];
+  if (company) {
+    const place = [company.city, company.country].filter(Boolean).join(', ');
+    if (place) facts.push(place);
+    const business = [company.sector, company.industry].filter(Boolean).join(' — ');
+    if (business) facts.push(business);
+    if (company.exchange) facts.push(company.exchange);
+    if (company.ipoDate) facts.push(`Listed ${company.ipoDate}`);
+  }
+
+  return (
+    <div
+      style={{
+        background: theme.colors.bg,
+        borderTop: `1px solid ${theme.colors.border}`,
+        padding: '14px 16px',
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 600, color: theme.colors.text, marginBottom: 10 }}>
+        {company?.companyName ?? filedName ?? '—'}
+      </div>
+
+      {loading ? (
+        <p style={{ fontSize: 12, color: theme.colors.textDim, margin: 0 }}>Loading company…</p>
+      ) : company && company.description ? (
+        <>
+          <VendorQuote attribution="Company data: Financial Modeling Prep">
+            {company.description}
+          </VendorQuote>
+
+          {facts.length > 0 && (
+            <p style={{ fontSize: 12, color: theme.colors.textMuted, lineHeight: 1.6, margin: '12px 0 0' }}>
+              {facts.join(' · ')}
+              {company.website && (
+                <>
+                  {' · '}
+                  <a
+                    href={company.website}
+                    target="_blank"
+                    rel="noopener"
+                    style={{ color: theme.colors.textMuted, textDecoration: 'underline' }}
+                  >
+                    {company.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                  </a>
+                </>
+              )}
+            </p>
+          )}
+
+          {wikipediaLink && (
+            <p style={{ fontSize: 11, color: theme.colors.textDim, margin: '10px 0 0' }}>{wikipediaLink}</p>
+          )}
+        </>
+      ) : (
+        /* Fallback: no cached profile, or the h6 guard declined this pairing.
+           The member gets what the filing itself says, plus the second door —
+           never another company's description. */
+        <>
+          <p style={{ fontSize: 12, color: theme.colors.textMuted, lineHeight: 1.6, margin: 0 }}>
+            {holding.sector
+              ? `Filed under ${holding.sector}. No company description is available for this holding.`
+              : 'No company description is available for this holding.'}
+          </p>
+          {wikipediaLink && (
+            <p style={{ fontSize: 11, color: theme.colors.textDim, margin: '10px 0 0' }}>{wikipediaLink}</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // ─── Sectors tab: the donut pair ───────────────────────────────────────────
 
