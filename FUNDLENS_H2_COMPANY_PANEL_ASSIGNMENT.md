@@ -8,6 +8,21 @@ after H1 is merged, the refresh has run, and the 23-fund manual review has passe
 h6 wrong-company guard is a hard prerequisite (without it the panel would show Fujitsu's
 description under Fubon).
 
+## AMENDMENT — August 13, 2026, by Robert
+
+The **Fallback** bullet under "What the member gets" is amended: **"country" is struck.**
+It was never in the reference holdings payload — a drafting error, Fabio's, August 2. The
+allowlisted holdings shape carries name, ticker, percent of fund, and sector only, so
+there was never a country for the panel to display. The fallback ships the filed name and
+sector as already displayed, plus the Wikipedia search link.
+
+Ruled on Clyde's H2 Evidence Gate disclosure (PR #71, disclosure 5) after Clyde declined
+to add the field on his own judgment: doing so would have been a B2 allowlist addition to
+the holdings payload and would have broken S-H2's own expectation that `/api/scores`
+byte-diffs IDENTICAL against the August 13 baseline. **The record is corrected, not the
+payload — no allowlist change was made.** Everything else in this assignment stands as
+ratified.
+
 ## BASE AT HANDOFF (added August 13, 2026)
 
 The gate above was satisfied August 2 (H1 merged at PR #69, refresh run, 23-fund review
@@ -31,7 +46,7 @@ Click any holding row in a fund's Holdings tab → the row expands into a panel:
   no market cap, no ratings — nothing that moves or evaluates.
 - **Attribution line** — "Company data: Financial Modeling Prep" + "Search Wikipedia ↗"
   (name-based search URL; lands on a search page for obscure names, which is honest).
-- **Fallback** — no cached profile (or h6 mismatch): panel shows the filed name, country,
+- **Fallback** — no cached profile (or h6 mismatch): panel shows the filed name and
   sector as already displayed, plus the Wikipedia search link alone. No FMP fetch-on-click
   in v1 — cache-only, so the panel is instant and adds zero vendor load. Coverage as of
   Aug 2: ~2,464 of ~4,400 cached tickers carry profiles, skewed toward exactly the large
