@@ -3,9 +3,18 @@
  *
  * THIS FILE IS THE SINGLE REVIEWABLE ARTIFACT FOR HR/LEGAL (plan §2
  * "Allowlist principle", §4). Everything a reference-tier account can ever
- * receive from the scores API is enumerated here, field by field. Nothing
- * reaches the reference tier by omission: a field not explicitly shaped in
- * this file is not sent, period.
+ * receive is enumerated here, field by field. Nothing reaches the reference
+ * tier by omission: a field not explicitly shaped in this file is not sent,
+ * period.
+ *
+ * TWO SURFACES are enumerated below, each with its own allowlist:
+ *   1. The scores API (B2) — REFERENCE_ALLOWLIST, the fund list and detail.
+ *   2. The holding company panel (H2) — COMPANY_PANEL_ALLOWLIST, the FMP
+ *      company profile served behind GET /api/holdings/company.
+ * The second was added by the ratified H2 assignment (August 2, 2026), which
+ * records that U1's "reference-shape.ts untouched" scope guard bound the U1
+ * waves only, and that an explicit allowlist addition is the ratified path
+ * under B2 law. Same discipline, one more surface.
  *
  * What reference accounts receive — facts only:
  *   - fund identity (ticker, name) and its expense ratio
@@ -385,5 +394,90 @@ export function shapeHoldingForReference(row: ReferenceHoldingSource): Reference
     ticker: row.ticker,
     pct: row.pct_of_nav,
     sector: row.sector,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// H2 — THE HOLDING COMPANY PANEL
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The second allowlist. Everything the company panel may ever contain,
+ * field by field — the nine fields the H2 assignment enumerates plus the
+ * `source` literal that attributes them.
+ *
+ * WHY THIS LIST IS LOAD-BEARING: unlike the fund payload, whose source rows
+ * are ours, the panel's source is a RAW VENDOR BLOB. fmp_cache.profile is
+ * stored as FMP returns it, and FMP returns far more than this — verified in
+ * production August 13, 2026: price, marketCap, beta, change,
+ * changePercentage, range, lastDividend, volume, averageVolume, ceo,
+ * fullTimeEmployees, phone, address, zip, image, and more. Every one of
+ * those is either a moving number or an evaluative signal, and the ratified
+ * assignment excludes them by name: "No price, no market cap, no ratings —
+ * nothing that moves or evaluates."
+ *
+ * The enforcement is therefore a PICK, never a spread. shapeCompanyPanel
+ * below names its nine keys one at a time; a field FMP adds tomorrow cannot
+ * reach a member without an edit to this file.
+ */
+export const COMPANY_PANEL_ALLOWLIST = [
+  'companyName',
+  'description',
+  'city',
+  'country',
+  'sector',
+  'industry',
+  'exchange',
+  'website',
+  'ipoDate',
+  // Attribution literal — always the string 'fmp', never vendor-supplied
+  'source',
+] as const;
+
+/** The raw fmp_cache.profile blob, as an untyped bag of keys. The shaper
+ *  reads only the ten names above out of it and ignores the rest. */
+export type CompanyProfileSource = Record<string, unknown>;
+
+export interface CompanyPanelView {
+  companyName: string | null;
+  description: string | null;
+  city: string | null;
+  country: string | null;
+  sector: string | null;
+  industry: string | null;
+  exchange: string | null;
+  website: string | null;
+  ipoDate: string | null;
+  /** Attribution, set by this file — the panel always says where it came from */
+  source: 'fmp';
+}
+
+/** Trimmed string, or null — an empty vendor string is absence, not a value */
+function asTrimmedStringOrNull(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t.length > 0 ? t : null;
+}
+
+/**
+ * Shape one cached FMP profile into the company panel.
+ *
+ * Pure shaping — no API calls, no database access, no h6 judgment. The
+ * caller (routes.ts) is responsible for the h6 name-agreement re-check
+ * BEFORE calling this; a profile that disagrees with the filed holding name
+ * must never be shaped at all.
+ */
+export function shapeCompanyPanel(profile: CompanyProfileSource): CompanyPanelView {
+  return {
+    companyName: asTrimmedStringOrNull(profile.companyName),
+    description: asTrimmedStringOrNull(profile.description),
+    city: asTrimmedStringOrNull(profile.city),
+    country: asTrimmedStringOrNull(profile.country),
+    sector: asTrimmedStringOrNull(profile.sector),
+    industry: asTrimmedStringOrNull(profile.industry),
+    exchange: asTrimmedStringOrNull(profile.exchange),
+    website: asTrimmedStringOrNull(profile.website),
+    ipoDate: asTrimmedStringOrNull(profile.ipoDate),
+    source: 'fmp',
   };
 }

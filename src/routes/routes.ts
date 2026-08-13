@@ -48,10 +48,13 @@ import {
   shapeFundForReference,
   shapeFundListForReference,
   shapeHoldingForReference,
+  shapeCompanyPanel,
+  type CompanyProfileSource,
   type ReferenceDossierSource,
   type ReferenceFundIdentity,
   type ReferenceHoldingSource,
 } from '../engine/reference-shape.js';
+import { profileMatchesHoldingName } from '../engine/fmp.js';
 import type {
   FundRow,
   FundScoresRow,
@@ -98,6 +101,18 @@ const helpChatRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 20,                    // 20 help questions per hour
   message: { error: 'Help chat rate limit exceeded. Max 20 per hour.' },
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
+  validate: { trustProxy: false, xForwardedForHeader: false },
+});
+
+// H2 p1: the company panel's limiter. Sized for BROWSING, not for the
+// Claude-invoking routes above — this is a cache-only read a member triggers
+// by clicking holding rows, and a 20-per-hour cadence would break ordinary
+// use of a 23-fund plan. 300 per hour still bounds any scripted sweep.
+const companyPanelRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 300,                   // 300 holding panels per hour
+  message: { error: 'Company panel rate limit exceeded. Max 300 per hour.' },
   keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
@@ -1809,6 +1824,90 @@ router.post('/api/reference-help/ask', requireAuth, helpAskRateLimit, async (req
   });
 
   res.json({ reply, outcome });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// H2 — HOLDING COMPANY PANEL
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Display-ticker shape for the panel lookup.
+ *
+ *  The shared isValidTicker above is for FUND tickers and rejects a dot. The
+ *  member-visible column this route is keyed on is the H1-F2 display ticker,
+ *  whose rule-1 US shape permits one dotted or hyphenated class suffix
+ *  (BRK.B). No production row carries one today (verified read-only, August
+ *  13, 2026: zero of 4,772 distinct display tickers), but the policy can emit
+ *  one, and a legitimately vouched ticker must not 400 on arrival. */
+function isValidDisplayTicker(ticker: string): boolean {
+  return /^[A-Z0-9]{1,10}([.-][A-Z])?$/.test(ticker);
+}
+
+/**
+ * GET /api/holdings/company?ticker=&name=
+ *
+ * The FMP company profile behind a holding row's drill-in panel. Auth-gated
+ * for BOTH tiers (H2 ruling 2 — the panel evaluates nothing), cache-only, and
+ * shaped through the p2 allowlist so only the enumerated fields ship.
+ *
+ * Cache-only by design (H2 "out of scope"): this reads fmp_cache.profile and
+ * never calls FMP. The panel is therefore instant and adds zero vendor load;
+ * a holding with no cached profile gets the client's Wikipedia-only fallback.
+ *
+ * THE h6 NAME GUARD, RE-CHECKED HERE (hard requirement). fmp.ts:189 wrote the
+ * rule for exactly this surface — "before any future company panel serves its
+ * text — the holding's filed name and the profile's companyName must agree."
+ * The pipeline already applies h6 when it decides whether a ticker displays at
+ * all, so today's wrong-company rows (FUISF/Fubon→Fujitsu, TGBMF/TCC→Taseko)
+ * carry no display ticker and cannot be clicked. This re-check closes the
+ * window that opens AFTER that decision: fmp_cache carries a 30-day TTL, so a
+ * profile can be refreshed into a different company while a ticker vouched
+ * under the old profile keeps displaying. Serving is the moment that matters.
+ *
+ * The filed name arrives as a parameter because the caller is displaying it —
+ * the guard then checks the exact pair on the member's screen, which is what
+ * the rule protects. A missing name FAILS CLOSED: no name, no description.
+ */
+router.get('/api/holdings/company', requireAuth, companyPanelRateLimit, async (req: Request, res: Response) => {
+  const ticker = String(req.query.ticker || '').trim().toUpperCase();
+  const filedName = String(req.query.name || '').trim();
+
+  if (!isValidDisplayTicker(ticker)) {
+    res.status(400).json({ error: 'Invalid ticker format' });
+    return;
+  }
+
+  // Fail closed: the h6 guard cannot run without the filed name, and an
+  // unguarded description is exactly what this route must never serve.
+  if (!filedName) {
+    res.status(400).json({ error: 'Holding name is required' });
+    return;
+  }
+
+  const { data: row } = await supaFetch<{ ticker: string; profile: CompanyProfileSource | null }>(
+    'fmp_cache',
+    {
+      params: { ticker: `eq.${ticker}`, select: 'ticker,profile', limit: '1' },
+      single: true,
+    },
+  );
+
+  if (!row?.profile) {
+    res.status(404).json({ error: 'No company profile', ticker, reason: 'no_profile' });
+    return;
+  }
+
+  // h6: a profile that disagrees with the filed name is treated as no profile
+  // at all — the member gets the honest fallback, never another company's
+  // description. reason distinguishes the two cases for verification; both
+  // render identically to the member.
+  const companyName = typeof row.profile.companyName === 'string' ? row.profile.companyName : null;
+  if (!profileMatchesHoldingName(filedName, companyName)) {
+    console.log(`[routes] company panel h6 mismatch: ${ticker} filed=${filedName} fmp=${companyName}`);
+    res.status(404).json({ error: 'No company profile', ticker, reason: 'name_mismatch' });
+    return;
+  }
+
+  res.json({ company: shapeCompanyPanel(row.profile) });
 });
 
 /**

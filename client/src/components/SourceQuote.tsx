@@ -81,6 +81,51 @@ export function SourceQuote({
   );
 }
 
+// ─── VendorQuote: verbatim third-party text that is not an SEC filing ──────
+// H2: the FMP company description is source material we did not write, so the
+// convention governs it — same construction as SourceQuote (blockquote,
+// hairline rule, upright type, attribution line), different attribution.
+// It lives here rather than in the page because the convention above is
+// explicit that one place styles the voices; a second quote block styled
+// inside a page is how two of them start to drift.
+
+export function VendorQuote({
+  children,
+  attribution,
+}: {
+  /** The verbatim vendor text (pre-wrap, so any paragraph breaks hold) */
+  children: ReactNode;
+  /** Attribution line naming the source, e.g. "Company data: Financial
+   *  Modeling Prep". Required — a quote block without attribution reads as
+   *  our own voice, which is the one thing this convention forbids. */
+  attribution: ReactNode;
+}) {
+  return (
+    <blockquote
+      style={{
+        margin: 0,
+        padding: '2px 0 2px 14px',
+        borderLeft: `1px solid ${theme.colors.border}`,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 13,
+          color: theme.colors.text,
+          lineHeight: 1.65,
+          fontStyle: 'normal',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {children}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 11, color: theme.colors.textDim }}>
+        {attribution}
+      </div>
+    </blockquote>
+  );
+}
+
 // ─── OurVoice: anything the app authors ────────────────────────────────────
 
 export function OurVoice({
