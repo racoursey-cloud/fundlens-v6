@@ -34,3 +34,4 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-08-13 | api.ts comment credits AppShell for casting around absent pipeline step fields — retired name, comment-only (U1-A) | — |
 | 2026-08-13 | api.ts exports fetchReferenceFundDetail (the non-`all=1` variant) with no caller — dead export (U1-A) | — |
 | 2026-08-13 | reference/Funds.tsx and reference/FundDetail.tsx docblocks call themselves the reference tier's pages — they are the shared base for both tiers since U1-A; comment-only (U1-A) | — |
+| 2026-08-13 | Company panel coverage: 2,317 of 4,772 validated display tickers have no cached FMP profile, so those rows get the Wikipedia-only fallback — 1,277 are all-numeric local codes (Shenzhen/Shanghai/KRX format, e.g. 000001), 1,037 all-letter foreign lines; revisit after a future FMP tier decision (H2 p5) | — |
