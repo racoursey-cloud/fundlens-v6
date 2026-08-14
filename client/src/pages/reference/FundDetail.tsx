@@ -1,7 +1,8 @@
 /**
- * FundLens — Reference Fund Detail (B4 c2; reshaped by B9 c9)
+ * FundLens — Fund Detail (B4 c2; reshaped by B9 c9; unified U1-B)
  *
- * The inline expansion beneath a reference Funds grid row. Chart-forward
+ * The inline expansion beneath a Funds grid row, shared by both tiers since
+ * U1-A. Chart-forward
  * and facts-only: colors and charts show what a fund IS, never whether
  * it's good. No factor bars, no tier badge, no evaluative word or color
  * anywhere. (B4's "no Overview tab" sentence is superseded by the ratified
@@ -9,7 +10,10 @@
  * own SEC-filed description — verbatim, in a quote block with attribution
  * — which is information, not evaluation.)
  *
- * Tabs: About | Holdings | Sectors — About first and default.
+ * Tabs: About | Holdings | Sectors — About first and default — plus, for a
+ * full-tier account only, Scores (U1-B: the FundLens evaluative content
+ * re-homed as a module; the tab exists only where the evaluative payload
+ * arrived, which the B2 allowlist makes impossible for a member).
  *   - About: the description box (Investment Objective and Principal
  *     Investment Strategies verbatim via SourceQuote; the flag-gated
  *     Translation via OurVoice when the server serves it), thin rule
@@ -22,14 +26,15 @@
  *   - Holdings: the full filed list (?all=1 — the server lifts the 50-row
  *     cap), count line, negative rows as filed with the not-an-error
  *     explainer.
- *   - Sectors: the donut pair side by side (stacking on narrow screens):
- *     Holdings (top 8 positive + "Everything else" at true combined
- *     weight) beside Sectors (the payload's sector_exposure map — never a
- *     recomputation from holdings rows, binding build fact). Long-only
- *     disclosure when any negative row exists; sector-donut geometry
- *     normalized when the filed map sums past 100 while the legend prints
- *     the filed values with the over-100 explainer; sector slice click
- *     drills to that sector's holdings.
+ *   - Sectors (U1-B: reshaped around the shared FundExposurePanel): sector
+ *     bars left, the sector donut centre, that sector's holdings right,
+ *     from the payload's sector_exposure map — never a recomputation from
+ *     holdings rows, binding build fact. The Holdings donut (top 8 positive
+ *     + "Everything else" at true combined weight) sits below, unchanged.
+ *     Long-only disclosure when any negative row exists; sector-donut
+ *     geometry normalized when the filed map sums past 100 while the bars
+ *     print the filed values with the over-100 explainer; clicking a sector
+ *     — bar or wedge — filters the holdings column to it.
  *
  * Honest empty state: a non-money-market fund with a null
  * as_of.report_date keeps holdings/sector surfaces hidden (FSPGX-trigger
@@ -50,7 +55,13 @@ import {
   type ReferenceFund,
   type ReferenceHolding,
 } from '../../api';
-import { DonutChart, type DonutSlice, type DonutDrillItem } from '../../components/DonutChart';
+import { DonutChart, type DonutSlice } from '../../components/DonutChart';
+import {
+  FundExposurePanel,
+  type ExposureHolding,
+  type ExposureSector,
+} from '../../components/FundExposurePanel';
+import { scoreBg, scoreColor, type FullTierScore } from '../../engine/full-tier-scores';
 import { SourceQuote, OurVoice, VendorQuote } from '../../components/SourceQuote';
 import {
   MONEY_MARKET_TICKERS,
@@ -60,7 +71,7 @@ import {
 } from './constants';
 import { theme } from '../../theme';
 
-type Tab = 'about' | 'holdings' | 'sectors';
+type Tab = 'about' | 'holdings' | 'sectors' | 'scores';
 
 // ─── Ratified explainer copy (B9 §5) ───────────────────────────────────────
 
@@ -155,7 +166,16 @@ function buildHoldingsSlices(holdings: ReferenceHolding[]): DonutSlice[] {
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function ReferenceFundDetail({ fund }: { fund: ReferenceFund }) {
+export function ReferenceFundDetail({
+  fund,
+  fullScore = null,
+}: {
+  fund: ReferenceFund;
+  /** U1-B: the full tier's evaluative view of this fund, or null. Null for
+   *  every reference account — the fields behind it are on the B2
+   *  permanently-excluded list and never reach one. */
+  fullScore?: FullTierScore | null;
+}) {
   const isMoneyMarket = MONEY_MARKET_TICKERS.has(fund.ticker);
   // FSPGX-trigger ruling: a non-MM fund with no filing date is treated as
   // holdings-unavailable regardless of what the route serves. About is
@@ -180,9 +200,20 @@ export function ReferenceFundDetail({ fund }: { fund: ReferenceFund }) {
     });
   }, [fund.ticker, holdingsAvailable]);
 
-  // MM funds show About alone; everyone else gets all three tabs.
-  const tabs: Tab[] = isMoneyMarket ? ['about'] : ['about', 'holdings', 'sectors'];
-  const tabLabel: Record<Tab, string> = { about: 'About', holdings: 'Holdings', sectors: 'Sectors' };
+  // MM funds show About alone; everyone else gets all three tabs. U1-B: the
+  // full tier adds a Scores tab wherever the evaluative payload arrived —
+  // including on a money market, which has a score even though it has no
+  // holdings report and never enters the ranking.
+  const tabs: Tab[] = [
+    ...(isMoneyMarket ? (['about'] as Tab[]) : (['about', 'holdings', 'sectors'] as Tab[])),
+    ...(fullScore ? (['scores'] as Tab[]) : []),
+  ];
+  const tabLabel: Record<Tab, string> = {
+    about: 'About',
+    holdings: 'Holdings',
+    sectors: 'Sectors',
+    scores: 'Scores',
+  };
 
   const hasNegativeRows = useMemo(
     () => (holdings ?? []).some(h => h.pct < 0),
@@ -239,6 +270,10 @@ export function ReferenceFundDetail({ fund }: { fund: ReferenceFund }) {
 
       {tab === 'about' ? (
         <AboutTab fund={fund} isMoneyMarket={isMoneyMarket} />
+      ) : tab === 'scores' && fullScore ? (
+        /* The score exists whether or not a holdings report does, so this
+           branch sits ahead of the holdings-availability guard. */
+        <ScoresTab fullScore={fullScore} />
       ) : !holdingsAvailable ? (
         /* Honest empty state for Holdings/Sectors (null report_date) */
         <p style={{ fontSize: 13, color: theme.colors.textMuted, lineHeight: 1.6, margin: 0 }}>
@@ -265,7 +300,7 @@ export function ReferenceFundDetail({ fund }: { fund: ReferenceFund }) {
         </div>
       ) : (
         <div>
-          <DonutPair
+          <SectorsTab
             holdings={holdings}
             sectorExposure={fund.sector_exposure}
             hasNegativeRows={hasNegativeRows}
@@ -632,9 +667,27 @@ function HoldingCompanyPanel({ holding }: { holding: ReferenceHolding }) {
   );
 }
 
-// ─── Sectors tab: the donut pair ───────────────────────────────────────────
+// ─── Sectors tab ───────────────────────────────────────────────────────────
+// U1-B: the standalone sector donut and its legend are now the middle and
+// left columns of the shared FundExposurePanel — sector bars left (filed
+// values, with magnitudes the flat legend never showed), the same donut in
+// the centre, and that sector's holdings held open on the right instead of
+// behind a click. The Holdings donut is untouched and sits below.
+//
+// Every B9 c9 guarantee is carried, not dropped:
+//   - the bars print FILED values, normalization or not — the legend's job;
+//   - the donut GEOMETRY is still normalized when the filed map sums past
+//     100, so the ring closes at 360°;
+//   - the over-100 explainer still renders under that case;
+//   - the long-only disclosure still renders when any negative row exists;
+//   - clicking a sector still reaches that sector's holdings. It is now a
+//     persistent filter rather than a drill panel, which is the "same
+//     interactions" the assignment asks the extracted component to keep.
+//   - sectorLimit={null}: the panel's 8-row default would have hidden
+//     sectors a fund actually holds, and the legend it replaces printed
+//     every one of them.
 
-function DonutPair({
+function SectorsTab({
   holdings,
   sectorExposure,
   hasNegativeRows,
@@ -643,6 +696,15 @@ function DonutPair({
   sectorExposure: Record<string, number>;
   hasNegativeRows: boolean;
 }) {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [selectedSector, setSelectedSector] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const holdingSlices = useMemo(() => buildHoldingsSlices(holdings), [holdings]);
 
   // Filed sector slices, and the filed total. When the filed values sum
@@ -664,22 +726,34 @@ function DonutPair({
     [filedSectorSlices, overFiled, filedTotal],
   );
 
-  // Sector slice click drills to that sector's holdings (positive rows,
-  // matching what the donut draws). 'Other' collects the non-palette
-  // sector names.
-  const drillData = useMemo(() => {
-    const map = new Map<string, DonutDrillItem[]>();
-    for (const h of holdings) {
-      if (h.pct <= 0 || h.sector === null) continue;
-      const sliceId =
-        h.sector in REFERENCE_SECTOR_COLORS && h.sector !== 'Other' ? h.sector : 'Other';
-      const items = map.get(sliceId) ?? [];
-      items.push({ name: h.name === 'N/A' ? '—' : h.name, ticker: h.ticker, weight: h.pct });
-      map.set(sliceId, items);
-    }
-    for (const items of map.values()) items.sort((a, b) => b.weight - a.weight);
-    return map;
-  }, [holdings]);
+  /** The slice a sector name belongs to — the B9 fold, kept identical so a
+   *  bar, a donut wedge and a holding row all agree on what 'Other' means. */
+  const sliceIdForSector = (sector: string): string =>
+    sector in REFERENCE_SECTOR_COLORS && sector !== 'Other' ? sector : 'Other';
+
+  // The left column: the filed slices as bars, in the donut's own order.
+  const sectorBars = useMemo<ExposureSector[]>(
+    () => filedSectorSlices.map(s => ({ sector: s.label, weight: s.pct, color: s.color })),
+    [filedSectorSlices],
+  );
+
+  // The right column: positive rows, matching what the donut draws, keyed to
+  // the same slice ids so a bar click filters to its own wedge. Server order
+  // (pct_of_nav descending) is preserved, so the unfiltered view is the
+  // fund's largest positions. Rows the filing left unclassified keep a null
+  // sector: they appear in the unfiltered list, and no sector claims them.
+  const panelHoldings = useMemo<ExposureHolding[]>(
+    () =>
+      holdings
+        .filter(h => h.pct > 0)
+        .map(h => ({
+          name: h.name === 'N/A' ? '—' : h.name,
+          ticker: h.ticker,
+          weight: h.pct,
+          sector: h.sector === null ? null : sliceIdForSector(h.sector),
+        })),
+    [holdings],
+  );
 
   if (holdingSlices.length === 0 && filedSectorSlices.length === 0) {
     return (
@@ -691,38 +765,113 @@ function DonutPair({
 
   return (
     <div>
-      {/* Side by side; flex-wrap stacks the pair on narrow screens */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 32 }}>
-        {holdingSlices.length > 0 && (
-          <div style={{ flex: '1 1 260px', minWidth: 240 }}>
-            <DonutChart slices={holdingSlices} size={200} title="Holdings" />
-            <SliceLegend slices={holdingSlices} />
-          </div>
-        )}
-        {filedSectorSlices.length > 0 && (
-          <div style={{ flex: '1 1 260px', minWidth: 240 }}>
+      {filedSectorSlices.length > 0 && (
+        <FundExposurePanel
+          sectors={sectorBars}
+          holdings={panelHoldings}
+          selectedSector={selectedSector}
+          onSelectSector={setSelectedSector}
+          isMobile={isMobile}
+          sectorLimit={null}
+          center={
             <DonutChart
               slices={geometrySlices}
               size={200}
               title="Sectors"
-              drillData={drillData}
-              drillEmptyMessage="No individual holdings are classified under this sector."
+              onSliceClick={slice =>
+                setSelectedSector(prev => (prev === slice.id ? null : slice.id))
+              }
             />
-            {/* Legend prints the FILED values, normalization or not */}
-            <SliceLegend slices={filedSectorSlices} />
-            {overFiled && (
+          }
+          footnotes={
+            overFiled ? (
               <p style={{ fontSize: 11, color: theme.colors.textDim, lineHeight: 1.6, margin: '8px 0 0' }}>
                 {OVER_100_EXPLAINER}
               </p>
-            )}
+            ) : null
+          }
+        />
+      )}
+
+      {/* The Holdings donut, unchanged from B9 c9 */}
+      {holdingSlices.length > 0 && (
+        <div style={{
+          marginTop: 24,
+          paddingTop: 20,
+          borderTop: `1px solid ${theme.colors.border}`,
+          display: 'flex',
+          justifyContent: 'center',
+        }}>
+          <div style={{ minWidth: 240, maxWidth: 340 }}>
+            <DonutChart slices={holdingSlices} size={200} title="Holdings" />
+            <SliceLegend slices={holdingSlices} />
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* Carried from B9 c9: stated once for the tab, under both charts,
+          whichever of them rendered */}
       {hasNegativeRows && (
         <p style={{ fontSize: 11, color: theme.colors.textDim, lineHeight: 1.6, margin: '10px 0 0' }}>
           {LONG_ONLY_DISCLOSURE}
         </p>
       )}
+    </div>
+  );
+}
+
+// ─── Scores tab (U1-B; full tier only) ─────────────────────────────────────
+// The evaluative content FundLens.tsx carried, re-homed here as a module —
+// the score and the tier, the two things that page showed on every row and
+// this shared base has never shown. It renders only where the payload
+// carrying it arrived, which is only ever a full-tier account: composite,
+// tier and z-scores are on the B2 permanently-excluded list.
+//
+// The sector/donut/holdings block FundLens showed beneath its rows is NOT
+// re-homed here — it is the shared exposure panel on the Sectors tab, which
+// both tiers now get. This tab holds the evaluation and nothing else.
+
+function ScoresTab({ fullScore }: { fullScore: FullTierScore }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 28, marginBottom: 14 }}>
+        <div>
+          <SectionLabel text="Score" />
+          <span style={{
+            display: 'inline-block',
+            minWidth: 52,
+            padding: '6px 12px',
+            borderRadius: 6,
+            background: scoreBg(fullScore.composite),
+            color: scoreColor(fullScore.composite),
+            fontWeight: 700,
+            fontFamily: theme.fonts.mono,
+            fontSize: 20,
+            textAlign: 'center',
+          }}>{fullScore.composite}</span>
+        </div>
+        <div>
+          <SectionLabel text="Tier" />
+          <span style={{
+            display: 'inline-block',
+            padding: '5px 12px',
+            borderRadius: 4,
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: '0.03em',
+            color: fullScore.tierColor,
+            background: `${fullScore.tierColor}18`,
+            border: `1px solid ${fullScore.tierColor}40`,
+            whiteSpace: 'nowrap',
+          }}>{fullScore.tier}</span>
+        </div>
+      </div>
+
+      <p style={{ fontSize: 12, color: theme.colors.textMuted, lineHeight: 1.6, margin: 0 }}>
+        Scored on your own factor weights, out of 100, and placed against the
+        other funds in the plan. Money market funds are scored but stay out of
+        that comparison — they are held for safety, not for standing.
+      </p>
     </div>
   );
 }
