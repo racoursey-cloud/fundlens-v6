@@ -39,6 +39,31 @@
  * change becomes a Task 7 ingest-failure alert, never a silent number.
  * The CSV parser (proven against a real operator download) is retained as
  * the switchable fallback path.
+ *
+ * ── A1-F1 p1: the artifact lag (ruled August 14, 2026) ─────────────────
+ *
+ * The publisher's own page runs AHEAD of this artifact. Measured from our
+ * ingest record, the file we read has fallen behind in steps — same-day
+ * through July 14, one business day to July 31, and two business days from
+ * August 4 onward. Operator-verified the evening of August 14: every table
+ * on the nowcasting page read "Updated 08/14" while that evening's sweep
+ * artifact carried 08-12. The page is server-rendered — it fires no data
+ * endpoint at all, the tables live in its HTML — so there is no fresher
+ * endpoint to adopt. This URL remains the only machine-readable channel.
+ *
+ * Two things are therefore done here, and neither changes a number:
+ *
+ *   1. THE ARTIFACT'S OWN STAMP IS LOGGED at every fetch, beside the newest
+ *      vintage the file actually carries and the response's cache headers.
+ *      That triple settles the open question within a week of sweeps: if the
+ *      stamp is today's and the newest row is two days old, the publisher's
+ *      data file genuinely lags their page; if the stamp itself is two days
+ *      old, we are being served a stale copy. Diagnosis before cure.
+ *   2. THE FETCH ASKS PAST ANY INTERMEDIARY CACHE, and falls back to the
+ *      exact production URL if that request fails for any reason. The
+ *      cache-bust could not be tested before shipping (this environment's
+ *      egress policy denies clevelandfed.org), so it is built to degrade to
+ *      today's behaviour rather than risk a dark series.
  */
 
 import type { RegimeNormalizedObservation } from '../../types.js';
@@ -51,6 +76,11 @@ const CLEVELAND_NOWCAST_JSON_PATTERN =
 
 /** A1 ingests the quarter horizon (data verified against a real download) */
 const CLEVELAND_HORIZON = 'quarter';
+
+/** A1-F1 p1: query parameter appended to defeat an intermediary cache.
+ *  Unrecognized by the origin, which is why the fetch falls back to the
+ *  plain production URL if the busted request is refused. */
+const CLEVELAND_CACHE_BUST_PARAM = '_cb';
 
 /** Registry series_code → dataset series name (verified July 6, 2026) */
 const CLEVELAND_LABEL_BY_SERIES: Record<string, string> = {
@@ -202,6 +232,31 @@ export function parseClevelandNowcastJson(
   return out;
 }
 
+/**
+ * A1-F1 p1 — the artifact's own publication stamp.
+ *
+ * Every quarter block carries `chart._comment` as "YYYY-MM-DD HH:MM", which
+ * is the publisher's statement of when THIS FILE was written. The newest one
+ * across blocks is the file's stamp. Read beside the newest vintage the file
+ * carries, it separates a stale copy (old stamp) from a genuinely lagging
+ * data file (today's stamp, old rows). Lexical comparison is safe: the
+ * format is fixed-width and zero-padded.
+ *
+ * Returns null rather than throwing — a missing stamp degrades the log line,
+ * never the ingest. Parsing owns the loud failures; this is diagnosis.
+ */
+export function clevelandArtifactStamp(payload: unknown): string | null {
+  if (!Array.isArray(payload)) return null;
+  let newest: string | null = null;
+  for (const raw of payload) {
+    const comment = (raw as ClevelandChartBlock)?.chart?._comment;
+    if (typeof comment !== 'string') continue;
+    const trimmed = comment.trim();
+    if (trimmed && (newest === null || trimmed > newest)) newest = trimmed;
+  }
+  return newest;
+}
+
 // ─── CSV parsing — the format-verified alternate path ───────────────────────
 // Proven July 6, 2026 against a real QuarterlyAnnualizedPercentChange2026q3.csv
 // (header: Label,CPI Inflation,Core CPI Inflation,PCE Inflation,Core PCE
@@ -253,11 +308,48 @@ export function parseClevelandQuarterlyCsv(
 export async function fetchClevelandNowcast(
   seriesCode: string
 ): Promise<RegimeNormalizedObservation[]> {
-  const url = clevelandNowcastUrl();
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Cleveland nowcast fetch returned ${res.status} from ${url}`);
+  const productionUrl = clevelandNowcastUrl();
+  const bustedUrl = `${productionUrl}&${CLEVELAND_CACHE_BUST_PARAM}=${Date.now()}`;
+
+  // A1-F1 p1: ask past any intermediary cache first. If that request fails
+  // for ANY reason — an origin that rejects the unknown parameter, a cache
+  // that refuses no-cache, a transport error — fall straight back to the
+  // exact URL that has been working. The bust could not be tested before
+  // shipping, so its worst case is today's behaviour, never a dark series.
+  let res: Response | null = null;
+  let cacheBusted = true;
+  try {
+    const attempt = await fetch(bustedUrl, {
+      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+    });
+    if (attempt.ok) res = attempt;
+  } catch {
+    // fall through to the production URL
   }
+  if (!res) {
+    cacheBusted = false;
+    res = await fetch(productionUrl);
+    if (!res.ok) {
+      throw new Error(`Cleveland nowcast fetch returned ${res.status} from ${productionUrl}`);
+    }
+  }
+
   const payload = await res.json();
-  return parseClevelandNowcastJson(payload, seriesCode);
+  const observations = parseClevelandNowcastJson(payload, seriesCode);
+
+  // The diagnostic triple (A1-F1 p1). Parsing has already succeeded, so
+  // `observations` is non-empty and the reduce below has a seed.
+  const newestInFile = observations.reduce(
+    (max, o) => (o.realtime_start > max ? o.realtime_start : max),
+    observations[0]!.realtime_start
+  );
+  console.log(
+    `[regime] Cleveland nowcast ${seriesCode}: file stamp ${clevelandArtifactStamp(payload) ?? 'absent'}; ` +
+      `newest vintage in file ${newestInFile}; ` +
+      `served ${cacheBusted ? 'cache-busted' : 'plain URL (bust fell back)'}; ` +
+      `last-modified ${res.headers.get('last-modified') ?? 'absent'}; ` +
+      `age ${res.headers.get('age') ?? 'absent'}`
+  );
+
+  return observations;
 }
