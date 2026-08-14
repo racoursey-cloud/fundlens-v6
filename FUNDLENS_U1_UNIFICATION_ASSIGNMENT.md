@@ -4,6 +4,44 @@
 Final ruling at ratification (Robert): "everyone lands on Funds — agreed." Item 6 below
 is confirmed; no open items remain.
 
+## AMENDMENT — August 14, 2026, by Robert
+
+**Ruling 2 (fund selection) is DISSOLVED BY PREMISE FAILURE. The per-row selection
+toggle is STRUCK from Wave U1-B.**
+
+Ruling 2 moved fund selection "from Settings to the unified grid." There was never a
+working selection to move:
+
+- **Settings' fund list is read-only, and always was** — ticker, name, expense ratio, no
+  control of any kind. Its docblock's "enable/disable" describes a feature that has never
+  existed in this codebase; it is stale text carried in from the v5.1 port.
+- **`selected_fund_ids` is written but never read.** The Setup Wizard writes it and the
+  profile route accepts it. Nothing consumes it: not My Mix, not Your Brief, not the
+  brief generator, not the allocation math.
+
+Confirmed behaviorally, not only by search: the admin profile carries a real selection —
+22 of 23 funds, CEMEX deliberately excluded at setup — and the July 29 allocation in
+`allocation_history` contains CEMEX anyway. **The control overrode a decision its owner
+actually made.** No toggle that writes an unread field will be built in this house.
+
+Struck with it, as the clauses this dissolve touches:
+
+- **Ruling 2**, in full.
+- **Wave U1-A's** "Settings keeps its fund list UNTIL the grid toggle exists" guard.
+  Nothing orphans, because nothing ever worked.
+- **Wave U1-B's** grid bullet — the words "and the selection toggle".
+- **Wave U1-B's** Settings bullet — the condition "the same wave the grid toggle lands".
+  The list retires in U1-B regardless, on its own merits: read-only, and duplicated by
+  the unified grid it sat beside.
+- **Verification's** "selection round-trips to mix/brief", which would now verify a
+  dissolved feature.
+
+If fund selection is ever wanted for real, it arrives as its own future order, with the
+generation-behavior semantics decided on purpose. It does not ride a display wave.
+
+Ruled on Clyde's U1-B Evidence Gate finding 3 and Fabio's data review. Everything else in
+this assignment stands as ratified.
+
 ## THE VISION (Robert, August 2)
 
 One app, one truth. The reference experience is the shared base for every account;
@@ -23,8 +61,10 @@ existing access_tier + is_admin — no new columns, no Database-law ceremony.
    shell, opens a modal. Admin/full only. MINIMAL grounding investment — existing fund
    data + scoring outputs; "it's primarily for me; develop later if we want." The
    fenced reference Help page is untouched and remains the member surface.
-2. Fund selection (which funds feed mix/brief) moves from Settings to the unified grid
-   as a per-row toggle — FULL TIER ONLY. Reference members explore; nothing persists.
+2. ~~Fund selection (which funds feed mix/brief) moves from Settings to the unified grid
+   as a per-row toggle — FULL TIER ONLY. Reference members explore; nothing persists.~~
+   **DISSOLVED — Amendment, August 14, 2026 (premise failure: there was no working
+   selection to move).**
 3. Sequencing: SHELL FIRST (U1-A), then H2 company panel, then the fund-experience
    merge (U1-B). H2 correctly held as draft by Clyde until its gate cleared; it builds
    into the unified base once U1-A lands, so the panel is built exactly once.
@@ -45,23 +85,25 @@ existing access_tier + is_admin — no new columns, no Database-law ceremony.
 - Global chat icon + modal (ruling 1): minimal prompt over existing data; Opus seat per
   the seating chart; standard rate limit; no fence (full/admin surface).
 - Old full-tier Help page retires. FundLens page SURVIVES this wave (retires in U1-B).
-- Settings keeps its fund list UNTIL the grid toggle exists (U1-B) — selection must
-  never be orphaned between waves.
+- ~~Settings keeps its fund list UNTIL the grid toggle exists (U1-B) — selection must
+  never be orphaned between waves.~~ **STRUCK — Amendment, August 14, 2026.**
 
 ## THEN: H2 (already ratified) builds into the unified fund detail. One build, no port.
 
 ## WAVE U1-B — THE FUND EXPERIENCE (the real merge; medium)
 
 - ONE grid: sortable columns (reference skeleton), expand arrow + blue ticker (full
-  skin), score/tier columns and the selection toggle rendered only when the payload
+  skin), score/tier columns ~~and the selection toggle~~ rendered only when the payload
   carries full-tier fields. FundLens.tsx retires.
+  *(toggle STRUCK — Amendment, August 14, 2026)*
 - ONE fund detail: About / Holdings / Sectors as the shared base, plus for full tier a
   Scores tab (the FundLens evaluative content re-homed as a module).
 - The Your Allocation donut EXTRACTED from YourBrief into a shared component and
   embedded per-fund: sector exposure left, holdings right, same interactions, risk
   dial removed. Both tiers get it (sector data already ships in the reference
   allowlist — richer view, zero new data).
-- Settings drops its fund list the same wave the grid toggle lands.
+- Settings drops its fund list ~~the same wave the grid toggle lands~~ **in this wave
+  regardless — Amendment, August 14, 2026** (read-only, and duplicated by the one grid).
 
 ## WAVE U1-C — BRIEF & RESEARCH (display-level; small)
 
@@ -83,7 +125,8 @@ Reference-account probe: member sees exactly the three member tabs, no new colum
 chat icon; payload byte-shape unchanged (server untouched, so this is a client check).
 Full-account probe: modules present, old bookmarks redirect sanely. U1-B adds: one
 grid sorts correctly both tiers; donut parity with the old YourBrief component;
-selection round-trips to mix/brief. Existing proof battery re-run green each wave.
+~~selection round-trips to mix/brief~~ **STRUCK — Amendment, August 14, 2026 (verifies a
+dissolved feature)**. Existing proof battery re-run green each wave.
 
 *— Drafted by Fabio, August 2, 2026, from Robert's directives and rulings of the same
 date. For ratification: confirm or veto the landing-page default (item 6), then hand
