@@ -4,8 +4,16 @@
  * Ported from v5.1's SettingsTab.jsx. Sections:
  *   1. Profile — display name, email (read-only)
  *   2. Scoring Preferences — risk tolerance + factor weights (read-only summary)
- *   3. Fund List — ~18 funds in TerrAscend 401(k) menu, enable/disable
- *   4. About — version, help link placeholder
+ *   3. About — version, help link placeholder
+ *
+ * U1-B: the Fund List section is retired (Robert's ruling, August 14, 2026,
+ * part 2). It listed every plan fund read-only — ticker, name, expense ratio
+ * — which the unified Funds grid now shows with far more, so the section was
+ * a duplicate of the app's home page. Its old docblock line here claimed
+ * "enable/disable"; no such control ever existed in this file, and the
+ * selection it appeared to offer was struck from U1-B by the same ruling
+ * (see the amendment banner on FUNDLENS_U1_UNIFICATION_ASSIGNMENT.md).
+ * Nothing is orphaned by the removal, because nothing was ever held here.
  *
  * v8 A0 item 2: the Analysis section (duplicate pipeline trigger) is retired —
  * the header button and the Pipeline tab are the two trigger points, one
@@ -20,10 +28,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   fetchProfile,
-  fetchFunds,
   updateProfile,
   type UserProfile,
-  type Fund,
 } from '../api';
 import { theme } from '../theme';
 
@@ -76,7 +82,6 @@ const cardStyle: React.CSSProperties = {
 export function Settings() {
   const { user, signOut } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [funds, setFunds] = useState<Fund[]>([]);
   const [loading, setLoading] = useState(true);
   const [displayName, setDisplayName] = useState('');
   const [nameSaving, setNameSaving] = useState(false);
@@ -89,7 +94,9 @@ export function Settings() {
   const [riskTolerance, setRiskTolerance] = useState<number>(4.0);
 
   useEffect(() => {
-    Promise.all([fetchProfile(), fetchFunds()]).then(([pRes, fRes]) => {
+    // U1-B: the /api/funds call went with the Fund List section — this page
+    // no longer lists funds, so it no longer asks for them.
+    fetchProfile().then(pRes => {
       if (pRes.data?.profile) {
         setProfile(pRes.data.profile);
         setDisplayName(pRes.data.profile.display_name ?? '');
@@ -101,7 +108,6 @@ export function Settings() {
         });
         setRiskTolerance(pRes.data.profile.risk_tolerance);
       }
-      if (fRes.data?.funds) setFunds(fRes.data.funds);
       setLoading(false);
     });
   }, []);
@@ -349,71 +355,7 @@ export function Settings() {
 
       <Divider />
 
-      {/* ═══ SECTION 3 — FUND LIST ═══ */}
-      <section style={{ marginBottom: 32 }}>
-        <SectionHeader>Fund List</SectionHeader>
-        <p style={{ fontSize: 13, color: theme.colors.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
-          {funds.length} funds in the TerrAscend 401(k) menu.
-        </p>
-
-        <div style={{
-          ...cardStyle, padding: 0, overflow: 'hidden',
-        }}>
-          {/* Column headers */}
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '8px 20px',
-            borderBottom: `1px solid ${theme.colors.border}`,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: theme.colors.textDim, minWidth: 60 }}>
-                Ticker
-              </span>
-              <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: theme.colors.textDim }}>
-                Fund Name
-              </span>
-            </div>
-            <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: theme.colors.textDim, flexShrink: 0, marginLeft: 12 }}>
-              Expense Ratio
-            </span>
-          </div>
-          {funds.sort((a, b) => a.ticker.localeCompare(b.ticker)).map((fund, i) => (
-            <div key={fund.id} style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '10px 20px',
-              borderBottom: i < funds.length - 1 ? `1px solid ${theme.colors.border}` : 'none',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                <span style={{
-                  fontFamily: theme.fonts.mono, fontWeight: 700,
-                  fontSize: 13, color: theme.colors.accentBlue,
-                  minWidth: 60,
-                }}>
-                  {fund.ticker}
-                </span>
-                <span style={{
-                  fontSize: 13, color: theme.colors.text,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {fund.name}
-                </span>
-              </div>
-              {fund.expense_ratio != null && (
-                <span style={{
-                  fontSize: 11, fontFamily: theme.fonts.mono,
-                  color: theme.colors.textDim, flexShrink: 0, marginLeft: 12,
-                }}>
-                  {(fund.expense_ratio * 100).toFixed(2)}%
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <Divider />
-
-      {/* ═══ SECTION 4 — ABOUT ═══ */}
+      {/* ═══ SECTION 3 — ABOUT ═══ */}
       <section>
         <SectionHeader>About</SectionHeader>
         <div style={{ fontSize: 13, color: theme.colors.textMuted, lineHeight: 1.6 }}>

@@ -18,7 +18,6 @@
  *     full tier       → the same Funds and My Mix as the shared base, plus
  *                       the modules that light up for the tier:
  *                       /brief /research /settings /pipeline (admin)
- *                       /fundlens survives this wave (retires in U1-B)
  *     gate-blocked    → the honest access-restricted screen (docket 3):
  *                       a 403 'Access restricted' account sees the truth on
  *                       every route, never a cheerful empty page
@@ -32,6 +31,12 @@
  *     reference Help page is untouched and stays the member surface.
  *   - Two page trees became one: the reference pages ARE the shared base now,
  *     mounted for both tiers from a single set of route declarations.
+ *
+ * U1-B notes (August 14, 2026):
+ *   - FundLens retires. Its score/tier content re-homed into the one grid
+ *     and the fund detail's Scores tab, so /fundlens now redirects to Funds
+ *     — the page that does its job — for the full tier. Reference accounts
+ *     reached that path through their catch-all before and still do.
  *
  * B3 notes (carried, still true):
  *   - Reference routing ignores setup_completed entirely (ruled July 27,
@@ -57,7 +62,6 @@ import { YourBrief } from './pages/YourBrief';
 import { Research } from './pages/Research';
 import { Settings } from './pages/Settings';
 import { Pipeline } from './pages/Pipeline';
-import { FundLens } from './pages/FundLens';
 import { ReferenceFunds } from './pages/reference/Funds';
 import { ReferenceMyMix } from './pages/reference/MyMix';
 import { ReferenceHelp } from './pages/reference/Help';
@@ -242,14 +246,14 @@ function TierRouter() {
         <Route path="settings" element={<Settings />} />
         <Route path="pipeline" element={<Pipeline />} />
 
-        {/* U1-A: FundLens survives the wave as a route without a tab; it
-            retires in U1-B when its evaluative content re-homes into the
-            unified fund detail as a Scores tab. */}
-        <Route path="fundlens" element={<FundLens />} />
-
         {/* Redirects for old bookmarked URLs */}
         <Route path="thesis" element={<Navigate to="/research" replace />} />
         <Route path="briefs" element={<Navigate to="/brief" replace />} />
+        {/* U1-B: FundLens retired. Its evaluative content re-homed into the
+            one grid (score/tier columns) and the fund detail (Scores tab),
+            so the bookmark lands on Funds — the page that now does its job —
+            rather than on the catch-all. */}
+        <Route path="fundlens" element={<Navigate to="/" replace />} />
         {/* Ruling 1: the full-tier Help page retired — the chat icon in the
             shell header replaced it. */}
         <Route path="help" element={<Navigate to="/" replace />} />

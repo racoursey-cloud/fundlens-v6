@@ -1,20 +1,33 @@
 /**
- * FundLens — Reference Funds Grid (B3; amended B4 c3)
+ * FundLens — The Funds Grid (B3; amended B4 c3; unified U1-B)
  *
- * The reference tier's home page: every active fund in the plan as a
- * sortable table of facts. Columns: Ticker, Name, Expense ratio (percent;
- * the dollar register lives in a native tooltip and in the detail's
- * identity strip — Robert's grid-density ruling), 1Y return (raw figure),
- * Top holding, # holdings, Concentration (HHI label), Data as-of.
- * Clicking a row opens the ReferenceFundDetail expansion beneath it (B4);
- * a second click closes it.
+ * ONE grid for every account (U1 WAVE U1-B). Every active fund in the plan
+ * as a sortable table of facts, with the full tier's evaluative columns
+ * lighting up as a module on top. FundLens.tsx, which was the full tier's
+ * parallel version of this page, retires in this wave.
+ *
+ * The skeleton is this page's, per U1 ruling 5: sortable columns, one row
+ * per fund, click to expand the detail beneath it. The SKIN is FundLens's,
+ * per the same ruling: the expand arrow in a leading cell and the blue
+ * mono ticker. Both tiers get the skeleton and the skin.
+ *
+ * Columns, in order: (arrow), Ticker, Name, [Score, Tier], Expense ratio,
+ * 1Y return, Top holding, # holdings, Concentration, Data as-of. The two
+ * bracketed columns render ONLY when the full-tier payload actually
+ * arrived — a member's grid gains no column from this merge.
  *
  * Honesty rules, enforced here:
- *   - Default order is alphabetical — the server returns it that way and
- *     this page never re-ranks on its own. Any other order is the user's
- *     own click on a factual column, sortable both directions.
- *   - No colors implying good/bad. hhiLabel() ships display colors for the
- *     full tier; this page uses its LABEL TEXT ONLY, in plain text color.
+ *   - Default order is alphabetical FOR BOTH TIERS — the server returns it
+ *     that way and this page never re-ranks on its own. Any other order is
+ *     the user's own click on a column, sortable both directions. (This is
+ *     the reference skeleton's rule and it now governs the merged grid;
+ *     FundLens defaulted to score-descending, which was a ranking the page
+ *     applied for you.)
+ *   - No colors implying good/bad on any FACT column. hhiLabel() ships
+ *     display colors for the full tier; this page uses its LABEL TEXT ONLY.
+ *     The Score and Tier columns do carry their FundLens colors — those
+ *     columns ARE the evaluation, and they exist only where the payload
+ *     already carried the evaluation.
  *   - Money markets show "Money market" in the concentration cell, never
  *     an HHI label (F1 — "Highly Concentrated" was true math and the wrong
  *     message on the plan's safest funds).
@@ -22,12 +35,39 @@
  *     fallback (F2 — the emptiest rows must not look the freshest).
  *   - Missing data renders as an em dash, never as zero.
  *
- * Data: fetchReferenceScores() — the tier-shaped /api/scores response
- * (see src/engine/reference-shape.ts for the allowlist contract).
+ * Data, and why it is two calls for one tier:
+ *   - fetchReferenceScores() — the tier-shaped /api/scores response, for
+ *     everyone (see src/engine/reference-shape.ts for the allowlist).
+ *   - fetchScores() + fetchProfile() — FULL TIER ONLY, for the score and
+ *     tier columns, joined to the facts row by ticker.
+ * The two shapes are disjoint and both are already served: the reference
+ * branch alone joins fund_dossiers and fund_descriptions, and the full
+ * branch alone carries composite/tier/z_*. Composing them in the browser is
+ * what lets this wave keep its promise that the SERVER IS UNTOUCHED — the
+ * assignment's own verification note ("payload byte-shape unchanged, server
+ * untouched, so this is a client check") and its Scope Guard that
+ * reference-shape.ts and the fence stay closed in all three waves. A
+ * reference account never makes the second call, and could not profit from
+ * it if it did: /api/scores shapes by the account's tier regardless of what
+ * the client asks for.
  */
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { fetchReferenceScores, type ReferenceFund } from '../../api';
+import { useOutletContext } from 'react-router-dom';
+import {
+  fetchProfile,
+  fetchReferenceScores,
+  fetchScores,
+  type ReferenceFund,
+} from '../../api';
+import type { Capabilities } from '../../capabilities';
+import {
+  DEFAULT_FACTOR_WEIGHTS,
+  deriveFullTierScores,
+  scoreBg,
+  scoreColor,
+  type FullTierScore,
+} from '../../engine/full-tier-scores';
 import { computeHHI, hhiLabel } from '../../utils/hhi';
 import { theme } from '../../theme';
 import { ReferenceFundDetail } from './FundDetail';
@@ -38,6 +78,8 @@ import { MONEY_MARKET_TICKERS } from './constants';
 type ColumnKey =
   | 'ticker'
   | 'name'
+  | 'score'
+  | 'tier'
   | 'expense'
   | 'oneYear'
   | 'topHolding'
@@ -69,9 +111,12 @@ function asOfDate(f: ReferenceFund): string | null {
   return f.as_of.report_date ? f.as_of.report_date.slice(0, 10) : null;
 }
 
-const COLUMNS: Column[] = [
+const FACT_COLUMNS_LEFT: Column[] = [
   { key: 'ticker', label: 'Ticker', align: 'left', value: f => f.ticker },
   { key: 'name', label: 'Name', align: 'left', value: f => f.name },
+];
+
+const FACT_COLUMNS_RIGHT: Column[] = [
   { key: 'expense', label: 'Expense ratio', align: 'right', value: f => f.expense_ratio },
   { key: 'oneYear', label: '1Y return', align: 'right', value: f => f.returns.twelveMonth },
   { key: 'topHolding', label: 'Top holding', align: 'left', value: f => topHoldingName(f) },
@@ -79,6 +124,28 @@ const COLUMNS: Column[] = [
   { key: 'concentration', label: 'Concentration', align: 'left', value: f => concentration(f).hhi },
   { key: 'asOf', label: 'Data as-of', align: 'right', value: f => asOfDate(f) },
 ];
+
+/** The evaluative pair, built around whatever full-tier payload arrived.
+ *  Tier sorts by the composite it is a band of — the tier labels are cut
+ *  points on that one continuous value, so ordering by it orders the bands
+ *  correctly. Sorting the LABELS would order them alphabetically, which
+ *  would put "Weak" above "Top Pick" and mean nothing. */
+function evaluativeColumns(fullScores: Map<string, FullTierScore>): Column[] {
+  return [
+    {
+      key: 'score',
+      label: 'Score',
+      align: 'right',
+      value: f => fullScores.get(f.ticker)?.composite ?? null,
+    },
+    {
+      key: 'tier',
+      label: 'Tier',
+      align: 'left',
+      value: f => fullScores.get(f.ticker)?.composite ?? null,
+    },
+  ];
+}
 
 // ─── Formatting (facts, plainly) ───────────────────────────────────────────
 
@@ -103,10 +170,19 @@ function fmtReturn(r: number | null): string {
 // ─── Page ──────────────────────────────────────────────────────────────────
 
 export function ReferenceFunds() {
+  const capabilities = useOutletContext<Capabilities | null>();
+  const isFullTier = capabilities?.tier === 'full';
+
   const [funds, setFunds] = useState<ReferenceFund[]>([]);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  /** U1-B: the full tier's evaluative view, keyed by ticker. Null for a
+   *  reference account (never fetched) and null for a full-tier account
+   *  whose score call failed — in both cases the columns simply do not
+   *  exist, and the grid of facts stands on its own. */
+  const [fullScores, setFullScores] = useState<Map<string, FullTierScore> | null>(null);
 
   // Default: alphabetical by ticker, ascending — matches the server order.
   const [sortKey, setSortKey] = useState<ColumnKey>('ticker');
@@ -116,16 +192,55 @@ export function ReferenceFunds() {
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchReferenceScores().then(res => {
-      if (res.data) {
-        setFunds(res.data.funds || []);
-        setAsOf(res.data.asOf ?? null);
+    // The facts call, for every account, exactly as before.
+    const factsCall = fetchReferenceScores();
+
+    // The evaluative call, full tier only. A reference account issues no
+    // request here at all — not a request that gets filtered, none.
+    const fullCall = isFullTier
+      ? Promise.all([fetchScores(), fetchProfile()])
+      : Promise.resolve(null);
+
+    void Promise.all([factsCall, fullCall]).then(([factsRes, fullRes]) => {
+      if (factsRes.data) {
+        setFunds(factsRes.data.funds || []);
+        setAsOf(factsRes.data.asOf ?? null);
       } else {
-        setError(res.error || 'Could not load funds.');
+        setError(factsRes.error || 'Could not load funds.');
       }
+
+      if (fullRes) {
+        const [scoresRes, profileRes] = fullRes;
+        if (scoresRes.data?.scores) {
+          const p = profileRes.data?.profile;
+          // The caller's own weighting, as FundLens read it; the profile
+          // defaults stand in only if that call failed.
+          const weights = p
+            ? {
+                cost: p.weight_cost,
+                quality: p.weight_quality,
+                positioning: p.weight_positioning,
+                momentum: p.weight_momentum,
+              }
+            : DEFAULT_FACTOR_WEIGHTS;
+          setFullScores(deriveFullTierScores(scoresRes.data.scores, weights));
+        }
+      }
+
       setLoading(false);
     });
-  }, []);
+  }, [isFullTier]);
+
+  /** The rendered column set. The evaluative pair sits where FundLens read
+   *  it — straight after the fund's identity — and exists only when the
+   *  payload carrying it actually arrived. */
+  const columns = useMemo(
+    () =>
+      fullScores
+        ? [...FACT_COLUMNS_LEFT, ...evaluativeColumns(fullScores), ...FACT_COLUMNS_RIGHT]
+        : [...FACT_COLUMNS_LEFT, ...FACT_COLUMNS_RIGHT],
+    [fullScores],
+  );
 
   const handleSort = (key: ColumnKey) => {
     if (key === sortKey) {
@@ -137,7 +252,7 @@ export function ReferenceFunds() {
   };
 
   const sorted = useMemo(() => {
-    const col = COLUMNS.find(c => c.key === sortKey);
+    const col = columns.find(c => c.key === sortKey);
     if (!col) return funds;
     return [...funds].sort((a, b) => {
       const va = col.value(a);
@@ -150,7 +265,7 @@ export function ReferenceFunds() {
       }
       return String(va).localeCompare(String(vb)) * sortDir;
     });
-  }, [funds, sortKey, sortDir]);
+  }, [funds, columns, sortKey, sortDir]);
 
   if (loading) {
     return (
@@ -179,6 +294,9 @@ export function ReferenceFunds() {
     );
   }
 
+  // +1 for the leading expand-arrow cell, which has no heading
+  const totalColumns = columns.length + 1;
+
   return (
     <div style={{ padding: `${theme.spacing.lg} ${theme.spacing.md}`, fontFamily: theme.fonts.body }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, color: theme.colors.text, margin: '0 0 4px' }}>
@@ -195,7 +313,15 @@ export function ReferenceFunds() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr>
-              {COLUMNS.map(col => (
+              {/* Expand-arrow column (full skin) — no heading, not sortable */}
+              <th
+                style={{
+                  width: 16,
+                  padding: '10px 0 10px 12px',
+                  borderBottom: `1px solid ${theme.colors.border}`,
+                }}
+              />
+              {columns.map(col => (
                 <th
                   key={col.key}
                   onClick={() => handleSort(col.key)}
@@ -224,16 +350,75 @@ export function ReferenceFunds() {
               const conc = concentration(f);
               const isMM = MONEY_MARKET_TICKERS.has(f.ticker);
               const isExpanded = expandedTicker === f.ticker;
+              const full = fullScores?.get(f.ticker) ?? null;
               return (
                 <Fragment key={f.ticker}>
                   <tr
                     onClick={() => setExpandedTicker(prev => (prev === f.ticker ? null : f.ticker))}
                     style={{ cursor: 'pointer', background: isExpanded ? theme.colors.surface : undefined }}
                   >
-                    <td style={{ ...cellStyle, textAlign: 'left', fontFamily: theme.fonts.mono, color: theme.colors.text }}>
+                    {/* Expand arrow (full skin) */}
+                    <td style={{ ...cellStyle, padding: '10px 0 10px 12px', width: 16 }}>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          display: 'inline-block',
+                          fontSize: 10,
+                          color: theme.colors.textDim,
+                          transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                          transition: 'transform 0.2s',
+                        }}
+                      >
+                        ▶
+                      </span>
+                    </td>
+                    {/* Blue mono ticker (full skin) */}
+                    <td style={{
+                      ...cellStyle,
+                      textAlign: 'left',
+                      fontFamily: theme.fonts.mono,
+                      fontWeight: 700,
+                      letterSpacing: '0.02em',
+                      color: theme.colors.accentBlue,
+                    }}>
                       {f.ticker}
                     </td>
                     <td style={{ ...cellStyle, textAlign: 'left', color: theme.colors.text }}>{f.name}</td>
+
+                    {/* The evaluative pair — present only with the payload */}
+                    {full && (
+                      <>
+                        <td style={{ ...cellStyle, textAlign: 'right' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            minWidth: 34,
+                            padding: '4px 6px',
+                            borderRadius: 6,
+                            background: scoreBg(full.composite),
+                            color: scoreColor(full.composite),
+                            fontWeight: 700,
+                            fontFamily: theme.fonts.mono,
+                            fontSize: 13,
+                            textAlign: 'center',
+                          }}>{full.composite}</span>
+                        </td>
+                        <td style={{ ...cellStyle, textAlign: 'left' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '3px 8px',
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            letterSpacing: '0.03em',
+                            color: full.tierColor,
+                            background: `${full.tierColor}18`,
+                            border: `1px solid ${full.tierColor}40`,
+                            whiteSpace: 'nowrap',
+                          }}>{full.tier}</span>
+                        </td>
+                      </>
+                    )}
+
                     {/* B4: dollars live in the native title tooltip */}
                     <td style={{ ...cellStyle, textAlign: 'right' }} title={expenseTooltip(f.expense_ratio)}>
                       {fmtExpense(f.expense_ratio)}
@@ -252,8 +437,8 @@ export function ReferenceFunds() {
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={COLUMNS.length} style={{ padding: 0, borderBottom: `1px solid ${theme.colors.border}` }}>
-                        <ReferenceFundDetail fund={f} />
+                      <td colSpan={totalColumns} style={{ padding: 0, borderBottom: `1px solid ${theme.colors.border}` }}>
+                        <ReferenceFundDetail fund={f} fullScore={full} />
                       </td>
                     </tr>
                   )}
