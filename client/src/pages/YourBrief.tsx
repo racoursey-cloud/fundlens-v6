@@ -4,7 +4,7 @@
  * Primary landing page — the product. Layout (top to bottom):
  *   1. Header row with title + Generate / Generate & Email buttons
  *   2. Allocation donut card (full-width, with fund highlights table + risk slider)
- *   3. Brief narrative (full-width, 4 W-structure sections)
+ *   3. Brief narrative (full-width, the personal core only — see U1-C below)
  *   4. Brief history rows (natural table at bottom)
  *
  * Session 19 redesign — donut on top, history at bottom as rows, full-width.
@@ -17,6 +17,17 @@
  * what was always its own: the allocation donut it hands to the panel as
  * the centre, the fund selector chips that choose which fund the panels
  * describe, and the risk dial below them.
+ *
+ * U1-C: the narrative trims to the personal core. Only "Where the Numbers
+ * Point" — the recommendation and the reason for it — renders here. The
+ * market context the brief also writes (Macro Environment, Thematic Drivers,
+ * Asset Class & Sector Outlook, Portfolio Positioning) is Research's single
+ * subject, and this page stops repeating it.
+ *
+ * Display-level only, and the boundary matters: the brief is still GENERATED
+ * whole (the generation prompts are untouched in this wave), the archive
+ * still holds every word, and the emailed brief is unchanged. This page just
+ * stops printing the half that isn't the reader's own.
  */
 
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
@@ -126,6 +137,16 @@ function nearestRiskLabel(value: number): string {
   return RISK_ANCHORS.find(a => a.level === nearest)?.label ?? 'Moderate';
 }
 
+/**
+ * U1-C — brief history shows the last five, newest first.
+ *
+ * The cap is display, not deletion: /api/briefs still returns the whole
+ * history, this page still holds it, generation still polls against it, and
+ * nothing is removed from the archive. Only the table is shortened — which
+ * is why its heading keeps saying how many exist.
+ */
+const HISTORY_LIMIT = 5;
+
 // ─── Stale Brief Detection (Option B) ──────────────────────────────────────
 
 function extractBriefRisk(brief: Brief | null): number | null {
@@ -169,40 +190,71 @@ const SECTION_ACCENTS = [
   theme.colors.accentBlue,   // Legacy: Where We Stand
 ];
 
-function parseBriefSections(md: string): { preamble: string; sections: BriefSection[] } {
+/**
+ * U1-C — the personal core: the one section that is the reader's own.
+ *
+ * The editorial policy puts the recommendation and the plain-English reason
+ * for each pick in section 1 ("a reader who stops here should know exactly
+ * what to do and roughly why"). It is also the only section with no twin on
+ * Research: the other four carry the same four topics — Macro Environment,
+ * Thematic Drivers, Asset Class & Sector Outlook, Portfolio Positioning — as
+ * the macro narrative Research already prints in full.
+ *
+ * One title covers both brief eras: the modern five-section shape and the
+ * older W-structure open with the same words.
+ */
+const PERSONAL_CORE_TITLES = ['Where the Numbers Point'];
+
+function isPersonalCore(title: string): boolean {
+  return PERSONAL_CORE_TITLES.some(
+    (t) => title.toLowerCase().includes(t.toLowerCase())
+  );
+}
+
+function parseBriefSections(md: string): { sections: BriefSection[] } {
   const lines = md.split('\n');
-  let preamble = '';
   const sections: BriefSection[] = [];
   let currentTitle = '';
   let currentLines: string[] = [];
 
+  // Briefs written July 6 – August 2, 2026 head their five sections with a
+  // single '#'; every other brief uses '##' and spends its one '#' on the
+  // document title. So '#' opens a section only when the brief carries no
+  // '##' at all, which leaves every '##' brief parsing exactly as before.
+  // Without this the trim would be a no-op on the '#' briefs — three of the
+  // five now in history — and they would still print the market context.
+  const usesH1Sections = !lines.some((l) => /^## /.test(l));
+  const headerPattern = usesH1Sections ? /^# (.+)/ : /^## (.+)/;
+
+  // Text above the first header is the document title line (sometimes a date
+  // subtitle and a rule) on every brief in the archive. The card header
+  // already states the title and the timestamp, so the trim drops it with the
+  // rest; a brief with no headers at all never reaches here — BriefBody
+  // renders those whole.
   const flushSection = () => {
-    if (currentTitle) {
-      const canonicalIndex = SECTION_TITLES.findIndex(
-        (t) => currentTitle.toLowerCase().includes(t.toLowerCase())
-      );
-      sections.push({
-        title: currentTitle,
-        body: currentLines.join('\n').trim(),
-        index: canonicalIndex >= 0 ? canonicalIndex + 1 : sections.length + 1,
-      });
-    } else if (currentLines.length > 0) {
-      preamble = currentLines.join('\n').trim();
-    }
+    if (!currentTitle) return;
+    const canonicalIndex = SECTION_TITLES.findIndex(
+      (t) => currentTitle.toLowerCase().includes(t.toLowerCase())
+    );
+    sections.push({
+      title: currentTitle,
+      body: currentLines.join('\n').trim(),
+      index: canonicalIndex >= 0 ? canonicalIndex + 1 : sections.length + 1,
+    });
   };
 
   for (const line of lines) {
-    const h2Match = line.match(/^## (.+)/);
-    if (h2Match) {
+    const headerMatch = line.match(headerPattern);
+    if (headerMatch) {
       flushSection();
-      currentTitle = h2Match[1]?.trim() ?? '';
+      currentTitle = headerMatch[1]?.trim() ?? '';
       currentLines = [];
     } else {
       currentLines.push(line);
     }
   }
   flushSection();
-  return { preamble, sections };
+  return { sections };
 }
 
 function renderMarkdown(md: string): string {
@@ -406,18 +458,19 @@ function BriefBody({ contentMd, liveAllocations }: {
   contentMd: string;
   liveAllocations?: LiveAllocation[];
 }) {
-  const { preamble, sections } = parseBriefSections(contentMd);
-  if (sections.length === 0) {
+  const { sections } = parseBriefSections(contentMd);
+  const core = sections.filter((s) => isPersonalCore(s.title));
+
+  // A brief whose personal core cannot be named — the April 2026 prototypes,
+  // which predate the section title, or any shape that arrives later —
+  // renders whole rather than blank. Printing nothing where the archive holds
+  // something would be this page lying about what it has.
+  if (core.length === 0) {
     return <div dangerouslySetInnerHTML={{ __html: renderMarkdown(contentMd) }} />;
   }
   return (
     <div>
-      {preamble && (
-        <div style={{ marginBottom: '20px' }}>
-          <div dangerouslySetInnerHTML={{ __html: renderMarkdown(preamble) }} />
-        </div>
-      )}
-      {sections.map((section, i) => {
+      {core.map((section, i) => {
         const isAllocSection = section.title.toLowerCase().includes('where the numbers point');
         if (isAllocSection && liveAllocations && liveAllocations.length > 0) {
           const strippedBody = stripAllocationTable(section.body);
@@ -753,6 +806,17 @@ export function YourBrief() {
       hour: 'numeric', minute: '2-digit',
     });
   };
+
+  // ── Brief history (U1-C: the last five) ───────────────────────────────
+  // `briefs` stays whole — the poll baseline and the auto-selected newest
+  // read from it. Only the table is capped, and its heading says "5 of N"
+  // once there are more than five, so a shortened list never reads as a
+  // shortened archive.
+
+  const visibleBriefs = briefs.slice(0, HISTORY_LIMIT);
+  const historyCount = briefs.length > HISTORY_LIMIT
+    ? `${HISTORY_LIMIT} of ${briefs.length}`
+    : `${briefs.length}`;
 
   // ── Loading state ─────────────────────────────────────────────────────
 
@@ -1091,7 +1155,7 @@ export function YourBrief() {
             fontSize: '12px', fontWeight: 600, color: theme.colors.textDim,
             textTransform: 'uppercase', letterSpacing: '0.05em',
           }}>
-            Brief History ({briefs.length})
+            Brief History ({historyCount})
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -1106,7 +1170,7 @@ export function YourBrief() {
               </tr>
             </thead>
             <tbody>
-              {briefs.map((b, i) => {
+              {visibleBriefs.map((b, i) => {
                 const isActive = selectedBrief?.id === b.id;
                 return (
                   <tr
@@ -1115,7 +1179,7 @@ export function YourBrief() {
                     style={{
                       cursor: 'pointer',
                       background: isActive ? theme.colors.surfaceHover : 'transparent',
-                      borderBottom: i < briefs.length - 1 ? `1px solid ${theme.colors.border}` : 'none',
+                      borderBottom: i < visibleBriefs.length - 1 ? `1px solid ${theme.colors.border}` : 'none',
                       transition: 'background 0.15s ease',
                     }}
                     onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = theme.colors.surfaceHover; }}
