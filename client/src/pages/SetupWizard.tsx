@@ -1,13 +1,26 @@
 /**
  * FundLens v6 — Setup Wizard
  *
- * Three-step onboarding flow for new users:
- *   1. Select funds — pick which 401(k) funds to track
- *   2. Risk tolerance — conservative / moderate / aggressive
- *   3. Factor weights — adjust the 4 scoring factors (or keep defaults)
+ * Two-step onboarding flow for new users:
+ *   1. Risk tolerance — conservative / moderate / aggressive
+ *   2. Factor weights — adjust the 4 scoring factors (or keep defaults)
  *
  * On completion, calls POST /api/profile/setup and redirects to
  * the main Portfolio view.
+ *
+ * U1-B (Robert's ruling, August 14, 2026, part 4): the fund-selection step
+ * is retired. It asked new users which funds FundLens should "score and
+ * track", promised "You can change this later", and wrote the answer to
+ * selected_fund_ids — a column nothing has ever read. The app scored and
+ * allocated across every plan fund regardless, so the step was a placebo
+ * control, and the evidence for that is on the record: the admin profile
+ * excluded CEMEX at setup and the July 29 allocation contains CEMEX anyway.
+ *
+ * The WRITE stays, made honest. POST /api/profile/setup still requires
+ * selectedFundIds and the server is untouched in this wave, so the wizard
+ * sends every active fund's id — which is the truth of what the app does
+ * with the plan menu. No promise is made to the user about it, because
+ * there is no longer a question asked.
  *
  * Session 8 deliverable. Destination: client/src/pages/SetupWizard.tsx
  * References: Master Reference §4 (Scoring Model), §9 (UI).
@@ -20,7 +33,10 @@ import { theme } from '../theme';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-type Step = 1 | 2 | 3;
+type Step = 1 | 2;
+
+/** The last step's number — the wizard completes here rather than advancing */
+const LAST_STEP: Step = 2;
 
 interface Weights {
   costEfficiency: number;
@@ -66,32 +82,22 @@ const RISK_DESCRIPTIONS: Record<number, string> = {
 export function SetupWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>(1);
+  // The plan menu is still fetched, but only to satisfy the setup route's
+  // required selectedFundIds — never to ask the user a question about it.
   const [funds, setFunds] = useState<Fund[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [risk, setRisk] = useState<number>(5);
   const [weights, setWeights] = useState<Weights>({ ...DEFAULT_WEIGHTS });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  // Load available funds
+  // Load the plan menu (for the setup route's required id list, below)
   useEffect(() => {
     fetchFunds().then(({ data, error: err }) => {
-      if (data?.funds) {
-        setFunds(data.funds);
-        // Select all funds by default
-        setSelectedIds(data.funds.map(f => f.id));
-      }
+      if (data?.funds) setFunds(data.funds);
       if (err) setError(err);
       setLoading(false);
     });
-  }, []);
-
-  // Toggle fund selection
-  const toggleFund = useCallback((id: string) => {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
   }, []);
 
   // Factor weight slider handler with proportional redistribution
@@ -131,8 +137,12 @@ export function SetupWizard() {
 
   // Submit wizard
   const handleComplete = async () => {
-    if (selectedIds.length === 0) {
-      setError('Select at least one fund');
+    // The setup route requires selectedFundIds and the server is untouched
+    // this wave, so we send the whole plan menu — what the app actually
+    // scores. If the menu never loaded, say so rather than writing an empty
+    // list the route would happily accept.
+    if (funds.length === 0) {
+      setError("Couldn't load the plan's funds. Reload the page and try again.");
       return;
     }
 
@@ -142,7 +152,7 @@ export function SetupWizard() {
     const { error: err } = await completeSetup({
       weights,
       riskTolerance: risk,
-      selectedFundIds: selectedIds,
+      selectedFundIds: funds.map(f => f.id),
     });
 
     if (err) {
@@ -156,7 +166,7 @@ export function SetupWizard() {
   if (loading) {
     return (
       <WizardShell>
-        <p style={{ color: theme.colors.textMuted }}>Loading funds...</p>
+        <p style={{ color: theme.colors.textMuted }}>Loading...</p>
       </WizardShell>
     );
   }
@@ -169,7 +179,7 @@ export function SetupWizard() {
         gap: '8px',
         marginBottom: '32px',
       }}>
-        {[1, 2, 3].map(s => (
+        {[1, 2].map(s => (
           <div key={s} style={{
             flex: 1,
             height: '4px',
@@ -180,115 +190,8 @@ export function SetupWizard() {
         ))}
       </div>
 
-      {/* Step 1: Fund Selection */}
+      {/* Step 1: Risk Tolerance */}
       {step === 1 && (
-        <div>
-          <h2 style={headingStyle}>Select your funds</h2>
-          <p style={subStyle}>
-            Choose which 401(k) funds you want FundLens to score and track.
-            You can change this later.
-          </p>
-
-          <div style={{
-            display: 'flex',
-            gap: '8px',
-            marginBottom: '16px',
-          }}>
-            <button
-              onClick={() => setSelectedIds(funds.map(f => f.id))}
-              style={chipButton}
-            >
-              Select all
-            </button>
-            <button
-              onClick={() => setSelectedIds([])}
-              style={chipButton}
-            >
-              Clear
-            </button>
-          </div>
-
-          <div style={{
-            maxHeight: '360px',
-            overflowY: 'auto',
-            border: `1px solid ${theme.colors.border}`,
-            borderRadius: theme.radii.md,
-          }}>
-            {funds.map(fund => {
-              const selected = selectedIds.includes(fund.id);
-              return (
-                <button
-                  key={fund.id}
-                  onClick={() => toggleFund(fund.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: selected ? `${theme.colors.accentBlue}12` : 'transparent',
-                    border: 'none',
-                    borderBottom: `1px solid ${theme.colors.border}`,
-                    color: theme.colors.text,
-                    fontSize: '14px',
-                    fontFamily: theme.fonts.body,
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                  }}
-                >
-                  <div style={{
-                    width: '20px',
-                    height: '20px',
-                    borderRadius: '4px',
-                    border: `2px solid ${selected ? theme.colors.accentBlue : theme.colors.border}`,
-                    background: selected ? theme.colors.accentBlue : 'transparent',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '12px',
-                    color: '#fff',
-                    flexShrink: 0,
-                  }}>
-                    {selected && '✓'}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 500 }}>{fund.ticker}</div>
-                    <div style={{
-                      fontSize: '12px',
-                      color: theme.colors.textMuted,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {fund.name}
-                    </div>
-                  </div>
-                  {fund.expense_ratio !== null && (
-                    <span style={{
-                      fontSize: '12px',
-                      color: theme.colors.textDim,
-                      fontFamily: theme.fonts.mono,
-                    }}>
-                      {(fund.expense_ratio * 100).toFixed(2)}%
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          <p style={{
-            fontSize: '13px',
-            color: theme.colors.textMuted,
-            marginTop: '12px',
-          }}>
-            {selectedIds.length} of {funds.length} funds selected
-          </p>
-        </div>
-      )}
-
-      {/* Step 2: Risk Tolerance */}
-      {step === 2 && (
         <div>
           <h2 style={headingStyle}>Set your risk tolerance</h2>
           <p style={subStyle}>
@@ -382,8 +285,8 @@ export function SetupWizard() {
         </div>
       )}
 
-      {/* Step 3: Factor Weights */}
-      {step === 3 && (
+      {/* Step 2: Factor Weights */}
+      {step === 2 && (
         <div>
           <h2 style={headingStyle}>Adjust factor weights</h2>
           <p style={subStyle}>
@@ -483,14 +386,10 @@ export function SetupWizard() {
           <div />
         )}
 
-        {step < 3 ? (
+        {step < LAST_STEP ? (
           <button
             onClick={() => setStep((step + 1) as Step)}
-            disabled={step === 1 && selectedIds.length === 0}
-            style={{
-              ...primaryButton,
-              opacity: (step === 1 && selectedIds.length === 0) ? 0.5 : 1,
-            }}
+            style={primaryButton}
           >
             Continue
           </button>
