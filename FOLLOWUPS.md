@@ -38,6 +38,6 @@ in dedicated housekeeping sessions at boundaries Robert picks, never inside buil
 | 2026-08-13 | /api/profile fetched 3–4× per page load, both tiers (wave-A verification); dedupe candidate | — |
 | 2026-08-14 | DonutChart.tsx docblock lists FundLens.tsx among its consumers — that page retired in U1-B; comment-only (U1-B) | — |
 | 2026-08-14 | Research.tsx carries three comments saying content "moved to FundLens tab" — no such tab since U1-B; comment-only (U1-B) | — |
-| 2026-08-14 | Settings.tsx docblock describes its Fund List section as "enable/disable"; the section has only ever rendered a read-only list — stale since the v5.1 port, comment-only (U1-B) | — |
+| 2026-08-14 | Settings.tsx docblock describes its Fund List section as "enable/disable"; the section has only ever rendered a read-only list — stale since the v5.1 port, comment-only (U1-B) | 2026-08-14 — section retired outright by Robert's ruling part 2 (U1-B F2); the stale line went with it |
 | 2026-08-14 | client/src/components/FundDetail.tsx has no importers and had none before this wave (FundLens never imported it either) — dead-code removal candidate (U1-B) | — |
 | 2026-08-14 | pages/reference/constants.ts palette note cites two full-tier SECTOR_COLORS copies it was taken from; one retired with FundLens.tsx and the other sits in the unreferenced components/FundDetail.tsx, so the note and the dedupe it defers are both stale (U1-B) | — |
