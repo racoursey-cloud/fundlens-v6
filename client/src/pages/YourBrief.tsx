@@ -137,6 +137,16 @@ function nearestRiskLabel(value: number): string {
   return RISK_ANCHORS.find(a => a.level === nearest)?.label ?? 'Moderate';
 }
 
+/**
+ * U1-C — brief history shows the last five, newest first.
+ *
+ * The cap is display, not deletion: /api/briefs still returns the whole
+ * history, this page still holds it, generation still polls against it, and
+ * nothing is removed from the archive. Only the table is shortened — which
+ * is why its heading keeps saying how many exist.
+ */
+const HISTORY_LIMIT = 5;
+
 // ─── Stale Brief Detection (Option B) ──────────────────────────────────────
 
 function extractBriefRisk(brief: Brief | null): number | null {
@@ -797,6 +807,17 @@ export function YourBrief() {
     });
   };
 
+  // ── Brief history (U1-C: the last five) ───────────────────────────────
+  // `briefs` stays whole — the poll baseline and the auto-selected newest
+  // read from it. Only the table is capped, and its heading says "5 of N"
+  // once there are more than five, so a shortened list never reads as a
+  // shortened archive.
+
+  const visibleBriefs = briefs.slice(0, HISTORY_LIMIT);
+  const historyCount = briefs.length > HISTORY_LIMIT
+    ? `${HISTORY_LIMIT} of ${briefs.length}`
+    : `${briefs.length}`;
+
   // ── Loading state ─────────────────────────────────────────────────────
 
   if (loadingBriefs && loadingScores) {
@@ -1134,7 +1155,7 @@ export function YourBrief() {
             fontSize: '12px', fontWeight: 600, color: theme.colors.textDim,
             textTransform: 'uppercase', letterSpacing: '0.05em',
           }}>
-            Brief History ({briefs.length})
+            Brief History ({historyCount})
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -1149,7 +1170,7 @@ export function YourBrief() {
               </tr>
             </thead>
             <tbody>
-              {briefs.map((b, i) => {
+              {visibleBriefs.map((b, i) => {
                 const isActive = selectedBrief?.id === b.id;
                 return (
                   <tr
@@ -1158,7 +1179,7 @@ export function YourBrief() {
                     style={{
                       cursor: 'pointer',
                       background: isActive ? theme.colors.surfaceHover : 'transparent',
-                      borderBottom: i < briefs.length - 1 ? `1px solid ${theme.colors.border}` : 'none',
+                      borderBottom: i < visibleBriefs.length - 1 ? `1px solid ${theme.colors.border}` : 'none',
                       transition: 'background 0.15s ease',
                     }}
                     onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = theme.colors.surfaceHover; }}
