@@ -21,6 +21,15 @@
  *   referenceTag     — the "Reference" wordmark tag
  *   disclaimerFooter — the B3 educational/not-advice footer
  *
+ * U1-B: the capability set is also handed to the page tree through the
+ * Outlet context, so a shared-base page can light up its own full-tier
+ * modules from the same derived source the nav uses — one place decides
+ * entitlement, shell chrome and page content alike. The Funds grid reads it
+ * (useOutletContext<Capabilities>) to decide whether to ASK for the
+ * full-tier payload at all; what it RENDERS is still gated on the payload
+ * actually carrying those fields. Neither gate is the fence: the fence is
+ * reference-shape.ts and requireFullTier, untouched in every U1 wave.
+ *
  * Carried forward verbatim from AppShell, because each line is a ruling:
  *   - UI Honesty item 1: the header's Refresh button stands down on the
  *     Pipeline tab, which has its own trigger.
@@ -499,7 +508,7 @@ export function Shell({ capabilities }: { capabilities: Capabilities }) {
               }
         }
       >
-        <Outlet />
+        <Outlet context={capabilities} />
       </main>
 
       {/* The wrapper keeps the last line of the disclaimer clear of the mobile
