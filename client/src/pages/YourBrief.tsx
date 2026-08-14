@@ -9,6 +9,14 @@
  *
  * Session 19 redesign — donut on top, history at bottom as rows, full-width.
  * References: Spec §6.1, §7.1–§7.9, editorial-policy.md
+ *
+ * U1-B: the allocation card's three-panel block (sector exposure left,
+ * donut centre, holdings right, with the sector filter) now comes from
+ * components/FundExposurePanel.tsx — the same component the fund detail
+ * embeds per-fund, so the two can no longer drift. What this page keeps is
+ * what was always its own: the allocation donut it hands to the panel as
+ * the centre, the fund selector chips that choose which fund the panels
+ * describe, and the risk dial below them.
  */
 
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
@@ -26,6 +34,7 @@ import {
 } from '../api';
 import { theme } from '../theme';
 import { DonutChart, type DonutSlice } from '../components/DonutChart';
+import { FundExposurePanel } from '../components/FundExposurePanel';
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
 // ─── Shared Utilities ─────────────────────────────────────────────────────
@@ -902,275 +911,39 @@ export function YourBrief() {
 
           <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-            {/* ── Three-panel fund explorer (desktop) / stacked (mobile) ── */}
+            {/* ── Fund exposure panel (U1-B: the extracted shared component) ── */}
             {fundSlices.length > 0 && (
-              <div style={isMobile ? {
-                display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center',
-              } : {
-                display: 'grid',
-                gridTemplateColumns: '1fr auto 1fr',
-                gap: 20,
-                alignItems: 'start',
-                minHeight: 260,
-              }}>
-
-                {/* LEFT PANEL — Sector Exposure */}
-                {!isMobile && (
-                  <div style={{
-                    display: 'flex', flexDirection: 'column', gap: 8,
-                    opacity: selectedFundData ? 1 : 0.3,
-                    transition: 'opacity 0.2s',
-                    minWidth: 0,
-                  }}>
+              <FundExposurePanel
+                sectors={selectedFundData?.sectors ?? []}
+                holdings={selectedFundData?.holdings ?? []}
+                selectedSector={selectedSectorBrief}
+                onSelectSector={setSelectedSectorBrief}
+                isMobile={isMobile}
+                active={!!selectedFundData}
+                center={
+                  <>
+                    <DonutChart
+                      slices={fundSlices}
+                      size={200}
+                      title="Recommended Allocation"
+                      onSliceClick={(slice) => handleFundSelect(slice.id)}
+                    />
+                    {/* Selected fund label below donut */}
                     {selectedFundTicker && (
-                      <div style={{
-                        fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
-                        textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4,
-                      }}>Sector Exposure</div>
-                    )}
-                    {selectedFundData && selectedFundData.sectors.length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        {selectedFundData.sectors.slice(0, 8).map(s => {
-                          const isActive = selectedSectorBrief === s.sector;
-                          const isDimmed = selectedSectorBrief && !isActive;
-                          return (
-                            <div key={s.sector}
-                              onClick={() => setSelectedSectorBrief(prev => prev === s.sector ? null : s.sector)}
-                              style={{
-                                display: 'grid', gridTemplateColumns: '90px 1fr 40px',
-                                alignItems: 'center', gap: 6,
-                                cursor: 'pointer',
-                                opacity: isDimmed ? 0.35 : 1,
-                                transition: 'opacity 0.15s',
-                                borderRadius: 3,
-                                background: isActive ? `${s.color}15` : 'transparent',
-                                padding: '1px 4px',
-                                margin: '0 -4px',
-                              }}>
-                              <span style={{
-                                fontSize: 11, color: isActive ? theme.colors.text : theme.colors.textMuted,
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                fontWeight: isActive ? 600 : 400,
-                              }}>{s.sector}</span>
-                              <div style={{ height: 6, borderRadius: 3, background: theme.colors.surfaceAlt, overflow: 'hidden' }}>
-                                <div style={{
-                                  height: '100%', borderRadius: 3, background: s.color,
-                                  width: `${Math.min(100, (s.weight / Math.max(...selectedFundData.sectors.map(x => x.weight))) * 100)}%`,
-                                }} />
-                              </div>
-                              <span style={{
-                                fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
-                                color: theme.colors.text, textAlign: 'right',
-                              }}>{s.weight.toFixed(1)}%</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : selectedFundTicker ? (
-                      <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
-                        No sector data
-                      </span>
-                    ) : null}
-                  </div>
-                )}
-
-                {/* CENTER — Donut */}
-                <div style={{
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-                  flexShrink: 0,
-                }}>
-                  <DonutChart
-                    slices={fundSlices}
-                    size={200}
-                    title="Recommended Allocation"
-                    onSliceClick={(slice) => handleFundSelect(slice.id)}
-                  />
-                  {/* Selected fund label below donut */}
-                  {selectedFundTicker && (
-                    <div style={{ textAlign: 'center', lineHeight: 1.3 }}>
-                      <div style={{
-                        fontSize: 14, fontWeight: 700, color: theme.colors.text,
-                        fontFamily: theme.fonts.mono,
-                      }}>{selectedFundTicker}</div>
-                      <div style={{
-                        fontSize: 11, color: theme.colors.textMuted, maxWidth: 180,
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      }}>{selectedFundName}</div>
-                    </div>
-                  )}
-                </div>
-
-                {/* RIGHT PANEL — Top Holdings (sector-filterable) */}
-                {!isMobile && (
-                  <div style={{
-                    display: 'flex', flexDirection: 'column', gap: 8,
-                    opacity: selectedFundData ? 1 : 0.3,
-                    transition: 'opacity 0.2s',
-                    minWidth: 0,
-                  }}>
-                    {selectedFundTicker && (() => {
-                      // A2.2 Task 1: a selected sector shows ALL of its holdings
-                      // in a scrollable window (FundLens pattern — maxHeight 300).
-                      // Default "Top Holdings" view unchanged (top 8, no scroll).
-                      const filtered = selectedSectorBrief
-                        ? selectedFundData?.holdings.filter(h => h.sector === selectedSectorBrief) ?? []
-                        : selectedFundData?.holdings.slice(0, 8) ?? [];
-                      return (
-                        <>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                            <div style={{
-                              fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
-                              textTransform: 'uppercase', letterSpacing: '0.05em',
-                            }}>{selectedSectorBrief ? `${selectedSectorBrief} Holdings` : 'Top Holdings'}</div>
-                            {selectedSectorBrief && (
-                              <button onClick={() => setSelectedSectorBrief(null)} style={{
-                                background: 'none', border: 'none', color: theme.colors.textDim,
-                                cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1,
-                              }}>&times;</button>
-                            )}
-                          </div>
-                          {filtered.length > 0 ? (
-                            <div style={{
-                              display: 'flex', flexDirection: 'column', gap: 2,
-                              ...(selectedSectorBrief ? { maxHeight: 300, overflowY: 'auto' as const } : {}),
-                            }}>
-                              {filtered.map((h, idx) => (
-                                <div key={idx} style={{
-                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                  padding: '2px 0', gap: 8,
-                                }}>
-                                  <span style={{
-                                    fontSize: 11, color: theme.colors.text,
-                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                    flex: 1,
-                                  }}>{h.name}</span>
-                                  {h.ticker && (
-                                    <span style={{
-                                      fontSize: 10, fontFamily: theme.fonts.mono,
-                                      color: theme.colors.textDim, flexShrink: 0,
-                                    }}>{h.ticker}</span>
-                                  )}
-                                  <span style={{
-                                    fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
-                                    color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36,
-                                    textAlign: 'right',
-                                  }}>{h.weight.toFixed(1)}%</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : selectedSectorBrief ? (
-                            <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
-                              No {selectedSectorBrief} holdings
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
-                              No holdings data
-                            </span>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── Mobile: stacked detail card (appears below donut on tap) ── */}
-            {isMobile && selectedFundTicker && selectedFundData && (
-              <div style={{
-                background: theme.colors.surfaceAlt,
-                border: `1px solid ${theme.colors.border}`,
-                borderRadius: theme.radii.md,
-                padding: 16, display: 'flex', flexDirection: 'column', gap: 16,
-                width: '100%',
-              }}>
-                {/* Sector exposure (clickable for filtering) */}
-                {selectedFundData.sectors.length > 0 && (
-                  <div>
-                    <div style={{
-                      fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
-                      textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
-                    }}>Sector Exposure</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {selectedFundData.sectors.slice(0, 6).map(s => {
-                        const isActive = selectedSectorBrief === s.sector;
-                        const isDimmed = selectedSectorBrief && !isActive;
-                        return (
-                          <div key={s.sector}
-                            onClick={() => setSelectedSectorBrief(prev => prev === s.sector ? null : s.sector)}
-                            style={{
-                              display: 'grid', gridTemplateColumns: '80px 1fr 36px',
-                              alignItems: 'center', gap: 6,
-                              cursor: 'pointer',
-                              opacity: isDimmed ? 0.35 : 1,
-                              transition: 'opacity 0.15s',
-                              borderRadius: 3,
-                              background: isActive ? `${s.color}15` : 'transparent',
-                              padding: '1px 4px',
-                              margin: '0 -4px',
-                            }}>
-                            <span style={{
-                              fontSize: 11,
-                              color: isActive ? theme.colors.text : theme.colors.textMuted,
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                              fontWeight: isActive ? 600 : 400,
-                            }}>{s.sector}</span>
-                            <div style={{ height: 6, borderRadius: 3, background: theme.colors.surface, overflow: 'hidden' }}>
-                              <div style={{
-                                height: '100%', borderRadius: 3, background: s.color,
-                                width: `${Math.min(100, (s.weight / Math.max(...selectedFundData.sectors.map(x => x.weight))) * 100)}%`,
-                              }} />
-                            </div>
-                            <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.text, textAlign: 'right' }}>{s.weight.toFixed(1)}%</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-                {/* Top holdings (sector-filterable) */}
-                {(() => {
-                  // A2.2 Task 1: same scrollable full-sector view as desktop
-                  // (FundLens pattern). Default view unchanged (top 6, no scroll).
-                  const filtered = selectedSectorBrief
-                    ? selectedFundData.holdings.filter(h => h.sector === selectedSectorBrief)
-                    : selectedFundData.holdings.slice(0, 6);
-                  return filtered.length > 0 ? (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <div style={{ textAlign: 'center', lineHeight: 1.3 }}>
                         <div style={{
-                          fontSize: 11, fontWeight: 600, color: theme.colors.textDim,
-                          textTransform: 'uppercase', letterSpacing: '0.05em',
-                        }}>{selectedSectorBrief ? `${selectedSectorBrief} Holdings` : 'Top Holdings'}</div>
-                        {selectedSectorBrief && (
-                          <button onClick={() => setSelectedSectorBrief(null)} style={{
-                            background: 'none', border: 'none', color: theme.colors.textDim,
-                            cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1,
-                          }}>&times;</button>
-                        )}
+                          fontSize: 14, fontWeight: 700, color: theme.colors.text,
+                          fontFamily: theme.fonts.mono,
+                        }}>{selectedFundTicker}</div>
+                        <div style={{
+                          fontSize: 11, color: theme.colors.textMuted, maxWidth: 180,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>{selectedFundName}</div>
                       </div>
-                      <div style={{
-                        display: 'flex', flexDirection: 'column', gap: 2,
-                        ...(selectedSectorBrief ? { maxHeight: 300, overflowY: 'auto' as const } : {}),
-                      }}>
-                        {filtered.map((h, idx) => (
-                          <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', gap: 8 }}>
-                            <span style={{ fontSize: 11, color: theme.colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{h.name}</span>
-                            {h.ticker && <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, color: theme.colors.textDim, flexShrink: 0 }}>{h.ticker}</span>}
-                            <span style={{ fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600, color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36, textAlign: 'right' }}>{h.weight.toFixed(1)}%</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : selectedSectorBrief ? (
-                    <div>
-                      <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
-                        No {selectedSectorBrief} holdings
-                      </span>
-                    </div>
-                  ) : selectedFundData.holdings.length > 0 ? null : null;
-                })()}
-              </div>
+                    )}
+                  </>
+                }
+              />
             )}
 
             {/* ── Fund selector row (clickable fund chips) ── */}
