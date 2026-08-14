@@ -16,6 +16,18 @@
  *                            the sweep drives FETCHING — no release calendar
  *                            is ever hard-coded.
  *
+ * A1-F1 p2 (ruled August 14, 2026) changed two things about that check, and
+ * neither is what it notices — only when it writes:
+ *   · GRACE IS PER-SERIES for daily rows. The Cleveland nowcast pair carries
+ *     3 business days against a measured steady state; every other daily
+ *     series, the breakevens above all, keeps 2.
+ *   · REPEATS ARE TRANSITION-AWARE. A first miss alerts. A state that got
+ *     worse alerts, saying by how much. A chronic state no worse than it was
+ *     at the previous check goes quiet until it worsens or resolves, and
+ *     recovery gets its own line. The previous state is RECONSTRUCTED from
+ *     the observations we already hold, never stored — so it survives
+ *     restarts and needs no column.
+ *
  * Both take the A0 shape exactly (charter §6·1): in-memory overlap flag +
  * DB check for a running row, a regime_ingest_runs row, ~60s heartbeats
  * via the shared startRunHeartbeat, closed in a finally block. Liveness is
@@ -91,6 +103,27 @@ const OBS_WINDOW_DAYS_BY_CADENCE: Record<RegimeSeriesRow['cadence'], number> = {
 const DAILY_BREACH_BUSINESS_DAYS = 2;
 const WEEKLY_BREACH_CALENDAR_DAYS = 9;
 const MONTHLY_BREACH_CALENDAR_DAYS = 36;
+
+/** A1-F1 p2 — per-series daily grace, in business days (ruled August 14, 2026).
+ *
+ *  The Cleveland artifact runs a measured two business days behind the
+ *  publisher's own page, and the 09:00 check reads the PREVIOUS evening's
+ *  sweep, so the steady-state gap at check time is three — every business
+ *  day, with nothing broken. Measured across the archive: breaches on nine
+ *  of eleven days, silent only on the weekends where the arithmetic dips.
+ *
+ *  Three is the steady state, not slack. One genuine extra day of slip
+ *  shows as four and still alerts the same morning.
+ *
+ *  KEYED TO THE TWO CLEVELAND ROWS ONLY, deliberately. The breakevens
+ *  (T10YIE, T5YIFR) keep grace 2: they are the rail daily inflation
+ *  timeliness falls back to when these nowcasts go quiet
+ *  (docs/regime/FALLBACK_POSTURE.md), and dulling the alarm on the backup
+ *  in order to quiet the noisy one would be a self-inflicted wound. */
+const DAILY_GRACE_BY_SERIES: Record<string, number> = {
+  CLEV_CPI_NOWCAST: 3,
+  CLEV_PCE_NOWCAST: 3,
+};
 
 // ─── Small date helpers ─────────────────────────────────────────────────────
 
@@ -512,26 +545,116 @@ interface ExpectationBreach {
   cadence: string;
   newestVintage: string | null;
   expectation: string;
+  /** How far past grace it has run now, in the unit its grace uses */
+  gap: number;
+  /** The same measurement taken at the previous check, reconstructed from
+   *  the observations we already hold; null when it was not breaching then
+   *  (or when there is no previous check to compare against). */
+  previousGap: number | null;
+  /** Why this one is in the email: a first miss, or a state that worsened */
+  reason: 'new' | 'worsened';
+}
+
+/** How far past its cadence a series has run, in the unit its grace uses —
+ *  business days for daily, calendar days otherwise. null when the question
+ *  does not apply: GDPNow is exempt (A1 Task 6), and a series with nothing
+ *  ingested yet is in bootstrap (sweep alerts cover fetch failures). */
+export function expectationGap(
+  series: Pick<RegimeSeriesRow, 'cadence'>,
+  newestVintageIso: string | null,
+  todayIso: string
+): number | null {
+  if (series.cadence === 'irregular') return null;
+  if (!newestVintageIso) return null;
+  if (series.cadence === 'daily') {
+    return businessDaysBetween(newestVintageIso, todayIso);
+  }
+  return Math.floor(
+    (new Date(`${todayIso}T00:00:00Z`).getTime() - new Date(`${newestVintageIso}T00:00:00Z`).getTime()) /
+      (24 * 60 * 60 * 1000)
+  );
+}
+
+/** The grace this series' gap is measured against (A1-F1 p2: daily grace is
+ *  per-series, everything else is per-cadence). */
+export function expectationGrace(
+  series: Pick<RegimeSeriesRow, 'cadence' | 'series_code'>
+): number {
+  if (series.cadence === 'daily') {
+    return DAILY_GRACE_BY_SERIES[series.series_code] ?? DAILY_BREACH_BUSINESS_DAYS;
+  }
+  if (series.cadence === 'weekly') return WEEKLY_BREACH_CALENDAR_DAYS;
+  return MONTHLY_BREACH_CALENDAR_DAYS;
 }
 
 /** Evaluate one series against its cadence + grace. Exported for tests and
  *  for the acceptance item 6 dry-run. */
 export function expectationBreached(
-  series: Pick<RegimeSeriesRow, 'cadence'>,
+  series: Pick<RegimeSeriesRow, 'cadence' | 'series_code'>,
   newestVintageIso: string | null,
   todayIso: string
 ): boolean {
-  if (series.cadence === 'irregular') return false; // GDPNow exempt (A1 Task 6)
-  if (!newestVintageIso) return false; // bootstrap state: nothing ingested yet — sweep alerts cover fetch failures
-  if (series.cadence === 'daily') {
-    return businessDaysBetween(newestVintageIso, todayIso) > DAILY_BREACH_BUSINESS_DAYS;
-  }
-  const days = Math.floor(
-    (new Date(`${todayIso}T00:00:00Z`).getTime() - new Date(`${newestVintageIso}T00:00:00Z`).getTime()) /
-      (24 * 60 * 60 * 1000)
+  const gap = expectationGap(series, newestVintageIso, todayIso);
+  return gap !== null && gap > expectationGrace(series);
+}
+
+/** A series that was breaching at the previous check and is not now */
+interface ExpectationRecovery {
+  series: string;
+  displayName: string;
+  newestVintage: string | null;
+}
+
+/**
+ * A1-F1 p2 — the previous check's state, RECONSTRUCTED rather than stored.
+ *
+ * Nothing needs to remember yesterday. A row held at time T is a row whose
+ * fetched_at precedes T, so the newest vintage we held when the previous
+ * check ran is a question the observations table can still answer. That
+ * makes the comparison survive restarts and deploys by construction, and
+ * keeps the harness's state in the one place vintage law already governs —
+ * no new column, no schema change, nothing to drift.
+ */
+async function newestVintageHeldAt(
+  seriesId: string,
+  cutoffIso: string
+): Promise<string | null> {
+  const { data } = await supaFetch<Pick<RegimeObservationRow, 'realtime_start'>>(
+    'regime_observations',
+    {
+      params: {
+        series_id: `eq.${seriesId}`,
+        fetched_at: `lt.${cutoffIso}`,
+        select: 'realtime_start',
+        order: 'realtime_start.desc',
+        limit: '1',
+      },
+      single: true,
+    }
   );
-  if (series.cadence === 'weekly') return days > WEEKLY_BREACH_CALENDAR_DAYS;
-  return days > MONTHLY_BREACH_CALENDAR_DAYS;
+  return data?.realtime_start ?? null;
+}
+
+/** The previous completed expectations check — the moment we last looked,
+ *  and the day we judged against. null before the first one ever runs. */
+async function previousExpectationsCheck(
+  currentRunId: string
+): Promise<{ startedAt: string; dayIso: string } | null> {
+  const { data } = await supaFetch<Pick<RegimeIngestRunRow, 'id' | 'started_at'>>(
+    'regime_ingest_runs',
+    {
+      params: {
+        kind: 'eq.expectations_check',
+        id: `neq.${currentRunId}`,
+        select: 'id,started_at',
+        order: 'started_at.desc',
+        limit: '1',
+      },
+      single: true,
+    }
+  );
+  if (!data?.started_at) return null;
+  return { startedAt: data.started_at, dayIso: data.started_at.slice(0, 10) };
 }
 
 export async function runExpectationsCheck(): Promise<void> {
@@ -561,6 +684,11 @@ export async function runExpectationsCheck(): Promise<void> {
   const todayIso = isoDate();
   let attempted = 0;
   const breaches: ExpectationBreach[] = [];
+  const recoveries: ExpectationRecovery[] = [];
+  /** Breaching now, breaching then, no worse — the chronic states that stay
+   *  quiet (A1-F1 p2). Counted for the run row so the record says why no
+   *  letter went out, never silently. */
+  let unchanged = 0;
 
   try {
     const { data: allSeries, error: seriesError } = await supaSelect<RegimeSeriesRow[]>(
@@ -570,6 +698,8 @@ export async function runExpectationsCheck(): Promise<void> {
     if (seriesError || !allSeries) {
       throw new Error(`Reading regime_series registry failed: ${seriesError ?? 'no rows'}`);
     }
+
+    const previousCheck = await previousExpectationsCheck(run.id);
 
     for (const series of allSeries) {
       attempted++;
@@ -586,22 +716,58 @@ export async function runExpectationsCheck(): Promise<void> {
         }
       );
       const newestVintage = newest?.realtime_start ?? null;
+      const grace = expectationGrace(series);
+      const gap = expectationGap(series, newestVintage, todayIso);
+      const breachingNow = gap !== null && gap > grace;
 
-      if (expectationBreached(series, newestVintage, todayIso)) {
+      // A1-F1 p2: what did this series look like when we last checked?
+      // Reconstructed from the observations, judged against the day the
+      // previous check actually ran — not against today.
+      let previousGap: number | null = null;
+      if (previousCheck) {
+        const heldThen = await newestVintageHeldAt(series.id, previousCheck.startedAt);
+        previousGap = expectationGap(series, heldThen, previousCheck.dayIso);
+      }
+      const breachingThen = previousGap !== null && previousGap > grace;
+
+      if (breachingNow && breachingThen && gap! <= previousGap!) {
+        // Chronic and no worse — Robert already has this letter.
+        unchanged++;
+        continue;
+      }
+
+      if (breachingNow) {
         breaches.push({
           series: series.series_code,
           displayName: series.display_name,
           cadence: series.cadence,
           newestVintage,
+          gap: gap!,
+          previousGap: breachingThen ? previousGap : null,
+          reason: breachingThen ? 'worsened' : 'new',
           expectation:
             series.cadence === 'daily'
-              ? `a new value every business day (grace: ${DAILY_BREACH_BUSINESS_DAYS} business days)`
+              ? `a new value every business day (grace: ${grace} business days)`
               : series.cadence === 'weekly'
-                ? `a new value every week (grace: ${WEEKLY_BREACH_CALENDAR_DAYS} days total)`
-                : `a new value every month (grace: ${MONTHLY_BREACH_CALENDAR_DAYS} days total)`,
+                ? `a new value every week (grace: ${grace} days total)`
+                : `a new value every month (grace: ${grace} days total)`,
+        });
+      } else if (breachingThen) {
+        recoveries.push({
+          series: series.series_code,
+          displayName: series.display_name,
+          newestVintage,
         });
       }
     }
+
+    // The run row records everything the check saw, including the chronic
+    // states that produced no letter — a quiet morning must be legible as a
+    // decision, never as a gap in the record.
+    const tally =
+      breaches.length + recoveries.length + unchanged > 0
+        ? `${breaches.length} alerting, ${recoveries.length} recovered, ${unchanged} unchanged (quiet)`
+        : null;
 
     await supaUpdate(
       'regime_ingest_runs',
@@ -610,33 +776,68 @@ export async function runExpectationsCheck(): Promise<void> {
         completed_at: new Date().toISOString(),
         series_attempted: attempted,
         rows_written: 0,
-        error: breaches.length > 0 ? `${breaches.length} missed publications` : null,
+        error: tally,
       },
       { id: `eq.${run.id}` }
     );
 
     console.log(
-      `[regime] Expectations check ${run.id} done: ${attempted} series checked, ${breaches.length} breaches`
+      `[regime] Expectations check ${run.id} done: ${attempted} series checked, ` +
+        `${breaches.length} alerting, ${recoveries.length} recovered, ${unchanged} unchanged`
     );
 
     // Task 7 condition 2 — the Oct 2025 CPI blackout is the motivating case:
-    // the harness's job is to NOTICE, loudly, the same morning.
-    if (breaches.length > 0) {
+    // the harness's job is to NOTICE, loudly, the same morning. A1-F1 p2
+    // narrows WHEN it writes, never whether it notices: a first miss and a
+    // state that got worse both send; a chronic state that is no worse than
+    // yesterday goes quiet until it worsens or resolves.
+    if (breaches.length > 0 || recoveries.length > 0) {
       const list = breaches
         .map(
           b =>
             `<li><strong>${b.displayName}</strong> (${b.series}) — expected ${b.expectation}; ` +
-            `last new data ${b.newestVintage ?? 'never'}.</li>`
+            `last new data ${b.newestVintage ?? 'never'}` +
+            (b.reason === 'worsened'
+              ? `. This one got worse: ${b.previousGap} behind at yesterday's check, ${b.gap} now.`
+              : '.') +
+            `</li>`
         )
         .join('');
+      const recoveredList = recoveries
+        .map(
+          r =>
+            `<li><strong>${r.displayName}</strong> (${r.series}) — publishing again; ` +
+            `newest data ${r.newestVintage ?? 'none held'}.</li>`
+        )
+        .join('');
+
+      const subject =
+        breaches.length > 0
+          ? `Regime harness: ${breaches.length} data series ${breaches.length > 1 ? 'have' : 'has'} gone quiet`
+          : `Regime harness: ${recoveries.length} data series ${recoveries.length > 1 ? 'are' : 'is'} publishing again`;
+
       sendAdminAlert(
-        `Regime harness: ${breaches.length} data series ${breaches.length > 1 ? 'have' : 'has'} gone quiet`,
-        `<p>The 9:00 AM ET check found data that should have arrived by now and hasn't:</p>` +
-          `<ul>${list}</ul>` +
-          `<p>What happens next: tonight's 5:30 PM ET sweep retries automatically. If the source ` +
-          `has data by then, this resolves itself. If this alert repeats tomorrow, the publisher ` +
-          `itself has likely gone dark (the October 2025 CPI blackout is the precedent) and the ` +
-          `registry's fallback channel for the series should be considered.</p>`
+        subject,
+        (breaches.length > 0
+          ? `<p>The 9:00 AM ET check found data that should have arrived by now and hasn't:</p>` +
+            `<ul>${list}</ul>`
+          : '') +
+          (recoveries.length > 0
+            ? `<p>Back to normal since the last check:</p><ul>${recoveredList}</ul>`
+            : '') +
+          (breaches.length > 0
+            ? `<p>What happens next: tonight's 5:30 PM ET sweep retries automatically. If the source ` +
+              `has data by then, this resolves itself. If the gap keeps growing, the publisher ` +
+              `itself has likely gone dark (the October 2025 CPI blackout is the precedent) and the ` +
+              `fallback posture for the series applies (docs/regime/FALLBACK_POSTURE.md).</p>` +
+              `<p>You will not get this same letter again tomorrow. A series that stays exactly ` +
+              `this far behind goes quiet; it writes again only if it falls further behind or ` +
+              `starts publishing again.</p>`
+            : '') +
+          (unchanged > 0
+            ? `<p>Also still behind, unchanged since the last check and deliberately not ` +
+              `re-reported: ${unchanged} ${unchanged > 1 ? 'series' : 'series'}.</p>`
+            : '')
       ).catch(() => {});
     }
   } catch (err) {
