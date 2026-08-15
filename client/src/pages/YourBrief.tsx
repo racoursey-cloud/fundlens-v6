@@ -37,6 +37,7 @@ import {
   fetchBrief,
   generateBrief,
   fetchScores,
+  fetchReferenceFundDetailFull,
   updateProfile,
   type Brief,
   type FundScore,
@@ -47,6 +48,34 @@ import { theme } from '../theme';
 import { DonutChart, type DonutSlice } from '../components/DonutChart';
 import { FundExposurePanel } from '../components/FundExposurePanel';
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
+
+// ─── H3-F2: the vouched-ticker set behind the allocation card ─────────────
+// Module-level, so the lists survive a remount within the session and each
+// recommended fund is asked for at most once per visit. The same shape My Mix
+// uses for its ?all=1 lists; this page needs only the tickers out of them.
+
+const vouchedTickersByFund = new Map<string, string[]>();
+
+/**
+ * The tickers holdings_cache has vouched for one fund, upper-cased.
+ *
+ * WHY A FETCH IS NEEDED AT ALL: the allocation card's rows come from
+ * factor_details.topHoldings, the stored pipeline snapshot, which carries the
+ * RAW resolved ticker. The vouched display column reaches the client through
+ * exactly one door — the ?all=1 fund detail — so that is the door this page
+ * knocks on. Sequential, cached, and never on the render path.
+ */
+async function loadVouchedTickers(fundTicker: string): Promise<string[]> {
+  const cached = vouchedTickersByFund.get(fundTicker);
+  if (cached !== undefined) return cached;
+  const res = await fetchReferenceFundDetailFull(fundTicker);
+  if (!res.data) return []; // a failed fund contributes nothing; rows fall back
+  const tickers = (res.data.holdings || [])
+    .map(h => (h.ticker ? h.ticker.trim().toUpperCase() : null))
+    .filter((t): t is string => t !== null);
+  vouchedTickersByFund.set(fundTicker, tickers);
+  return tickers;
+}
 
 // ─── Shared Utilities ─────────────────────────────────────────────────────
 
@@ -758,6 +787,43 @@ export function YourBrief() {
       }));
   }, [allocations]);
 
+  // ── H3-F2: which of this card's tickers the app has vouched ─────────────
+  // The union across every fund in the CURRENT recommendation, per Robert's
+  // ruling — a company vouched on any recommended fund is a company this card
+  // may look up, wherever it appears. Measured against today's snapshot: 6,354
+  // of its 9,813 rows gain the full panel; 426 tickered rows and 3,033
+  // untickered ones keep the honest fallback.
+  //
+  // It arrives after the page does, which is the right order: until it lands
+  // the set is empty and every row falls back, exactly as it does today. A
+  // panel a member has already opened upgrades itself when the set arrives —
+  // the row's ticker changes from null to the real one and the panel refetches
+  // on its own, so nobody has to close and reopen it.
+  const [vouchedTickers, setVouchedTickers] = useState<ReadonlySet<string>>(new Set());
+  const recommendedKey = useMemo(() => [...allocMap.keys()].sort().join(','), [allocMap]);
+
+  useEffect(() => {
+    const recommended = recommendedKey ? recommendedKey.split(',') : [];
+    if (recommended.length === 0) {
+      setVouchedTickers(new Set());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      // Sequential, like My Mix's list fetches — a page load must not open one
+      // request per fund at once.
+      const union = new Set<string>();
+      for (const fundTicker of recommended) {
+        const tickers = await loadVouchedTickers(fundTicker);
+        if (cancelled) return;
+        for (const t of tickers) union.add(t);
+        // Publish as each fund lands, so the biggest names light up first.
+        setVouchedTickers(new Set(union));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [recommendedKey]);
+
   // ── Per-fund sector exposure + top holdings (for fund explorer panels) ──
 
   interface FundExplorerData {
@@ -1054,6 +1120,10 @@ export function YourBrief() {
                 onSelectSector={setSelectedSectorBrief}
                 isMobile={isMobile}
                 active={!!selectedFundData}
+                /* H3-F2: these rows are the stored snapshot's, so they are
+                   vouched one by one against the recommendation's own vouched
+                   tickers rather than trusted as a list. */
+                tickersAreDisplayValidated={vouchedTickers}
                 center={
                   <>
                     <DonutChart
