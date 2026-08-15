@@ -37,12 +37,12 @@ import {
   fetchBrief,
   generateBrief,
   fetchScores,
-  fetchProfile,
   updateProfile,
   type Brief,
   type FundScore,
   type UserProfile,
 } from '../api';
+import { useProfile } from '../context/ProfileContext';
 import { theme } from '../theme';
 import { DonutChart, type DonutSlice } from '../components/DonutChart';
 import { FundExposurePanel } from '../components/FundExposurePanel';
@@ -606,21 +606,27 @@ export function YourBrief() {
 
   useEffect(() => { loadBriefs(); }, [loadBriefs]);
 
+  // M1 m9: the scores come from their own call; the profile comes from the
+  // one the provider fetched. Two effects rather than one Promise.all, so a
+  // profile landing later does not refetch scores.
+  const { profile: sharedProfile, setProfile: setSharedProfile } = useProfile();
+
   useEffect(() => {
-    Promise.all([fetchScores(), fetchProfile()]).then(([scoresRes, profileRes]) => {
+    fetchScores().then(scoresRes => {
       if (scoresRes.data?.scores) setScores(scoresRes.data.scores);
-      if (profileRes.data?.profile) {
-        const p = profileRes.data.profile;
-        setProfile(p);
-        setWeights({
-          cost: p.weight_cost, quality: p.weight_quality,
-          positioning: p.weight_positioning, momentum: p.weight_momentum,
-        });
-        setRisk(p.risk_tolerance);
-      }
       setLoadingScores(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!sharedProfile) return;
+    setProfile(sharedProfile);
+    setWeights({
+      cost: sharedProfile.weight_cost, quality: sharedProfile.weight_quality,
+      positioning: sharedProfile.weight_positioning, momentum: sharedProfile.weight_momentum,
+    });
+    setRisk(sharedProfile.risk_tolerance);
+  }, [sharedProfile]);
 
   // ── Brief actions ─────────────────────────────────────────────────────
 
@@ -684,10 +690,15 @@ export function YourBrief() {
 
   // ── Risk slider ───────────────────────────────────────────────────────
 
+  // M1 m9: the write goes to the server as before AND back into the shared
+  // row. With one cached profile instead of three fetches, a page that
+  // changes it must say so, or the next tab reads the old risk setting.
   const handleRiskChange = useCallback((val: number) => {
     setRisk(val);
-    updateProfile({ risk_tolerance: val });
-  }, []);
+    updateProfile({ risk_tolerance: val }).then(res => {
+      if (res.data?.profile) setSharedProfile(res.data.profile);
+    });
+  }, [setSharedProfile]);
 
   // ── Client-side rescore + allocation ──────────────────────────────────
 
