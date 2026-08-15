@@ -463,9 +463,41 @@ function LiveAllocationTable({ allocations }: { allocations: LiveAllocation[] })
   );
 }
 
-function BriefBody({ contentMd, liveAllocations }: {
+/**
+ * M1 m5 — the provenance line.
+ *
+ * The narrative is frozen at generation; the allocation table above it and
+ * the chips on the card above that are computed live from the current risk
+ * setting and the latest scores. On August 14 that seam showed itself
+ * plainly — the prose discussed QFVRX while the live chips showed PRPFX.
+ * Neither was wrong; they were answers from two different moments, and
+ * nothing on the page said so.
+ *
+ * This says so. Modest, inside the block it describes, naming the one fact
+ * that resolves the confusion: when these words were written.
+ */
+function BriefProvenanceLine({ generatedAt }: { generatedAt?: string }) {
+  if (!generatedAt) return null;
+  const when = new Date(generatedAt);
+  if (Number.isNaN(when.getTime())) return null;
+  return (
+    <p style={{
+      fontSize: '11px', color: theme.colors.textDim, margin: '0 0 14px',
+      fontFamily: theme.fonts.body,
+    }}>
+      Written {when.toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      })}. The numbers above update with your risk setting; this text does not.
+    </p>
+  );
+}
+
+function BriefBody({ contentMd, liveAllocations, generatedAt }: {
   contentMd: string;
   liveAllocations?: LiveAllocation[];
+  /** M1 m5: when the prose below was written, printed inside the block */
+  generatedAt?: string;
 }) {
   const { sections } = parseBriefSections(contentMd);
   const core = sections.filter((s) => isPersonalCore(s.title));
@@ -486,11 +518,21 @@ function BriefBody({ contentMd, liveAllocations }: {
           return (
             <BriefSectionCard key={i}
               section={{ ...section, body: strippedBody }}
-              preContent={<LiveAllocationTable allocations={liveAllocations} />}
+              preContent={
+                <>
+                  <BriefProvenanceLine generatedAt={generatedAt} />
+                  <LiveAllocationTable allocations={liveAllocations} />
+                </>
+              }
             />
           );
         }
-        return <BriefSectionCard key={i} section={section} />;
+        return (
+          <BriefSectionCard key={i}
+            section={section}
+            preContent={<BriefProvenanceLine generatedAt={generatedAt} />}
+          />
+        );
       })}
     </div>
   );
@@ -1134,6 +1176,7 @@ export function YourBrief() {
             {selectedBrief.content_md ? (
               <BriefBody
                 contentMd={selectedBrief.content_md}
+                generatedAt={selectedBrief.generated_at}
                 liveAllocations={allocations
                   .filter(a => a.allocationPct > 0)
                   .map(a => ({
