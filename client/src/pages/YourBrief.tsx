@@ -144,8 +144,17 @@ function nearestRiskLabel(value: number): string {
  * history, this page still holds it, generation still polls against it, and
  * nothing is removed from the archive. Only the table is shortened — which
  * is why its heading keeps saying how many exist.
+ *
+ * M1 m4 — the denominator rolls. The heading counts briefs generated in the
+ * trailing 90 days rather than every brief ever written, so it describes a
+ * recent window a reader can hold in their head instead of a number that
+ * only grows. Ruled August 15, 2026: it counts ALL rows in that window,
+ * failures included, because the table it summarizes lists failures too and
+ * badges them as failed. A denominator that quietly excluded them would
+ * describe a different list than the one underneath it.
  */
 const HISTORY_LIMIT = 5;
+const HISTORY_WINDOW_DAYS = 90;
 
 // ─── Stale Brief Detection (Option B) ──────────────────────────────────────
 
@@ -814,9 +823,16 @@ export function YourBrief() {
   // shortened archive.
 
   const visibleBriefs = briefs.slice(0, HISTORY_LIMIT);
-  const historyCount = briefs.length > HISTORY_LIMIT
-    ? `${HISTORY_LIMIT} of ${briefs.length}`
-    : `${briefs.length}`;
+
+  // M1 m4: the rolling denominator. Counted from the same list the table
+  // draws from, so heading and rows can never describe different things.
+  const windowStartMs = Date.now() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const briefsInWindow = briefs.filter(
+    b => new Date(b.generated_at).getTime() >= windowStartMs
+  ).length;
+  const historyCount = briefsInWindow > visibleBriefs.length
+    ? `${visibleBriefs.length} of ${briefsInWindow} in the last ${HISTORY_WINDOW_DAYS} days`
+    : `${visibleBriefs.length}`;
 
   // ── Loading state ─────────────────────────────────────────────────────
 
