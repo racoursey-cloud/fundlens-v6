@@ -288,11 +288,6 @@ export const fetchFundScore = (ticker: string) =>
 export const fetchReferenceScores = () =>
   apiFetch<{ funds: ReferenceFund[]; asOf: string | null }>('/api/scores?shape=reference');
 
-export const fetchReferenceFundDetail = (ticker: string) =>
-  apiFetch<{ fund: ReferenceFund; holdings: ReferenceHolding[] }>(
-    `/api/scores/${ticker}?shape=reference`,
-  );
-
 // B9: the ?all=1 variant — the server lifts the 50-row holdings cap (hard
 // ceiling 1000). Used by the reference detail Holdings tab and by My Mix
 // for full-list aggregation.
@@ -353,7 +348,7 @@ export const completeSetup = (data: {
 
 // Pipeline
 // UI Honesty item 4: the type now carries the step fields the server has
-// always sent (AppShell previously cast around their absence). Step data
+// always sent (the shell previously cast around their absence). Step data
 // exists only for runs triggered via POST /api/pipeline/run — the nightly
 // and retry runners report no steps, so any surface must render honestly
 // without them.
