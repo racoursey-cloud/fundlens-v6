@@ -160,6 +160,17 @@ function concentrationCell(
   return hhiLabel(result.hhi).label;
 }
 
+// ─── Editor columns (M1 m1) ────────────────────────────────────────────────
+// `key` names the Fund field a header sorts by; null means the column does
+// not sort. The percent column takes the user's own inputs, so it has no
+// order of its own to offer.
+
+const MIX_COLUMNS: Array<{ label: string; key: 'ticker' | 'name' | null }> = [
+  { label: 'Ticker', key: 'ticker' },
+  { label: 'Name', key: 'name' },
+  { label: 'Percent of mix', key: null },
+];
+
 // ─── Page ──────────────────────────────────────────────────────────────────
 
 export function ReferenceMyMix() {
@@ -177,6 +188,32 @@ export function ReferenceMyMix() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // ── M1 m1: column sort, the Funds grid's grammar exactly ────────────────
+  // Click a header to sort, click it again to reverse. Only the two fact
+  // columns sort; "Percent of mix" holds the user's own inputs and has no
+  // natural order to offer. Reordering rows is safe by construction —
+  // `pctText` is keyed by fund id and each row's React key is that id, so a
+  // typed value stays with its fund no matter where the row moves.
+  const [sortKey, setSortKey] = useState<'ticker' | 'name'>('ticker');
+  const [sortDir, setSortDir] = useState<1 | -1>(1);
+
+  const handleSort = (key: 'ticker' | 'name') => {
+    if (key === sortKey) {
+      setSortDir(d => (d === 1 ? -1 : 1));
+    } else {
+      setSortKey(key);
+      setSortDir(1);
+    }
+  };
+
+  const sortedFunds = useMemo(
+    () =>
+      [...funds].sort(
+        (a, b) => String(a[sortKey] ?? '').localeCompare(String(b[sortKey] ?? '')) * sortDir,
+      ),
+    [funds, sortKey, sortDir],
+  );
 
   useEffect(() => {
     Promise.all([fetchFunds(), fetchReferenceScores(), fetchExampleAllocation()]).then(
@@ -397,9 +434,10 @@ export function ReferenceMyMix() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr>
-              {['Ticker', 'Name', 'Percent of mix'].map((h, i) => (
+              {MIX_COLUMNS.map((col, i) => (
                 <th
-                  key={h}
+                  key={col.label}
+                  onClick={col.key ? () => handleSort(col.key!) : undefined}
                   style={{
                     textAlign: i === 2 ? 'right' : 'left',
                     padding: '10px 12px',
@@ -410,15 +448,18 @@ export function ReferenceMyMix() {
                     textTransform: 'uppercase',
                     borderBottom: `1px solid ${theme.colors.border}`,
                     whiteSpace: 'nowrap',
+                    cursor: col.key ? 'pointer' : 'default',
+                    userSelect: col.key ? 'none' : 'auto',
                   }}
                 >
-                  {h}
+                  {col.label}
+                  {col.key && sortKey === col.key ? (sortDir === 1 ? ' ▲' : ' ▼') : ''}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {funds.map(f => {
+            {sortedFunds.map(f => {
               const text = pctText[f.id] ?? '';
               const rowInvalid = text.trim() !== '' && !isValidPctText(text);
               return (
