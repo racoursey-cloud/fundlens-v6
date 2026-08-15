@@ -136,6 +136,44 @@ function getStance(macroStance: string) {
   return STANCE_CONFIG[macroStance?.toLowerCase()] ?? STANCE_CONFIG['neutral']!;
 }
 
+// ─── M1 m6: "Since the last run" ───────────────────────────────────────────
+
+/**
+ * What moved between the previous pipeline run's thesis and this one.
+ *
+ * Comparison only — the server hands over both rows exactly as stored and
+ * this reads them. Returns null when there is no prior run to compare
+ * against, and the line then renders nothing rather than inventing a
+ * baseline. 'Unavailable' is the thesis writer's word for a theme it could
+ * not produce, so it is treated as absent on either side: better to say
+ * nothing about the theme than to print "Unavailable → X" as if that were a
+ * change in the weather.
+ */
+function sinceLastRun(current: ThesisData, prior: ThesisData | null): string | null {
+  if (!prior) return null;
+
+  const namedTheme = (t: string | undefined): string | null => {
+    const trimmed = (t ?? '').trim();
+    return trimmed && trimmed !== 'Unavailable' ? trimmed : null;
+  };
+  const was = namedTheme(prior.dominant_theme);
+  const now = namedTheme(current.dominant_theme);
+
+  const parts: string[] = [];
+  if (was && now && was !== now) parts.push(`${was} → ${now}`);
+  else if (now) parts.push(`theme held: ${now}`);
+
+  const stanceWas = getStance(prior.macro_stance).label;
+  const stanceNow = getStance(current.macro_stance).label;
+  parts.push(
+    stanceWas === stanceNow
+      ? `stance held at ${stanceNow}`
+      : `stance ${stanceWas} → ${stanceNow}`
+  );
+
+  return parts.join(' · ');
+}
+
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
@@ -148,6 +186,9 @@ function fmtDate(iso: string): string {
 export function Research() {
   // Thesis state
   const [thesis, setThesis] = useState<ThesisData | null>(null);
+  // M1 m6: the run before this one, exactly as stored. Null when only one
+  // run exists — the delta line then says nothing rather than guessing.
+  const [priorThesis, setPriorThesis] = useState<ThesisData | null>(null);
   const [loadingThesis, setLoadingThesis] = useState(true);
 
   // Scores + profile state
@@ -163,6 +204,7 @@ export function Research() {
   useEffect(() => {
     fetchThesis().then(res => {
       if (res.data?.thesis) setThesis(res.data.thesis);
+      setPriorThesis(res.data?.previous ?? null);
       setLoadingThesis(false);
     });
   }, []);
@@ -449,6 +491,27 @@ export function Research() {
               </span>
             )}
           </div>
+
+          {/* M1 m6: what moved since the previous run. Absent entirely when
+              there is no prior run to compare against. */}
+          {sinceLastRun(thesis, priorThesis) && (
+            <div style={{
+              padding: '8px 24px',
+              borderBottom: `1px solid ${theme.colors.border}`,
+              fontSize: 12,
+              color: theme.colors.textMuted,
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: 8,
+              flexWrap: 'wrap',
+            }}>
+              <span style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+                textTransform: 'uppercase', color: theme.colors.textDim,
+              }}>Since the last run</span>
+              <span>{sinceLastRun(thesis, priorThesis)}</span>
+            </div>
+          )}
 
           <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* Badges row */}
