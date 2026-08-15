@@ -17,8 +17,8 @@
  * returns the editor to blank. The server is the authority on validation —
  * its 400 messages render as sent. The saved mix is used for nothing else.
  *
- * Renders inside ReferenceShell's Outlet: header, tabs, and footer come
- * from the shell.
+ * Renders inside the unified Shell's Outlet: header, tabs, and footer come
+ * from the shell (U1-A retired ReferenceShell).
  *
  * M1 m3: the standalone sector donut is now the shared FundExposurePanel —
  * sector bars left, that donut in the middle, the mix's holdings right,
