@@ -20,6 +20,17 @@
  * Renders inside ReferenceShell's Outlet: header, tabs, and footer come
  * from the shell.
  *
+ * M1 m3: the standalone sector donut is now the shared FundExposurePanel —
+ * sector bars left, that donut in the middle, the mix's holdings right,
+ * clicking a sector (bar or wedge) filtering the holdings to it. Both tiers,
+ * on data the reference allowlist already ships. The panel replaces the old
+ * legend, which said the same things without the drill-in.
+ *
+ * The bars come from the funds' filed sector maps and the holdings from
+ * holdings rows — two honest provenances that need not reconcile exactly.
+ * That is the same pattern the fund detail already carries, logged and
+ * accepted; My Mix inherits it rather than inventing it.
+ *
  * B9 c11: holdings math runs on the funds' COMPLETE lists — each chosen
  * fund's ?all=1 detail is fetched (cached per session) and fed to the
  * engine's fullHoldingsByTicker input. The overlap section and the
@@ -51,6 +62,11 @@ import {
 } from '../../engine/example-mix';
 import { hhiLabel } from '../../utils/hhi';
 import { DonutChart, type DonutSlice } from '../../components/DonutChart';
+import {
+  FundExposurePanel,
+  type ExposureHolding,
+  type ExposureSector,
+} from '../../components/FundExposurePanel';
 import {
   MONEY_MARKET_TICKERS,
   REFERENCE_SECTOR_COLORS,
@@ -158,6 +174,17 @@ function concentrationCell(
 
   // Third: the HHI label as plain text (never its color — see render site).
   return hhiLabel(result.hhi).label;
+}
+
+// ─── M1 m3: the shared panel's sector identity ─────────────────────────────
+// The fund detail's rule, copied so the drill behaves identically here: a
+// sector the palette names keeps its own identity, everything else folds
+// into 'Other'. Holdings run through the SAME function, so clicking the
+// folded 'Other' bar filters to exactly the holdings that folded into it —
+// bars, donut wedges and holdings all keyed alike.
+
+function mixSliceIdForSector(sector: string): string {
+  return sector in REFERENCE_SECTOR_COLORS && sector !== 'Other' ? sector : 'Other';
 }
 
 // ─── Editor columns (M1 m1) ────────────────────────────────────────────────
@@ -336,6 +363,23 @@ export function ReferenceMyMix() {
   const hasMix = entries.some(e => Number.isFinite(e.pct) && e.pct > 0);
   const slices = useMemo(() => buildMixSlices(result.sector_exposure_pct), [result]);
 
+  // ── M1 m3: the shared exposure panel's inputs ───────────────────────────
+  const [selectedSector, setSelectedSector] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // The left column is the donut's own slices as bars — same values, same
+  // order, same colors, so the two can never disagree.
+  const sectorBars = useMemo<ExposureSector[]>(
+    () => slices.map(s => ({ sector: s.label, weight: s.pct, color: s.color })),
+    [slices],
+  );
+
   // ── B9 c11: full holdings lists for the chosen funds (?all=1, cached) ──
   const chosenTickers = useMemo(
     () =>
@@ -398,6 +442,25 @@ export function ReferenceMyMix() {
         ? computeExampleMix(funds, refFunds, entries, fullHoldings)
         : null,
     [holdingsReady, funds, refFunds, entries, fullHoldings],
+  );
+
+  // The right column. It reads the FULL-depth result once the ?all=1 lists
+  // land and the stored top-holdings result before then — so the panel is
+  // never empty while it waits, and never claims "no holdings data" when the
+  // truth is "not fetched yet". The list deepens in place when the fetches
+  // finish. Rows the filing left unclassified keep a null sector: they show
+  // in the unfiltered list and no sector claims them.
+  const panelHoldings = useMemo<ExposureHolding[]>(
+    () =>
+      (resultFull ?? result).holdings
+        .filter(h => h.combined_weight_pct > 0)
+        .map(h => ({
+          name: h.name ?? h.key,
+          ticker: h.ticker,
+          weight: h.combined_weight_pct,
+          sector: h.sector === null ? null : mixSliceIdForSector(h.sector),
+        })),
+    [resultFull, result],
   );
 
   const handleSave = async () => {
@@ -675,20 +738,23 @@ export function ReferenceMyMix() {
           <div style={{ marginBottom: 14 }}>
             <SectionLabel text="Sectors across the mix" />
             {slices.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 24 }}>
-                <DonutChart slices={slices} size={200} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220, flex: 1 }}>
-                  {slices.map(s => (
-                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: theme.colors.text, flex: 1 }}>{s.label}</span>
-                      <span style={{ fontSize: 12, fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
-                        {fmtMixPct(s.pct)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <FundExposurePanel
+                sectors={sectorBars}
+                holdings={panelHoldings}
+                selectedSector={selectedSector}
+                onSelectSector={setSelectedSector}
+                isMobile={isMobile}
+                sectorLimit={null}
+                center={
+                  <DonutChart
+                    slices={slices}
+                    size={200}
+                    onSliceClick={slice =>
+                      setSelectedSector(prev => (prev === slice.id ? null : slice.id))
+                    }
+                  />
+                }
+              />
             ) : (
               <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
                 — nothing to chart yet
