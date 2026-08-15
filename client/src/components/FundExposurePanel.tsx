@@ -120,8 +120,24 @@ interface FundExposurePanelProps {
    * the ruled fallback, filed name plus the Wikipedia search link, with zero
    * network calls, exactly as a dash row does. Callers reading the vouched
    * column pass true and get the full panel.
+   *
+   * H3-F2 (Robert's ruling, August 15, 2026, on seeing NVIDIA fall back on
+   * his own Brief — "it seems to me that there should be information about
+   * Nvidia"): a caller whose rows are NOT from the vouched column may instead
+   * pass THE SET of tickers the app has vouched, and the decision is made per
+   * row. A row whose ticker is in the set is looked up; every other row keeps
+   * the fallback. That is what lets the Brief allocation card serve NVIDIA —
+   * vouched on four funds — while the 426 snapshot tickers the display
+   * validation never vouched anywhere stay exactly as safe as they are today.
+   *
+   * The h6 serve-time guard is still the last word in every case: a ticker
+   * this component agrees to look up can still be refused by the server when
+   * the filed name and the vendor profile disagree, and the row falls back.
+   *
+   * Values: true = every row (they come from the vouched column) · false or
+   * absent = none · a Set = these tickers, compared upper-cased.
    */
-  tickersAreDisplayValidated?: boolean;
+  tickersAreDisplayValidated?: boolean | ReadonlySet<string>;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
@@ -393,6 +409,17 @@ function HoldingsHeader({
   );
 }
 
+/** May this row's ticker be sent to the company endpoint? True only where the
+ *  caller has vouched for it — as a whole list, or as a named set (H3-F2). */
+function mayLookUpTicker(
+  ticker: string | null,
+  vouching: boolean | ReadonlySet<string>,
+): boolean {
+  if (ticker === null) return false;
+  if (typeof vouching === 'boolean') return vouching;
+  return vouching.has(ticker.trim().toUpperCase());
+}
+
 function HoldingsList({
   holdings,
   scrolling,
@@ -400,7 +427,7 @@ function HoldingsList({
 }: {
   holdings: ExposureHolding[];
   scrolling: boolean;
-  tickersAreDisplayValidated: boolean;
+  tickersAreDisplayValidated: boolean | ReadonlySet<string>;
 }) {
   // H3 t1: which row is drilled in (one at a time; click toggles) — the
   // Holdings tab's pattern, one level in. The key carries the row's position
@@ -472,7 +499,7 @@ function HoldingsList({
                   holding={{
                     name: h.name,
                     // Fail closed: an unvouched code is never looked up.
-                    ticker: tickersAreDisplayValidated ? h.ticker : null,
+                    ticker: mayLookUpTicker(h.ticker, tickersAreDisplayValidated) ? h.ticker : null,
                     sector: h.sector,
                   }}
                 />
