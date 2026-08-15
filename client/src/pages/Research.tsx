@@ -19,10 +19,10 @@ import DOMPurify from 'dompurify';
 import {
   fetchThesis,
   fetchScores,
-  fetchProfile,
   type ThesisData,
   type FundScore,
 } from '../api';
+import { useProfile } from '../context/ProfileContext';
 import { theme } from '../theme';
 
 /** Render inline markdown bold/italic within narrative text */
@@ -209,20 +209,26 @@ export function Research() {
     });
   }, []);
 
+  // M1 m9: the scores come from their own call; the weighting and risk come
+  // from the one profile the provider fetched. Read in a second effect so a
+  // profile that lands later updates the rescore without refetching scores.
+  const { profile: currentProfile } = useProfile();
+
   useEffect(() => {
-    Promise.all([fetchScores(), fetchProfile()]).then(([scoresRes, profileRes]) => {
+    fetchScores().then(scoresRes => {
       if (scoresRes.data?.scores) setScores(scoresRes.data.scores);
-      if (profileRes.data?.profile) {
-        const p = profileRes.data.profile;
-        setWeights({
-          cost: p.weight_cost, quality: p.weight_quality,
-          positioning: p.weight_positioning, momentum: p.weight_momentum,
-        });
-        setRisk(p.risk_tolerance);
-      }
       setLoadingScores(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!currentProfile) return;
+    setWeights({
+      cost: currentProfile.weight_cost, quality: currentProfile.weight_quality,
+      positioning: currentProfile.weight_positioning, momentum: currentProfile.weight_momentum,
+    });
+    setRisk(currentProfile.risk_tolerance);
+  }, [currentProfile]);
 
   // ── Client-side rescore ───────────────────────────────────────────────
 
