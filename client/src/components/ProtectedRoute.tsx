@@ -10,10 +10,9 @@
  * Session 8 deliverable. Destination: client/src/components/ProtectedRoute.tsx
  */
 
-import { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { fetchProfile, type UserProfile } from '../api';
+import { useProfile } from '../context/ProfileContext';
 
 interface Props {
   children: React.ReactNode;
@@ -22,22 +21,9 @@ interface Props {
 export function ProtectedRoute({ children }: Props) {
   const { user, loading: authLoading } = useAuth();
   const location = useLocation();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [profileLoading, setProfileLoading] = useState(true);
-
-  useEffect(() => {
-    if (!user) {
-      setProfileLoading(false);
-      return;
-    }
-
-    fetchProfile().then(({ data }) => {
-      if (data?.profile) {
-        setProfile(data.profile);
-      }
-      setProfileLoading(false);
-    });
-  }, [user]);
+  // M1 m9: the setup_completed check reads the one profile the provider
+  // fetched. This component used to ask for the same row a second time.
+  const { profile, loading: profileLoading } = useProfile();
 
   // Still determining auth state
   if (authLoading || profileLoading) {

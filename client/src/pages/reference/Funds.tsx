@@ -38,8 +38,9 @@
  * Data, and why it is two calls for one tier:
  *   - fetchReferenceScores() — the tier-shaped /api/scores response, for
  *     everyone (see src/engine/reference-shape.ts for the allowlist).
- *   - fetchScores() + fetchProfile() — FULL TIER ONLY, for the score and
- *     tier columns, joined to the facts row by ticker.
+ *   - fetchScores() — FULL TIER ONLY, for the score and tier columns,
+ *     joined to the facts row by ticker. Its weighting comes from the
+ *     shared ProfileContext (M1 m9), not from a profile call of its own.
  * The two shapes are disjoint and both are already served: the reference
  * branch alone joins fund_dossiers and fund_descriptions, and the full
  * branch alone carries composite/tier/z_*. Composing them in the browser is
@@ -55,12 +56,13 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import {
-  fetchProfile,
   fetchReferenceScores,
   fetchScores,
+  type FundScore,
   type ReferenceFund,
 } from '../../api';
 import type { Capabilities } from '../../capabilities';
+import { useProfile } from '../../context/ProfileContext';
 import {
   DEFAULT_FACTOR_WEIGHTS,
   deriveFullTierScores,
@@ -182,7 +184,12 @@ export function ReferenceFunds() {
    *  reference account (never fetched) and null for a full-tier account
    *  whose score call failed — in both cases the columns simply do not
    *  exist, and the grid of facts stands on its own. */
-  const [fullScores, setFullScores] = useState<Map<string, FullTierScore> | null>(null);
+  // M1 m9: the scores arrive from their own call; the weighting arrives
+  // from the one profile the provider fetched. Holding the raw rows and
+  // deriving below means the profile landing later re-derives rather than
+  // re-fetching — the scores call still happens exactly once.
+  const [rawScores, setRawScores] = useState<FundScore[] | null>(null);
+  const { profile: currentProfile } = useProfile();
 
   // Default: alphabetical by ticker, ascending — matches the server order.
   const [sortKey, setSortKey] = useState<ColumnKey>('ticker');
@@ -197,9 +204,7 @@ export function ReferenceFunds() {
 
     // The evaluative call, full tier only. A reference account issues no
     // request here at all — not a request that gets filtered, none.
-    const fullCall = isFullTier
-      ? Promise.all([fetchScores(), fetchProfile()])
-      : Promise.resolve(null);
+    const fullCall = isFullTier ? fetchScores() : Promise.resolve(null);
 
     void Promise.all([factsCall, fullCall]).then(([factsRes, fullRes]) => {
       if (factsRes.data) {
@@ -209,27 +214,30 @@ export function ReferenceFunds() {
         setError(factsRes.error || 'Could not load funds.');
       }
 
-      if (fullRes) {
-        const [scoresRes, profileRes] = fullRes;
-        if (scoresRes.data?.scores) {
-          const p = profileRes.data?.profile;
-          // The caller's own weighting, as FundLens read it; the profile
-          // defaults stand in only if that call failed.
-          const weights = p
-            ? {
-                cost: p.weight_cost,
-                quality: p.weight_quality,
-                positioning: p.weight_positioning,
-                momentum: p.weight_momentum,
-              }
-            : DEFAULT_FACTOR_WEIGHTS;
-          setFullScores(deriveFullTierScores(scoresRes.data.scores, weights));
-        }
+      if (fullRes?.data?.scores) {
+        setRawScores(fullRes.data.scores);
       }
 
       setLoading(false);
     });
   }, [isFullTier]);
+
+  // The caller's own weighting, as FundLens read it; the profile defaults
+  // stand in only when no profile is in hand — unchanged in effect from the
+  // old fallback for a failed profile call.
+  const fullScores = useMemo<Map<string, FullTierScore> | null>(() => {
+    if (!rawScores) return null;
+    const p = currentProfile;
+    const weights = p
+      ? {
+          cost: p.weight_cost,
+          quality: p.weight_quality,
+          positioning: p.weight_positioning,
+          momentum: p.weight_momentum,
+        }
+      : DEFAULT_FACTOR_WEIGHTS;
+    return deriveFullTierScores(rawScores, weights);
+  }, [rawScores, currentProfile]);
 
   /** The rendered column set. The evaluative pair sits where FundLens read
    *  it — straight after the fund's identity — and exists only when the

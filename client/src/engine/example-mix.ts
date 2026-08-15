@@ -60,6 +60,16 @@ export interface ExampleMixHolding {
   key: string;
   name: string | null;
   ticker: string | null;
+  /**
+   * The holding's filed sector, or null when no contributing row carries
+   * one (M1 m3). The same company can be filed under different sectors by
+   * different funds — vendor disagreement across filings is ordinary — so
+   * when they disagree, the sector of the LARGEST-CONTRIBUTING appearance
+   * wins. Deterministic by construction: contributions are compared
+   * strictly, so the first-seen row keeps the sector on an exact tie and
+   * the walk order over entries is stable.
+   */
+  sector: string | null;
   /** Percent of the whole mix (0–100 scale): sum over the funds that hold
    *  it of (fund's mix pct ÷ 100) × the holding's weight in that fund */
   combined_weight_pct: number;
@@ -155,6 +165,9 @@ export function computeExampleMix(
 
   // ── 3. Aggregated top holdings ───────────────────────────────────────────
   const holdingsByKey = new Map<string, ExampleMixHolding>();
+  /** M1 m3: the contribution behind each holding's currently-held sector,
+   *  so a larger appearance can take the sector from a smaller one. */
+  const sectorHeldByContribution = new Map<string, number>();
 
   for (const { fund_id, pct } of entries) {
     const ticker = tickerById.get(fund_id);
@@ -197,9 +210,14 @@ export function computeExampleMix(
     //    of the stored top ten — same math, full depth.
     if (view) {
       const fullList = ticker !== undefined ? fullHoldingsByTicker?.[ticker] : undefined;
-      const rows: Array<{ name: string | null; ticker: string | null; weight: number | null }> =
+      const rows: Array<{
+        name: string | null;
+        ticker: string | null;
+        weight: number | null;
+        sector: string | null;
+      }> =
         fullList !== undefined
-          ? fullList.map(h => ({ name: h.name, ticker: h.ticker, weight: h.pct }))
+          ? fullList.map(h => ({ name: h.name, ticker: h.ticker, weight: h.pct, sector: h.sector }))
           : view.top_holdings;
       for (const h of rows) {
         const key = h.ticker ?? h.name;
@@ -212,12 +230,22 @@ export function computeExampleMix(
             key,
             name: h.name,
             ticker: h.ticker,
+            sector: null,
             combined_weight_pct: 0,
             appears_in: [],
           };
           holdingsByKey.set(key, agg);
         }
         if (agg.name === null && h.name !== null) agg.name = h.name;
+        // M1 m3: largest-contributing appearance wins the sector. A row with
+        // no filed sector never displaces one that has it.
+        if (h.sector !== null) {
+          const heldBy = sectorHeldByContribution.get(key);
+          if (heldBy === undefined || contribution > heldBy) {
+            agg.sector = h.sector;
+            sectorHeldByContribution.set(key, contribution);
+          }
+        }
         agg.combined_weight_pct += contribution;
         agg.appears_in.push({
           fund_ticker: view.ticker,

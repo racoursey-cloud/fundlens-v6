@@ -1,7 +1,7 @@
 /**
  * FundLens v6 — Your Brief Page
  *
- * Primary landing page — the product. Layout (top to bottom):
+ * The full tier's brief page. Layout (top to bottom):
  *   1. Header row with title + Generate / Generate & Email buttons
  *   2. Allocation donut card (full-width, with fund highlights table + risk slider)
  *   3. Brief narrative (full-width, the personal core only — see U1-C below)
@@ -37,12 +37,12 @@ import {
   fetchBrief,
   generateBrief,
   fetchScores,
-  fetchProfile,
   updateProfile,
   type Brief,
   type FundScore,
   type UserProfile,
 } from '../api';
+import { useProfile } from '../context/ProfileContext';
 import { theme } from '../theme';
 import { DonutChart, type DonutSlice } from '../components/DonutChart';
 import { FundExposurePanel } from '../components/FundExposurePanel';
@@ -144,8 +144,17 @@ function nearestRiskLabel(value: number): string {
  * history, this page still holds it, generation still polls against it, and
  * nothing is removed from the archive. Only the table is shortened — which
  * is why its heading keeps saying how many exist.
+ *
+ * M1 m4 — the denominator rolls. The heading counts briefs generated in the
+ * trailing 90 days rather than every brief ever written, so it describes a
+ * recent window a reader can hold in their head instead of a number that
+ * only grows. Ruled August 15, 2026: it counts ALL rows in that window,
+ * failures included, because the table it summarizes lists failures too and
+ * badges them as failed. A denominator that quietly excluded them would
+ * describe a different list than the one underneath it.
  */
 const HISTORY_LIMIT = 5;
+const HISTORY_WINDOW_DAYS = 90;
 
 // ─── Stale Brief Detection (Option B) ──────────────────────────────────────
 
@@ -179,16 +188,14 @@ const SECTION_TITLES = [
   'Where We Stand',
 ];
 
-const SECTION_ACCENTS = [
-  theme.colors.accentBlue,   // Where the Numbers Point
-  theme.colors.success,      // Macro Environment
-  theme.colors.warning,      // Thematic Drivers
-  theme.colors.accentBlue,   // Asset Class & Sector Outlook
-  '#8B5CF6',                 // Portfolio Positioning — purple
-  theme.colors.success,      // Legacy: What Happened
-  theme.colors.warning,      // Legacy: What We're Watching
-  theme.colors.accentBlue,   // Legacy: Where We Stand
-];
+/**
+ * The accent for the one section that renders (U1-C trimmed the rest).
+ * This was an eight-colour table keyed by section index; seven of those
+ * colours became unreachable the moment the page stopped drawing the
+ * sections they belonged to, and an unreachable palette is a claim the
+ * code cannot honour.
+ */
+const CORE_ACCENT = theme.colors.accentBlue;
 
 /**
  * U1-C — the personal core: the one section that is the reader's own.
@@ -353,7 +360,7 @@ function renderMarkdown(md: string): string {
 // ─── Sub-Components ────────────────────────────────────────────────────────
 
 function BriefSectionCard({ section, preContent }: { section: BriefSection; preContent?: React.ReactNode }) {
-  const accent = SECTION_ACCENTS[section.index - 1] ?? theme.colors.accentBlue;
+  const accent = CORE_ACCENT;
   return (
     <div style={{
       background: theme.colors.surfaceAlt,
@@ -454,9 +461,41 @@ function LiveAllocationTable({ allocations }: { allocations: LiveAllocation[] })
   );
 }
 
-function BriefBody({ contentMd, liveAllocations }: {
+/**
+ * M1 m5 — the provenance line.
+ *
+ * The narrative is frozen at generation; the allocation table above it and
+ * the chips on the card above that are computed live from the current risk
+ * setting and the latest scores. On August 14 that seam showed itself
+ * plainly — the prose discussed QFVRX while the live chips showed PRPFX.
+ * Neither was wrong; they were answers from two different moments, and
+ * nothing on the page said so.
+ *
+ * This says so. Modest, inside the block it describes, naming the one fact
+ * that resolves the confusion: when these words were written.
+ */
+function BriefProvenanceLine({ generatedAt }: { generatedAt?: string }) {
+  if (!generatedAt) return null;
+  const when = new Date(generatedAt);
+  if (Number.isNaN(when.getTime())) return null;
+  return (
+    <p style={{
+      fontSize: '11px', color: theme.colors.textDim, margin: '0 0 14px',
+      fontFamily: theme.fonts.body,
+    }}>
+      Written {when.toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      })}. The numbers above update with your risk setting; this text does not.
+    </p>
+  );
+}
+
+function BriefBody({ contentMd, liveAllocations, generatedAt }: {
   contentMd: string;
   liveAllocations?: LiveAllocation[];
+  /** M1 m5: when the prose below was written, printed inside the block */
+  generatedAt?: string;
 }) {
   const { sections } = parseBriefSections(contentMd);
   const core = sections.filter((s) => isPersonalCore(s.title));
@@ -471,17 +510,30 @@ function BriefBody({ contentMd, liveAllocations }: {
   return (
     <div>
       {core.map((section, i) => {
-        const isAllocSection = section.title.toLowerCase().includes('where the numbers point');
-        if (isAllocSection && liveAllocations && liveAllocations.length > 0) {
+        // Every section that survives the trim IS the allocation section, so
+        // the old title re-test here was always true. The live-allocations
+        // guard is NOT redundant and stays: with no allocations computed yet,
+        // stripping the markdown table would leave the reader with neither.
+        if (liveAllocations && liveAllocations.length > 0) {
           const strippedBody = stripAllocationTable(section.body);
           return (
             <BriefSectionCard key={i}
               section={{ ...section, body: strippedBody }}
-              preContent={<LiveAllocationTable allocations={liveAllocations} />}
+              preContent={
+                <>
+                  <BriefProvenanceLine generatedAt={generatedAt} />
+                  <LiveAllocationTable allocations={liveAllocations} />
+                </>
+              }
             />
           );
         }
-        return <BriefSectionCard key={i} section={section} />;
+        return (
+          <BriefSectionCard key={i}
+            section={section}
+            preContent={<BriefProvenanceLine generatedAt={generatedAt} />}
+          />
+        );
       })}
     </div>
   );
@@ -555,21 +607,27 @@ export function YourBrief() {
 
   useEffect(() => { loadBriefs(); }, [loadBriefs]);
 
+  // M1 m9: the scores come from their own call; the profile comes from the
+  // one the provider fetched. Two effects rather than one Promise.all, so a
+  // profile landing later does not refetch scores.
+  const { profile: sharedProfile, setProfile: setSharedProfile } = useProfile();
+
   useEffect(() => {
-    Promise.all([fetchScores(), fetchProfile()]).then(([scoresRes, profileRes]) => {
+    fetchScores().then(scoresRes => {
       if (scoresRes.data?.scores) setScores(scoresRes.data.scores);
-      if (profileRes.data?.profile) {
-        const p = profileRes.data.profile;
-        setProfile(p);
-        setWeights({
-          cost: p.weight_cost, quality: p.weight_quality,
-          positioning: p.weight_positioning, momentum: p.weight_momentum,
-        });
-        setRisk(p.risk_tolerance);
-      }
       setLoadingScores(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!sharedProfile) return;
+    setProfile(sharedProfile);
+    setWeights({
+      cost: sharedProfile.weight_cost, quality: sharedProfile.weight_quality,
+      positioning: sharedProfile.weight_positioning, momentum: sharedProfile.weight_momentum,
+    });
+    setRisk(sharedProfile.risk_tolerance);
+  }, [sharedProfile]);
 
   // ── Brief actions ─────────────────────────────────────────────────────
 
@@ -633,10 +691,15 @@ export function YourBrief() {
 
   // ── Risk slider ───────────────────────────────────────────────────────
 
+  // M1 m9: the write goes to the server as before AND back into the shared
+  // row. With one cached profile instead of three fetches, a page that
+  // changes it must say so, or the next tab reads the old risk setting.
   const handleRiskChange = useCallback((val: number) => {
     setRisk(val);
-    updateProfile({ risk_tolerance: val });
-  }, []);
+    updateProfile({ risk_tolerance: val }).then(res => {
+      if (res.data?.profile) setSharedProfile(res.data.profile);
+    });
+  }, [setSharedProfile]);
 
   // ── Client-side rescore + allocation ──────────────────────────────────
 
@@ -814,9 +877,16 @@ export function YourBrief() {
   // shortened archive.
 
   const visibleBriefs = briefs.slice(0, HISTORY_LIMIT);
-  const historyCount = briefs.length > HISTORY_LIMIT
-    ? `${HISTORY_LIMIT} of ${briefs.length}`
-    : `${briefs.length}`;
+
+  // M1 m4: the rolling denominator. Counted from the same list the table
+  // draws from, so heading and rows can never describe different things.
+  const windowStartMs = Date.now() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const briefsInWindow = briefs.filter(
+    b => new Date(b.generated_at).getTime() >= windowStartMs
+  ).length;
+  const historyCount = briefsInWindow > visibleBriefs.length
+    ? `${visibleBriefs.length} of ${briefsInWindow} in the last ${HISTORY_WINDOW_DAYS} days`
+    : `${visibleBriefs.length}`;
 
   // ── Loading state ─────────────────────────────────────────────────────
 
@@ -1118,6 +1188,7 @@ export function YourBrief() {
             {selectedBrief.content_md ? (
               <BriefBody
                 contentMd={selectedBrief.content_md}
+                generatedAt={selectedBrief.generated_at}
                 liveAllocations={allocations
                   .filter(a => a.allocationPct > 0)
                   .map(a => ({

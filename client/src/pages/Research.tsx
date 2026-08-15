@@ -19,10 +19,10 @@ import DOMPurify from 'dompurify';
 import {
   fetchThesis,
   fetchScores,
-  fetchProfile,
   type ThesisData,
   type FundScore,
 } from '../api';
+import { useProfile } from '../context/ProfileContext';
 import { theme } from '../theme';
 
 /** Render inline markdown bold/italic within narrative text */
@@ -39,7 +39,6 @@ function inlineMarkdown(text: string): string {
 }
 import { SectorScorecard, type SectorScore } from '../components/SectorScorecard';
 import { DonutChart, BarBreakdown, type DonutSlice, type DonutDrillItem } from '../components/DonutChart';
-// FundDetail moved to FundLens tab
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
 // ─── Shared Utilities ─────────────────────────────────────────────────────
@@ -116,7 +115,7 @@ const FUND_PALETTE = [
   '#fb923c', '#84cc16',
 ];
 
-// scoreBg/scoreColor removed — fund table moved to FundLens tab
+// scoreBg/scoreColor removed with the fund table (U1-B: one grid, on Funds)
 
 // ─── Stance Configuration ──────────────────────────────────────────────────
 
@@ -136,6 +135,44 @@ function getStance(macroStance: string) {
   return STANCE_CONFIG[macroStance?.toLowerCase()] ?? STANCE_CONFIG['neutral']!;
 }
 
+// ─── M1 m6: "Since the last run" ───────────────────────────────────────────
+
+/**
+ * What moved between the previous pipeline run's thesis and this one.
+ *
+ * Comparison only — the server hands over both rows exactly as stored and
+ * this reads them. Returns null when there is no prior run to compare
+ * against, and the line then renders nothing rather than inventing a
+ * baseline. 'Unavailable' is the thesis writer's word for a theme it could
+ * not produce, so it is treated as absent on either side: better to say
+ * nothing about the theme than to print "Unavailable → X" as if that were a
+ * change in the weather.
+ */
+function sinceLastRun(current: ThesisData, prior: ThesisData | null): string | null {
+  if (!prior) return null;
+
+  const namedTheme = (t: string | undefined): string | null => {
+    const trimmed = (t ?? '').trim();
+    return trimmed && trimmed !== 'Unavailable' ? trimmed : null;
+  };
+  const was = namedTheme(prior.dominant_theme);
+  const now = namedTheme(current.dominant_theme);
+
+  const parts: string[] = [];
+  if (was && now && was !== now) parts.push(`${was} → ${now}`);
+  else if (now) parts.push(`theme held: ${now}`);
+
+  const stanceWas = getStance(prior.macro_stance).label;
+  const stanceNow = getStance(current.macro_stance).label;
+  parts.push(
+    stanceWas === stanceNow
+      ? `stance held at ${stanceNow}`
+      : `stance ${stanceWas} → ${stanceNow}`
+  );
+
+  return parts.join(' · ');
+}
+
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
@@ -148,6 +185,9 @@ function fmtDate(iso: string): string {
 export function Research() {
   // Thesis state
   const [thesis, setThesis] = useState<ThesisData | null>(null);
+  // M1 m6: the run before this one, exactly as stored. Null when only one
+  // run exists — the delta line then says nothing rather than guessing.
+  const [priorThesis, setPriorThesis] = useState<ThesisData | null>(null);
   const [loadingThesis, setLoadingThesis] = useState(true);
 
   // Scores + profile state
@@ -163,24 +203,31 @@ export function Research() {
   useEffect(() => {
     fetchThesis().then(res => {
       if (res.data?.thesis) setThesis(res.data.thesis);
+      setPriorThesis(res.data?.previous ?? null);
       setLoadingThesis(false);
     });
   }, []);
 
+  // M1 m9: the scores come from their own call; the weighting and risk come
+  // from the one profile the provider fetched. Read in a second effect so a
+  // profile that lands later updates the rescore without refetching scores.
+  const { profile: currentProfile } = useProfile();
+
   useEffect(() => {
-    Promise.all([fetchScores(), fetchProfile()]).then(([scoresRes, profileRes]) => {
+    fetchScores().then(scoresRes => {
       if (scoresRes.data?.scores) setScores(scoresRes.data.scores);
-      if (profileRes.data?.profile) {
-        const p = profileRes.data.profile;
-        setWeights({
-          cost: p.weight_cost, quality: p.weight_quality,
-          positioning: p.weight_positioning, momentum: p.weight_momentum,
-        });
-        setRisk(p.risk_tolerance);
-      }
       setLoadingScores(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!currentProfile) return;
+    setWeights({
+      cost: currentProfile.weight_cost, quality: currentProfile.weight_quality,
+      positioning: currentProfile.weight_positioning, momentum: currentProfile.weight_momentum,
+    });
+    setRisk(currentProfile.risk_tolerance);
+  }, [currentProfile]);
 
   // ── Client-side rescore ───────────────────────────────────────────────
 
@@ -450,6 +497,27 @@ export function Research() {
             )}
           </div>
 
+          {/* M1 m6: what moved since the previous run. Absent entirely when
+              there is no prior run to compare against. */}
+          {sinceLastRun(thesis, priorThesis) && (
+            <div style={{
+              padding: '8px 24px',
+              borderBottom: `1px solid ${theme.colors.border}`,
+              fontSize: 12,
+              color: theme.colors.textMuted,
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: 8,
+              flexWrap: 'wrap',
+            }}>
+              <span style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+                textTransform: 'uppercase', color: theme.colors.textDim,
+              }}>Since the last run</span>
+              <span>{sinceLastRun(thesis, priorThesis)}</span>
+            </div>
+          )}
+
           <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* Badges row */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -548,7 +616,7 @@ export function Research() {
         </div>
       )}
 
-      {/* Section 4 (Fund Analysis table) moved to FundLens tab */}
+      {/* Section 4 (Fund Analysis table) lives on the unified Funds grid */}
 
       {/* Empty state */}
       {!loadingScores && scores.length === 0 && !thesis && (
@@ -570,4 +638,4 @@ export function Research() {
   );
 }
 
-// (tdFactorStyle removed — fund table moved to FundLens tab)
+// (tdFactorStyle removed with the fund table — U1-B)

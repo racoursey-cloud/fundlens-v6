@@ -547,6 +547,23 @@ function wikipediaSearchUrl(name: string): string {
   return `https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(name)}`;
 }
 
+/**
+ * M1 m8 — the venues where FMP's date is a quote date, not a listing date.
+ *
+ * Ruled August 15, 2026: the assignment's intent was "venues where the date
+ * is a quote date, not an IPO," and Pink Sheets is that, so PNK relabels
+ * alongside OTC. The exchange codes present in the cache today are OTC,
+ * NYSE, NASDAQ, AMEX, PNK and CBOE; only the first and the fifth are
+ * over-the-counter. An unrecognized or absent code is treated as a listing,
+ * which is the conservative reading — it keeps today's wording rather than
+ * asserting a quote history nobody has evidence for.
+ */
+const OTC_VENUES = new Set(['OTC', 'PNK']);
+
+function isOverTheCounterVenue(exchange: string | null): boolean {
+  return exchange !== null && OTC_VENUES.has(exchange.trim().toUpperCase());
+}
+
 function HoldingCompanyPanel({ holding }: { holding: ReferenceHolding }) {
   const [company, setCompany] = useState<CompanyPanel | null>(null);
   const [loading, setLoading] = useState(false);
@@ -602,7 +619,20 @@ function HoldingCompanyPanel({ holding }: { holding: ReferenceHolding }) {
     const business = [company.sector, company.industry].filter(Boolean).join(' — ');
     if (business) facts.push(business);
     if (company.exchange) facts.push(company.exchange);
-    if (company.ipoDate) facts.push(`Listed ${company.ipoDate}`);
+    // M1 m8 (ruled August 15, 2026): on an over-the-counter venue the date
+    // FMP files is when that quote line opened, not when the company listed.
+    // TSMWF is the case that surfaced it — "Listed 2026-07-15" for Taiwan
+    // Semiconductor, public since 1997 and carrying that 1997 date on its
+    // NYSE line. The date is right; the word "Listed" was wrong. OTC and PNK
+    // (Pink) are both quote venues in this sense; NYSE, NASDAQ, AMEX and
+    // CBOE are listings and are untouched.
+    if (company.ipoDate) {
+      facts.push(
+        isOverTheCounterVenue(company.exchange)
+          ? `OTC quote since ${company.ipoDate}`
+          : `Listed ${company.ipoDate}`
+      );
+    }
   }
 
   return (

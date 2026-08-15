@@ -17,8 +17,19 @@
  * returns the editor to blank. The server is the authority on validation —
  * its 400 messages render as sent. The saved mix is used for nothing else.
  *
- * Renders inside ReferenceShell's Outlet: header, tabs, and footer come
- * from the shell.
+ * Renders inside the unified Shell's Outlet: header, tabs, and footer come
+ * from the shell (U1-A retired ReferenceShell).
+ *
+ * M1 m3: the standalone sector donut is now the shared FundExposurePanel —
+ * sector bars left, that donut in the middle, the mix's holdings right,
+ * clicking a sector (bar or wedge) filtering the holdings to it. Both tiers,
+ * on data the reference allowlist already ships. The panel replaces the old
+ * legend, which said the same things without the drill-in.
+ *
+ * The bars come from the funds' filed sector maps and the holdings from
+ * holdings rows — two honest provenances that need not reconcile exactly.
+ * That is the same pattern the fund detail already carries, logged and
+ * accepted; My Mix inherits it rather than inventing it.
  *
  * B9 c11: holdings math runs on the funds' COMPLETE lists — each chosen
  * fund's ?all=1 detail is fetched (cached per session) and fed to the
@@ -51,6 +62,11 @@ import {
 } from '../../engine/example-mix';
 import { hhiLabel } from '../../utils/hhi';
 import { DonutChart, type DonutSlice } from '../../components/DonutChart';
+import {
+  FundExposurePanel,
+  type ExposureHolding,
+  type ExposureSector,
+} from '../../components/FundExposurePanel';
 import {
   MONEY_MARKET_TICKERS,
   REFERENCE_SECTOR_COLORS,
@@ -160,6 +176,28 @@ function concentrationCell(
   return hhiLabel(result.hhi).label;
 }
 
+// ─── M1 m3: the shared panel's sector identity ─────────────────────────────
+// The fund detail's rule, copied so the drill behaves identically here: a
+// sector the palette names keeps its own identity, everything else folds
+// into 'Other'. Holdings run through the SAME function, so clicking the
+// folded 'Other' bar filters to exactly the holdings that folded into it —
+// bars, donut wedges and holdings all keyed alike.
+
+function mixSliceIdForSector(sector: string): string {
+  return sector in REFERENCE_SECTOR_COLORS && sector !== 'Other' ? sector : 'Other';
+}
+
+// ─── Editor columns (M1 m1) ────────────────────────────────────────────────
+// `key` names the Fund field a header sorts by; null means the column does
+// not sort. The percent column takes the user's own inputs, so it has no
+// order of its own to offer.
+
+const MIX_COLUMNS: Array<{ label: string; key: 'ticker' | 'name' | null }> = [
+  { label: 'Ticker', key: 'ticker' },
+  { label: 'Name', key: 'name' },
+  { label: 'Percent of mix', key: null },
+];
+
 // ─── Page ──────────────────────────────────────────────────────────────────
 
 export function ReferenceMyMix() {
@@ -177,6 +215,32 @@ export function ReferenceMyMix() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // ── M1 m1: column sort, the Funds grid's grammar exactly ────────────────
+  // Click a header to sort, click it again to reverse. Only the two fact
+  // columns sort; "Percent of mix" holds the user's own inputs and has no
+  // natural order to offer. Reordering rows is safe by construction —
+  // `pctText` is keyed by fund id and each row's React key is that id, so a
+  // typed value stays with its fund no matter where the row moves.
+  const [sortKey, setSortKey] = useState<'ticker' | 'name'>('ticker');
+  const [sortDir, setSortDir] = useState<1 | -1>(1);
+
+  const handleSort = (key: 'ticker' | 'name') => {
+    if (key === sortKey) {
+      setSortDir(d => (d === 1 ? -1 : 1));
+    } else {
+      setSortKey(key);
+      setSortDir(1);
+    }
+  };
+
+  const sortedFunds = useMemo(
+    () =>
+      [...funds].sort(
+        (a, b) => String(a[sortKey] ?? '').localeCompare(String(b[sortKey] ?? '')) * sortDir,
+      ),
+    [funds, sortKey, sortDir],
+  );
 
   useEffect(() => {
     Promise.all([fetchFunds(), fetchReferenceScores(), fetchExampleAllocation()]).then(
@@ -241,12 +305,80 @@ export function ReferenceMyMix() {
   const totalOk = Math.abs(total - 100) <= 0.05;
   const canSave = entries.length > 0 && everyEntryValid && totalOk && !saving && !deleting;
 
+  // ── M1 m2: unsaved-changes state ────────────────────────────────────────
+  // Dirty means the editor differs from what is actually on file. Compared
+  // as NUMBERS, not as text: the saved mix comes back as String(pct), so
+  // "10" and "10.0" are the same mix and neither should raise the notice.
+  // A blank input and an absent saved line are likewise the same thing —
+  // the fund is not in the mix either way.
+
+  const savedPctById = useMemo(() => {
+    const map = new Map<string, number>();
+    if (savedRow) {
+      const menuIds = new Set(funds.map(f => f.id));
+      for (const a of savedRow.allocations) {
+        if (menuIds.has(a.fund_id)) map.set(a.fund_id, a.pct);
+      }
+    }
+    return map;
+  }, [savedRow, funds]);
+
+  const isDirty = useMemo(() => {
+    for (const f of funds) {
+      const text = (pctText[f.id] ?? '').trim();
+      const savedPct = savedPctById.get(f.id);
+      if (text === '') {
+        if (savedPct !== undefined) return true;
+        continue;
+      }
+      // Text that does not parse is a change by definition — there is no
+      // saved value it could equal.
+      const typed = Number(text);
+      if (!Number.isFinite(typed)) return true;
+      if (savedPct === undefined || Math.abs(typed - savedPct) > 1e-9) return true;
+    }
+    return false;
+  }, [funds, pctText, savedPctById]);
+
+  // The browser's own warning on close, reload, or leaving the site. It does
+  // NOT cover moving between tabs inside the app: this app mounts a plain
+  // BrowserRouter, so React Router's useBlocker — which needs a data router
+  // — is unavailable, and migrating the routing tree is not polish (ruled
+  // August 15, 2026). The badge below is what warns in that case.
+  useEffect(() => {
+    if (!isDirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Legacy browsers act on the assignment rather than preventDefault.
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isDirty]);
+
   const result = useMemo(
     () => computeExampleMix(funds, refFunds, entries),
     [funds, refFunds, entries],
   );
   const hasMix = entries.some(e => Number.isFinite(e.pct) && e.pct > 0);
   const slices = useMemo(() => buildMixSlices(result.sector_exposure_pct), [result]);
+
+  // ── M1 m3: the shared exposure panel's inputs ───────────────────────────
+  const [selectedSector, setSelectedSector] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // The left column is the donut's own slices as bars — same values, same
+  // order, same colors, so the two can never disagree.
+  const sectorBars = useMemo<ExposureSector[]>(
+    () => slices.map(s => ({ sector: s.label, weight: s.pct, color: s.color })),
+    [slices],
+  );
 
   // ── B9 c11: full holdings lists for the chosen funds (?all=1, cached) ──
   const chosenTickers = useMemo(
@@ -310,6 +442,25 @@ export function ReferenceMyMix() {
         ? computeExampleMix(funds, refFunds, entries, fullHoldings)
         : null,
     [holdingsReady, funds, refFunds, entries, fullHoldings],
+  );
+
+  // The right column. It reads the FULL-depth result once the ?all=1 lists
+  // land and the stored top-holdings result before then — so the panel is
+  // never empty while it waits, and never claims "no holdings data" when the
+  // truth is "not fetched yet". The list deepens in place when the fetches
+  // finish. Rows the filing left unclassified keep a null sector: they show
+  // in the unfiltered list and no sector claims them.
+  const panelHoldings = useMemo<ExposureHolding[]>(
+    () =>
+      (resultFull ?? result).holdings
+        .filter(h => h.combined_weight_pct > 0)
+        .map(h => ({
+          name: h.name ?? h.key,
+          ticker: h.ticker,
+          weight: h.combined_weight_pct,
+          sector: h.sector === null ? null : mixSliceIdForSector(h.sector),
+        })),
+    [resultFull, result],
   );
 
   const handleSave = async () => {
@@ -397,9 +548,10 @@ export function ReferenceMyMix() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr>
-              {['Ticker', 'Name', 'Percent of mix'].map((h, i) => (
+              {MIX_COLUMNS.map((col, i) => (
                 <th
-                  key={h}
+                  key={col.label}
+                  onClick={col.key ? () => handleSort(col.key!) : undefined}
                   style={{
                     textAlign: i === 2 ? 'right' : 'left',
                     padding: '10px 12px',
@@ -410,15 +562,18 @@ export function ReferenceMyMix() {
                     textTransform: 'uppercase',
                     borderBottom: `1px solid ${theme.colors.border}`,
                     whiteSpace: 'nowrap',
+                    cursor: col.key ? 'pointer' : 'default',
+                    userSelect: col.key ? 'none' : 'auto',
                   }}
                 >
-                  {h}
+                  {col.label}
+                  {col.key && sortKey === col.key ? (sortDir === 1 ? ' ▲' : ' ▼') : ''}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {funds.map(f => {
+            {sortedFunds.map(f => {
               const text = pctText[f.id] ?? '';
               const rowInvalid = text.trim() !== '' && !isValidPctText(text);
               return (
@@ -514,6 +669,22 @@ export function ReferenceMyMix() {
             Saved mix on file — last saved {savedRow.updated_at.slice(0, 10)}
           </span>
         )}
+        {/* M1 m2: the inline notice, present exactly while the editor
+            differs from what is on file. Factual, not evaluative — it
+            reports a state and names the control that clears it. */}
+        {isDirty && (
+          <span
+            style={{
+              fontSize: 12,
+              color: theme.colors.textMuted,
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radii.sm,
+              padding: '4px 10px',
+            }}
+          >
+            Unsaved changes — click Save to keep them
+          </span>
+        )}
       </div>
 
       {saveError && (
@@ -567,20 +738,23 @@ export function ReferenceMyMix() {
           <div style={{ marginBottom: 14 }}>
             <SectionLabel text="Sectors across the mix" />
             {slices.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 24 }}>
-                <DonutChart slices={slices} size={200} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220, flex: 1 }}>
-                  {slices.map(s => (
-                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: theme.colors.text, flex: 1 }}>{s.label}</span>
-                      <span style={{ fontSize: 12, fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
-                        {fmtMixPct(s.pct)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <FundExposurePanel
+                sectors={sectorBars}
+                holdings={panelHoldings}
+                selectedSector={selectedSector}
+                onSelectSector={setSelectedSector}
+                isMobile={isMobile}
+                sectorLimit={null}
+                center={
+                  <DonutChart
+                    slices={slices}
+                    size={200}
+                    onSliceClick={slice =>
+                      setSelectedSector(prev => (prev === slice.id ? null : slice.id))
+                    }
+                  />
+                }
+              />
             ) : (
               <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
                 — nothing to chart yet

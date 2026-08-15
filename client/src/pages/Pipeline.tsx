@@ -24,7 +24,6 @@ import {
   abortPipeline,
   fetchSystemHealth,
   fetchLatestDossiers,
-  fetchProfile,
   runClassificationBenchmark,
   getBenchmarkStatus,
   generateReferenceSummaries,
@@ -35,6 +34,7 @@ import {
   type BenchmarkRunStatus,
   type BenchmarkModelKey,
 } from '../api';
+import { useProfile } from '../context/ProfileContext';
 import { theme } from '../theme';
 
 // CB cb4(a): display names for the benchmark model menu (keys mirror the
@@ -302,12 +302,12 @@ function GeneratePanel() {
 export function Pipeline() {
   // A5 Task 4: admin gate — non-admin accounts get a clean redirect home.
   // null = still checking; false = redirect; true = render the cockpit.
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  useEffect(() => {
-    fetchProfile().then(res => {
-      setIsAdmin(res.data?.profile?.is_admin === true);
-    });
-  }, []);
+  // M1 m9: read from the one profile the provider fetched. Null while it is
+  // still loading preserves the old "still checking" state exactly — a
+  // failed load lands on false, which is the same redirect the old code
+  // produced when the request returned no profile.
+  const { profile: currentProfile, loading: profileLoading } = useProfile();
+  const isAdmin: boolean | null = profileLoading ? null : currentProfile?.is_admin === true;
 
   const [latestRun, setLatestRun] = useState<PipelineRun | null>(null);
   const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);

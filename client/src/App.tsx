@@ -49,9 +49,9 @@
  * Destination: client/src/App.tsx
  */
 
-import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ProfileProvider, useProfile } from './context/ProfileContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Shell } from './components/Shell';
@@ -66,7 +66,7 @@ import { ReferenceFunds } from './pages/reference/Funds';
 import { ReferenceMyMix } from './pages/reference/MyMix';
 import { ReferenceHelp } from './pages/reference/Help';
 import { deriveCapabilities } from './capabilities';
-import { fetchProfile, isAccessRestricted, type UserProfile } from './api';
+import { isAccessRestricted } from './api';
 import { theme } from './theme';
 
 // ─── Shared loading spinner ────────────────────────────────────────────────
@@ -150,26 +150,9 @@ function FullScreenNotice({ title, body, email }: { title: string; body: string;
 function TierRouter() {
   const { user, loading: authLoading } = useAuth();
   const location = useLocation();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [profileError, setProfileError] = useState<string | null>(null);
-  const [profileLoading, setProfileLoading] = useState(true);
-
-  useEffect(() => {
-    if (!user) {
-      setProfileLoading(false);
-      return;
-    }
-    setProfileLoading(true);
-    setProfileError(null);
-    fetchProfile().then(({ data, error }) => {
-      if (data?.profile) {
-        setProfile(data.profile);
-      } else {
-        setProfileError(error || 'Could not load your account.');
-      }
-      setProfileLoading(false);
-    });
-  }, [user]);
+  // M1 m9: the profile comes from the one place that asks for it. The three
+  // pieces of state below were this component's own copy of that request.
+  const { profile, error: profileError, loading: profileLoading } = useProfile();
 
   if (authLoading || (user && profileLoading)) {
     return <CenteredSpinner />;
@@ -271,16 +254,22 @@ export function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <BrowserRouter>
-          <Routes>
-            {/* Public routes */}
-            <Route path="/login" element={<Login />} />
-            <Route path="/auth/callback" element={<AuthCallback />} />
+        {/* M1 m9: one profile request per load, for every route below it.
+            Inside AuthProvider because the fetch is keyed to the signed-in
+            user; outside BrowserRouter because entitlement does not change
+            when the route does. */}
+        <ProfileProvider>
+          <BrowserRouter>
+            <Routes>
+              {/* Public routes */}
+              <Route path="/login" element={<Login />} />
+              <Route path="/auth/callback" element={<AuthCallback />} />
 
-            {/* Everything else routes by tier (B3) */}
-            <Route path="/*" element={<TierRouter />} />
-          </Routes>
-        </BrowserRouter>
+              {/* Everything else routes by tier (B3) */}
+              <Route path="/*" element={<TierRouter />} />
+            </Routes>
+          </BrowserRouter>
+        </ProfileProvider>
       </AuthProvider>
     </ErrorBoundary>
   );
