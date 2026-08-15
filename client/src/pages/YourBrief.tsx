@@ -1,7 +1,7 @@
 /**
  * FundLens v6 — Your Brief Page
  *
- * Primary landing page — the product. Layout (top to bottom):
+ * The full tier's brief page. Layout (top to bottom):
  *   1. Header row with title + Generate / Generate & Email buttons
  *   2. Allocation donut card (full-width, with fund highlights table + risk slider)
  *   3. Brief narrative (full-width, the personal core only — see U1-C below)
@@ -188,16 +188,14 @@ const SECTION_TITLES = [
   'Where We Stand',
 ];
 
-const SECTION_ACCENTS = [
-  theme.colors.accentBlue,   // Where the Numbers Point
-  theme.colors.success,      // Macro Environment
-  theme.colors.warning,      // Thematic Drivers
-  theme.colors.accentBlue,   // Asset Class & Sector Outlook
-  '#8B5CF6',                 // Portfolio Positioning — purple
-  theme.colors.success,      // Legacy: What Happened
-  theme.colors.warning,      // Legacy: What We're Watching
-  theme.colors.accentBlue,   // Legacy: Where We Stand
-];
+/**
+ * The accent for the one section that renders (U1-C trimmed the rest).
+ * This was an eight-colour table keyed by section index; seven of those
+ * colours became unreachable the moment the page stopped drawing the
+ * sections they belonged to, and an unreachable palette is a claim the
+ * code cannot honour.
+ */
+const CORE_ACCENT = theme.colors.accentBlue;
 
 /**
  * U1-C — the personal core: the one section that is the reader's own.
@@ -362,7 +360,7 @@ function renderMarkdown(md: string): string {
 // ─── Sub-Components ────────────────────────────────────────────────────────
 
 function BriefSectionCard({ section, preContent }: { section: BriefSection; preContent?: React.ReactNode }) {
-  const accent = SECTION_ACCENTS[section.index - 1] ?? theme.colors.accentBlue;
+  const accent = CORE_ACCENT;
   return (
     <div style={{
       background: theme.colors.surfaceAlt,
@@ -512,8 +510,11 @@ function BriefBody({ contentMd, liveAllocations, generatedAt }: {
   return (
     <div>
       {core.map((section, i) => {
-        const isAllocSection = section.title.toLowerCase().includes('where the numbers point');
-        if (isAllocSection && liveAllocations && liveAllocations.length > 0) {
+        // Every section that survives the trim IS the allocation section, so
+        // the old title re-test here was always true. The live-allocations
+        // guard is NOT redundant and stays: with no allocations computed yet,
+        // stripping the markdown table would leave the reader with neither.
+        if (liveAllocations && liveAllocations.length > 0) {
           const strippedBody = stripAllocationTable(section.body);
           return (
             <BriefSectionCard key={i}
