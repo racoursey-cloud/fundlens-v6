@@ -745,6 +745,14 @@ export function ReferenceMyMix() {
                 onSelectSector={setSelectedSector}
                 isMobile={isMobile}
                 sectorLimit={null}
+                /* H3 t1: the rows may be looked up only once they ARE the
+                   ?all=1 holdings — holdings_cache.ticker, the H1-F2 vouched
+                   display column. Until those fetches land the list is built
+                   from the stored top-holdings blob, whose tickers the display
+                   validation never vouched for, so the panel opens on the
+                   filed-name-plus-Wikipedia fallback instead of looking up a
+                   code the app declined to stand behind. */
+                tickersAreDisplayValidated={resultFull !== null}
                 center={
                   <DonutChart
                     slices={slices}
