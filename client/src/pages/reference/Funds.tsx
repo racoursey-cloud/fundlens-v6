@@ -71,6 +71,7 @@ import {
   type FullTierScore,
 } from '../../engine/full-tier-scores';
 import { computeHHI, hhiLabel } from '../../utils/hhi';
+import { HoldingsSearch } from '../../components/HoldingsSearch';
 import { theme } from '../../theme';
 import { ReferenceFundDetail } from './FundDetail';
 import { MONEY_MARKET_TICKERS } from './constants';
@@ -316,6 +317,13 @@ export function ReferenceFunds() {
         fund to look inside it.
         {asOf ? ` Data updated ${asOf.slice(0, 10)}.` : ''}
       </p>
+
+      {/* H3 t6: the search sits ABOVE the list, scoped to all 23 funds
+          (ruling 2) — the on-or-off-the-list question, asked before the
+          member starts reading rows. Its coverage line comes with it. */}
+      <div style={{ marginBottom: theme.spacing.lg }}>
+        <HoldingsSearch scope="all" />
+      </div>
 
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
