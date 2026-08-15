@@ -49,7 +49,9 @@ import {
   shapeFundListForReference,
   shapeHoldingForReference,
   shapeCompanyPanel,
+  shapeHoldingsSearch,
   type CompanyProfileSource,
+  type HoldingsSearchRowSource,
   type ReferenceDossierSource,
   type ReferenceFundIdentity,
   type ReferenceHoldingSource,
@@ -113,6 +115,19 @@ const companyPanelRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 300,                   // 300 holding panels per hour
   message: { error: 'Company panel rate limit exceeded. Max 300 per hour.' },
+  keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
+  validate: { trustProxy: false, xForwardedForHeader: false },
+});
+
+// H3 t3: the cross-fund holdings search cadence. The standing member cadence
+// is 20 per hour (helpChat / helpAsk), but those call Claude and this does
+// not — it is one indexed read a member may repeat while screening a list of
+// companies, so the ratified order drafts 30 (§7-b). If the logs show members
+// walling, a micro-order moves the number.
+const holdingsSearchRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30,                    // 30 searches per hour
+  message: { error: 'Search rate limit exceeded. Max 30 per hour.' },
   keyGenerator: (req) => (req as AuthenticatedRequest).userId || 'anonymous',
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
@@ -1921,6 +1936,128 @@ router.get('/api/holdings/company', requireAuth, companyPanelRateLimit, async (r
   }
 
   res.json({ company: shapeCompanyPanel(row.profile) });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// H3 — CROSS-FUND HOLDINGS SEARCH
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The ceiling on rows one search reads. It is deliberately far above the
+ * whole table — 9,502 rows across 21 funds on August 15, 2026 — because a
+ * cap that BIT would be a quiet lie: a company's fund list would come back
+ * short and the response has no field, by allowlist, in which to admit it.
+ * Verified read-only the same day that this project sets no PostgREST
+ * db_max_rows, so the limit below is the only cap in the path.
+ *
+ * Sizing the risk it guards against: matching '%in%' hits 4,206 rows today,
+ * and the thousandth-largest sits at 0.19% with 3,206 rows beneath it — so a
+ * 1,000-row ceiling would have silently dropped small holders from otherwise
+ * correct answers. Ordering by percent of NAV descending means that even in
+ * some future where the table outgrows this number, the rows kept are the
+ * largest positions; the route logs it if that day ever comes.
+ */
+const HOLDINGS_SEARCH_ROW_CEILING = 25000;
+
+/**
+ * Strip the characters that would change what the search MEANS.
+ *
+ * `%` and `_` are SQL LIKE wildcards and `*` is PostgREST's spelling of `%`;
+ * a backslash is the escape character both layers below use. None of them
+ * appears in any filed holding name in production (verified read-only,
+ * August 15, 2026: zero of 9,502 rows), so removing them costs a member
+ * nothing and keeps a typed `%` from turning a search into a table scan.
+ * Everything else — dots, ampersands, apostrophes, commas, parentheses —
+ * survives intact and is protected by quoting instead, because filed names
+ * are full of it ("Dollar General Corp.").
+ */
+function sanitizeSearchTerm(raw: string): string {
+  return raw.replace(/[\\%_*]/g, '');
+}
+
+/** PostgREST filter values are quoted so that reserved characters — the
+ *  comma, dot, colon and parentheses its grammar uses — are read as text.
+ *  Inside the quotes only the quote itself needs escaping; the backslash
+ *  that would compete with it is already gone.
+ *
+ *  The wildcards below are written as `%`, the SQL character, rather than as
+ *  PostgREST's `*` shorthand: `%` needs no translation step to survive the
+ *  quoting, and the sanitizer above guarantees the only ones present are the
+ *  two this route adds itself. */
+function quoteFilterValue(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * GET /api/holdings/search?q=
+ *
+ * "Of these twenty-three funds, which ones hold the following company?" —
+ * Robert's question, August 15, 2026, and the reason this endpoint exists.
+ * One search, two homes: the Funds page asks it of the whole lineup, My Mix
+ * asks it of the funds on screen. The scoping is the CLIENT's (§7-d) — only
+ * the browser knows what an unsaved, hypothetical mix contains — so this
+ * route is stateless and identical for both.
+ *
+ * requireAuth, both tiers, no tier wall (H3 ruling 3): the fund lineup and
+ * the holdings they file are the same truth for everyone, and nothing
+ * full-tier enters the payload — the t2 allowlist is the proof.
+ *
+ * ONE READ, JOINED IN SQL (the v17 law): holdings_cache with funds embedded
+ * on the foreign key, so the fund a holding belongs to is established by the
+ * database and never by matching rows in JavaScript. Matching is on the filed
+ * name (case-insensitive substring) OR the display ticker (case-insensitive
+ * exact) — the two ways a member names a company, and the reason "DG" and
+ * "dollar" both find Dollar General. holdings_cache.ticker is the H1-F2
+ * vouched display column, so the ticker branch never matches on a code the
+ * app declined to stand behind.
+ *
+ * Everything else — grouping, the 20-company cap, ordering — happens inside
+ * shapeHoldingsSearch, where the allowlist is enforced by picking each field
+ * by name.
+ */
+router.get('/api/holdings/search', requireAuth, holdingsSearchRateLimit, async (req: Request, res: Response) => {
+  const q = String(req.query.q || '').trim();
+
+  if (q.length < 2 || q.length > 80) {
+    res.status(400).json({ error: 'Search for a company using 2 to 80 characters.' });
+    return;
+  }
+
+  // A term that is nothing but wildcard characters ("%%%") is not a term. It
+  // answers honestly — no filed name contains those characters — rather than
+  // matching every row in the table.
+  const term = sanitizeSearchTerm(q);
+  if (term.length < 2) {
+    res.json(shapeHoldingsSearch(q, []));
+    return;
+  }
+
+  const { data: rows, error } = await supaFetch<HoldingsSearchRowSource[]>('holdings_cache', {
+    params: {
+      select: 'name,ticker,pct_of_nav,report_date,funds!inner(ticker,name)',
+      or: `(name.ilike.${quoteFilterValue(`%${term}%`)},ticker.ilike.${quoteFilterValue(term)})`,
+      order: 'pct_of_nav.desc',
+      limit: String(HOLDINGS_SEARCH_ROW_CEILING),
+    },
+  });
+
+  if (error) {
+    console.error('[routes] holdings search failed:', error);
+    res.status(500).json({ error: 'Could not search the holdings. Please try again later.' });
+    return;
+  }
+
+  const matched = rows || [];
+  if (matched.length >= HOLDINGS_SEARCH_ROW_CEILING) {
+    // Never silent: if the ceiling ever bites, the record says so even though
+    // the member's payload has no field in which to admit it.
+    console.warn(
+      `[routes] holdings search hit the ${HOLDINGS_SEARCH_ROW_CEILING}-row ceiling for "${term}" — ` +
+      'fund lists in this response may be short; raise the ceiling.'
+    );
+  }
+
+  res.json(shapeHoldingsSearch(q, matched));
 });
 
 /**

@@ -198,6 +198,56 @@ export const fetchHoldingCompany = (ticker: string, name: string) =>
     `/api/holdings/company?ticker=${encodeURIComponent(ticker)}&name=${encodeURIComponent(name)}`,
   );
 
+// ─── Cross-fund holdings search (H3) ───────────────────────────────────────
+// Client mirror of HOLDINGS_SEARCH_ALLOWLIST in
+// src/engine/reference-shape.ts — the seven field paths the search response
+// may carry and no others. Deliberately absent, and excluded by the
+// assignment: cusip, value_usd, sector, industry, country, accession_number,
+// is_look_through, and every scoring or full-tier field. Both tiers receive
+// this shape (H3 ruling 3) — the fund lineup and the holdings they file are
+// the same truth for everyone.
+
+export interface HoldingsSearchFund {
+  fundTicker: string;
+  fundName: string;
+  /** Percent of that fund's NAV, whole-percent units (0.1442 = 0.1442%).
+   *  Where a fund files one company across several rows — MWTSX files eight
+   *  Oracle bonds — this is their sum, that fund's own filed exposure. */
+  pctOfNav: number;
+  /** The EDGAR report date of the filing that fund's figure comes from */
+  reportDate: string | null;
+}
+
+export interface HoldingsSearchCompany {
+  /** The filed name, as its largest holder filed it */
+  companyName: string;
+  /** The H1-F2 vouched display ticker, or null — a third of filed rows
+   *  carry none, and those open the panel's Wikipedia fallback */
+  displayTicker: string | null;
+  /** The plan funds that file this company, largest position first */
+  funds: HoldingsSearchFund[];
+}
+
+export interface HoldingsSearchResponse {
+  /** The search string, echoed back trimmed */
+  query: string;
+  /** At most 20, ordered by largest single position */
+  companies: HoldingsSearchCompany[];
+}
+
+/**
+ * Search every fund's filed holdings for a company, by name or by ticker.
+ *
+ * One endpoint serves both homes: the server always answers for the whole
+ * lineup and the caller narrows it (H3 §7-d) — only the browser knows which
+ * funds are on screen in a mix that may never have been saved.
+ *
+ * The server validates 2–80 characters and answers 400 outside that; it is
+ * rate limited to 30 searches an hour per account.
+ */
+export const searchHoldings = (q: string) =>
+  apiFetch<HoldingsSearchResponse>(`/api/holdings/search?q=${encodeURIComponent(q)}`);
+
 // ─── 403 discrimination (B3, docket 3) ─────────────────────────────────────
 // The server sends two distinct 403 bodies; pages must render honest states
 // for each instead of painting empty content over them.
