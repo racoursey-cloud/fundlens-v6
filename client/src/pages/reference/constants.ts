@@ -56,11 +56,12 @@ export function isCashSweepHolding(name: string): boolean {
 
 // ─── Sector palette (gate amendment 2, approved July 28, 2026) ─────────────
 // Values copied VERBATIM from the full-tier module-private SECTOR_COLORS
-// maps (client/src/components/FundDetail.tsx and client/src/pages/
-// FundLens.tsx) so both tiers paint sectors identically. Those maps are not
-// exported and their files are read-only under the B-series laws, hence
-// this copy; unifying the three maps into one shared export is logged for
-// FOLLOWUPS at the next full-tier touch.
+// maps so both tiers paint sectors identically. The two files this note
+// originally named are gone — FundLens.tsx retired in U1-B and the
+// unimported components/FundDetail.tsx in M1 m10 — but the duplication is
+// real and still stands: Research.tsx and YourBrief.tsx each carry their
+// own unexported copy of the same palette. Unifying the three into one
+// shared export remains logged in FOLLOWUPS.md.
 //
 // Composition colors only: a sector's color says what the fund HOLDS,
 // never whether that is good or bad. Any sector missing from this map
