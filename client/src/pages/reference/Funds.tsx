@@ -38,8 +38,9 @@
  * Data, and why it is two calls for one tier:
  *   - fetchReferenceScores() — the tier-shaped /api/scores response, for
  *     everyone (see src/engine/reference-shape.ts for the allowlist).
- *   - fetchScores() + fetchProfile() — FULL TIER ONLY, for the score and
- *     tier columns, joined to the facts row by ticker.
+ *   - fetchScores() — FULL TIER ONLY, for the score and tier columns,
+ *     joined to the facts row by ticker. Its weighting comes from the
+ *     shared ProfileContext (M1 m9), not from a profile call of its own.
  * The two shapes are disjoint and both are already served: the reference
  * branch alone joins fund_dossiers and fund_descriptions, and the full
  * branch alone carries composite/tier/z_*. Composing them in the browser is
