@@ -34,10 +34,20 @@
  * this file: the colors are the caller's composition palette and say what a
  * fund HOLDS, never whether that is good.
  *
+ * H3 t1 — COMPANY PANEL EVERYWHERE. Every holding row in the list below
+ * now opens the shared company panel (components/HoldingCompanyPanel.tsx),
+ * the same one H2 built for the fund detail's Holdings tab: same endpoint,
+ * same h6 serve-time name-guard, same filed-name-plus-Wikipedia fallback.
+ * One wiring lights up all three surfaces this component renders on. The
+ * governing principle of the wave, Robert's words: "At any point that I
+ * see something — oh, tell me more about that — I want to be a click away
+ * from that."
+ *
  * Destination: client/src/components/FundExposurePanel.tsx
  */
 
-import type { ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
+import { HoldingCompanyPanel } from './HoldingCompanyPanel';
 import { theme } from '../theme';
 
 // ─── Inputs ────────────────────────────────────────────────────────────────
@@ -85,6 +95,33 @@ interface FundExposurePanelProps {
   holdingsLimit?: number | null;
   /** Rendered under the block — provenance and disclosure lines */
   footnotes?: ReactNode;
+  /**
+   * H3 t1 — DO THESE ROWS CARRY VOUCHED DISPLAY TICKERS?
+   *
+   * The standing rule (H1-F2 followup, honored by H2 p3) is that the company
+   * panel keys on VALIDATED display tickers only: holdings_cache.ticker,
+   * which the pipeline's display-validation pass either vouches for or sets
+   * to null for the honest dash. A lookup on an unvouched code is how the
+   * wrong company reaches a member.
+   *
+   * The three surfaces do not all feed this component from that column:
+   *   - the fund detail's Sectors tab reads holdings_cache (?all=1) — vouched;
+   *   - My Mix reads it too, once its ?all=1 fetches land — vouched from then;
+   *   - the Brief allocation card reads factor_details.topHoldings, the
+   *     stored pipeline blob, which carries the RAW resolved ticker.
+   *
+   * Measured read-only on August 15, 2026: of 9,813 stored blob rows, 6,780
+   * carry a ticker, and 680 of those either were refused by the display
+   * validation (379) or differ from the ticker it vouched (301). Forty-four
+   * of the refused ones have a cached FMP profile behind them.
+   *
+   * So the flag defaults to FALSE — fail closed. A row whose ticker is not
+   * known-vouched still OPENS (no dead ends, the wave's principle): it opens
+   * the ruled fallback, filed name plus the Wikipedia search link, with zero
+   * network calls, exactly as a dash row does. Callers reading the vouched
+   * column pass true and get the full panel.
+   */
+  tickersAreDisplayValidated?: boolean;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
@@ -100,6 +137,7 @@ export function FundExposurePanel({
   sectorLimit,
   holdingsLimit,
   footnotes,
+  tickersAreDisplayValidated = false,
 }: FundExposurePanelProps) {
   const defaultLimit = isMobile ? 6 : 8;
   const sectorCap = sectorLimit === undefined ? defaultLimit : sectorLimit;
@@ -184,7 +222,11 @@ export function FundExposurePanel({
                   marginBottom={4}
                 />
                 {filteredHoldings.length > 0 ? (
-                  <HoldingsList holdings={filteredHoldings} scrolling={!!selectedSector} />
+                  <HoldingsList
+                  holdings={filteredHoldings}
+                  scrolling={!!selectedSector}
+                  tickersAreDisplayValidated={tickersAreDisplayValidated}
+                />
                 ) : (
                   <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
                     {selectedSector ? `No ${selectedSector} holdings` : 'No holdings data'}
@@ -227,7 +269,11 @@ export function FundExposurePanel({
                 onClear={() => onSelectSector(null)}
                 marginBottom={8}
               />
-              <HoldingsList holdings={filteredHoldings} scrolling={!!selectedSector} />
+              <HoldingsList
+                holdings={filteredHoldings}
+                scrolling={!!selectedSector}
+                tickersAreDisplayValidated={tickersAreDisplayValidated}
+              />
             </div>
           ) : selectedSector ? (
             <div>
@@ -350,38 +396,91 @@ function HoldingsHeader({
 function HoldingsList({
   holdings,
   scrolling,
+  tickersAreDisplayValidated,
 }: {
   holdings: ExposureHolding[];
   scrolling: boolean;
+  tickersAreDisplayValidated: boolean;
 }) {
+  // H3 t1: which row is drilled in (one at a time; click toggles) — the
+  // Holdings tab's pattern, one level in. The key carries the row's position
+  // AND its identity, so changing the sector filter — which reshuffles
+  // positions — closes the panel instead of reopening it under a different
+  // company.
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', gap: 2,
       ...(scrolling ? { maxHeight: 300, overflowY: 'auto' as const } : {}),
     }}>
-      {holdings.map((h, idx) => (
-        <div key={idx} style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '2px 0', gap: 8,
-        }}>
-          <span style={{
-            fontSize: 11, color: theme.colors.text,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            flex: 1,
-          }}>{h.name}</span>
-          {h.ticker && (
-            <span style={{
-              fontSize: 10, fontFamily: theme.fonts.mono,
-              color: theme.colors.textDim, flexShrink: 0,
-            }}>{h.ticker}</span>
-          )}
-          <span style={{
-            fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
-            color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36,
-            textAlign: 'right',
-          }}>{h.weight.toFixed(1)}%</span>
-        </div>
-      ))}
+      {holdings.map((h, idx) => {
+        const rowKey = `${idx}:${h.name}:${h.ticker ?? ''}`;
+        const isExpanded = expandedKey === rowKey;
+        return (
+          <Fragment key={idx}>
+            <div
+              onClick={() => setExpandedKey(prev => (prev === rowKey ? null : rowKey))}
+              style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '2px 0', gap: 8,
+                cursor: 'pointer',
+              }}
+            >
+              {/* H2-F1's lesson, carried: the door has to be visible to be a
+                  door. Every row opens — including dash rows and rows whose
+                  ticker is not vouched, which open the Wikipedia fallback. */}
+              <span
+                aria-hidden="true"
+                style={{
+                  display: 'inline-block',
+                  width: 8,
+                  fontSize: 9,
+                  color: theme.colors.textDim,
+                  flexShrink: 0,
+                  transform: isExpanded ? 'rotate(90deg)' : 'none',
+                  transition: 'transform 0.15s',
+                }}
+              >
+                ▸
+              </span>
+              <span style={{
+                fontSize: 11, color: theme.colors.text,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                flex: 1,
+              }}>{h.name}</span>
+              {h.ticker && (
+                <span style={{
+                  fontSize: 10, fontFamily: theme.fonts.mono,
+                  color: theme.colors.textDim, flexShrink: 0,
+                }}>{h.ticker}</span>
+              )}
+              <span style={{
+                fontSize: 10, fontFamily: theme.fonts.mono, fontWeight: 600,
+                color: theme.colors.accentBlue, flexShrink: 0, minWidth: 36,
+                textAlign: 'right',
+              }}>{h.weight.toFixed(1)}%</span>
+            </div>
+            {isExpanded && (
+              <div style={{
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radii.sm,
+                overflow: 'hidden',
+                margin: '2px 0 6px',
+              }}>
+                <HoldingCompanyPanel
+                  holding={{
+                    name: h.name,
+                    // Fail closed: an unvouched code is never looked up.
+                    ticker: tickersAreDisplayValidated ? h.ticker : null,
+                    sector: h.sector,
+                  }}
+                />
+              </div>
+            )}
+          </Fragment>
+        );
+      })}
     </div>
   );
 }
