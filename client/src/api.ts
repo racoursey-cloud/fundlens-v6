@@ -414,8 +414,14 @@ export interface ThesisData {
   generated_at: string;
 }
 
+/**
+ * M1 m6: the route now returns the two newest thesis rows. `thesis` is the
+ * newest and is unchanged in shape and meaning; `previous` is the run before
+ * it, exactly as stored, and is null when only one run exists. The server
+ * does no comparing — Research diffs the pair itself.
+ */
 export const fetchThesis = () =>
-  apiFetch<{ thesis: ThesisData }>('/api/thesis/latest');
+  apiFetch<{ thesis: ThesisData; previous: ThesisData | null }>('/api/thesis/latest');
 
 // Monitoring
 export const fetchSystemHealth = () =>
