@@ -39,7 +39,6 @@ function inlineMarkdown(text: string): string {
 }
 import { SectorScorecard, type SectorScore } from '../components/SectorScorecard';
 import { DonutChart, BarBreakdown, type DonutSlice, type DonutDrillItem } from '../components/DonutChart';
-// FundDetail moved to FundLens tab
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
 
 // ─── Shared Utilities ─────────────────────────────────────────────────────
@@ -116,7 +115,7 @@ const FUND_PALETTE = [
   '#fb923c', '#84cc16',
 ];
 
-// scoreBg/scoreColor removed — fund table moved to FundLens tab
+// scoreBg/scoreColor removed with the fund table (U1-B: one grid, on Funds)
 
 // ─── Stance Configuration ──────────────────────────────────────────────────
 
@@ -617,7 +616,7 @@ export function Research() {
         </div>
       )}
 
-      {/* Section 4 (Fund Analysis table) moved to FundLens tab */}
+      {/* Section 4 (Fund Analysis table) lives on the unified Funds grid */}
 
       {/* Empty state */}
       {!loadingScores && scores.length === 0 && !thesis && (
@@ -639,4 +638,4 @@ export function Research() {
   );
 }
 
-// (tdFactorStyle removed — fund table moved to FundLens tab)
+// (tdFactorStyle removed with the fund table — U1-B)
