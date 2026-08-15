@@ -29,12 +29,20 @@
  *   - Sectors (U1-B: reshaped around the shared FundExposurePanel): sector
  *     bars left, the sector donut centre, that sector's holdings right,
  *     from the payload's sector_exposure map — never a recomputation from
- *     holdings rows, binding build fact. The Holdings donut (top 8 positive
- *     + "Everything else" at true combined weight) sits below, unchanged.
+ *     holdings rows, binding build fact.
  *     Long-only disclosure when any negative row exists; sector-donut
  *     geometry normalized when the filed map sums past 100 while the bars
  *     print the filed values with the over-100 explainer; clicking a sector
  *     — bar or wedge — filters the holdings column to it.
+ *
+ * D1 (RULED by Robert, August 15, 2026): "A donut of sectors makes sense. A
+ * donut of holdings does not. Sectors get donuts; holdings do not." The
+ * Holdings donut that B9 c9 put beneath the sector block — top 8 positive
+ * plus "Everything else" at its true combined weight — is gone, with its
+ * palette, its slice builder and its legend. The holdings LISTS are
+ * untouched everywhere: the Holdings tab's full filed table, and the sector
+ * panel's holdings column beside the donut, are the useful rendering of the
+ * same data. Nothing about the sector donut changed.
  *
  * Honest empty state: a non-money-market fund with a null
  * as_of.report_date keeps holdings/sector surfaces hidden (FSPGX-trigger
@@ -128,40 +136,9 @@ function buildSectorSlices(sectorExposure: Record<string, number>): DonutSlice[]
   return slices;
 }
 
-// ─── Holdings donut: top 8 positive + "Everything else" ────────────────────
-// Categorical colors only — the palette says which slice is which, never
-// whether a holding is good.
-
-const HOLDINGS_DONUT_COLORS = [
-  '#3b82f6', '#06b6d4', '#8b5cf6', '#f59e0b',
-  '#22c55e', '#ef4444', '#f97316', '#14b8a6',
-];
-
-const EVERYTHING_ELSE_ID = 'everything-else';
-
-function buildHoldingsSlices(holdings: ReferenceHolding[]): DonutSlice[] {
-  const positive = holdings.filter(h => h.pct > 0);
-  const sorted = [...positive].sort((a, b) => b.pct - a.pct);
-  const top = sorted.slice(0, 8);
-  const restPct = sorted.slice(8).reduce((acc, h) => acc + h.pct, 0);
-
-  const slices: DonutSlice[] = top.map((h, i) => ({
-    id: `${h.ticker ?? h.name}-${i}`,
-    label: h.name === 'N/A' ? (h.ticker ?? '—') : h.name,
-    pct: h.pct,
-    color: HOLDINGS_DONUT_COLORS[i % HOLDINGS_DONUT_COLORS.length]!,
-  }));
-  if (restPct > 0) {
-    // "Everything else" at its true combined weight — never a filler wedge
-    slices.push({
-      id: EVERYTHING_ELSE_ID,
-      label: 'Everything else',
-      pct: restPct,
-      color: SECTOR_FALLBACK_COLOR,
-    });
-  }
-  return slices;
-}
+// D1: the holdings-donut palette, its "everything else" id and its slice
+// builder lived here and are removed with the chart they served. Nothing
+// else read them.
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
@@ -546,7 +523,8 @@ const cellStyle: React.CSSProperties = {
 // left columns of the shared FundExposurePanel — sector bars left (filed
 // values, with magnitudes the flat legend never showed), the same donut in
 // the centre, and that sector's holdings held open on the right instead of
-// behind a click. The Holdings donut is untouched and sits below.
+// behind a click. D1 removed the Holdings donut that used to sit below this
+// block; nothing above this line changed with it.
 //
 // Every B9 c9 guarantee is carried, not dropped:
 //   - the bars print FILED values, normalization or not — the legend's job;
@@ -578,8 +556,6 @@ function SectorsTab({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
-  const holdingSlices = useMemo(() => buildHoldingsSlices(holdings), [holdings]);
 
   // Filed sector slices, and the filed total. When the filed values sum
   // past 100 (offsetting positions — the faithful over-100 case), the
@@ -629,7 +605,12 @@ function SectorsTab({
     [holdings],
   );
 
-  if (holdingSlices.length === 0 && filedSectorSlices.length === 0) {
+  // D1: the sector map is now the only thing this tab can draw, so it is the
+  // only thing the empty state asks about. A fund with holdings but no filed
+  // sector map used to render the holdings donut alone here; it now gets the
+  // honest line, which is what the Sectors tab has to say when there is no
+  // sector data.
+  if (filedSectorSlices.length === 0) {
     return (
       <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
         Sector data isn&apos;t available for this fund yet.
@@ -670,24 +651,12 @@ function SectorsTab({
         />
       )}
 
-      {/* The Holdings donut, unchanged from B9 c9 */}
-      {holdingSlices.length > 0 && (
-        <div style={{
-          marginTop: 24,
-          paddingTop: 20,
-          borderTop: `1px solid ${theme.colors.border}`,
-          display: 'flex',
-          justifyContent: 'center',
-        }}>
-          <div style={{ minWidth: 240, maxWidth: 340 }}>
-            <DonutChart slices={holdingSlices} size={200} title="Holdings" />
-            <SliceLegend slices={holdingSlices} />
-          </div>
-        </div>
-      )}
-
-      {/* Carried from B9 c9: stated once for the tab, under both charts,
-          whichever of them rendered */}
+      {/* Carried from B9 c9, and still true of the one chart left (D1): the
+          sector donut draws long exposure only — buildSectorSlices skips
+          negative filed values — so a fund reporting shorts still needs the
+          line, and it still points at the holdings table, where the Holdings
+          tab's own negative-row explainer meets it. Not relocated: the
+          sentence annotates a chart, and there is still a chart. */}
       {hasNegativeRows && (
         <p style={{ fontSize: 11, color: theme.colors.textDim, lineHeight: 1.6, margin: '10px 0 0' }}>
           {LONG_ONLY_DISCLOSURE}
@@ -753,21 +722,9 @@ function ScoresTab({ fullScore }: { fullScore: FullTierScore }) {
   );
 }
 
-function SliceLegend({ slices }: { slices: DonutSlice[] }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
-      {slices.map(s => (
-        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
-          <span style={{ fontSize: 12, color: theme.colors.text, flex: 1 }}>{s.label}</span>
-          <span style={{ fontSize: 12, fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
-            {s.pct.toFixed(1)}%
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
+// D1: SliceLegend — the swatch/name/percent list under the holdings donut —
+// is removed with it. The sector donut has never used it: its legend is the
+// exposure panel's sector bars, which are live controls rather than a key.
 
 // ─── Shared label ──────────────────────────────────────────────────────────
 
