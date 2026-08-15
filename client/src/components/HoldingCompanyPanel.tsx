@@ -24,6 +24,17 @@
  * cap, no ratings). Wikipedia is the independent second door and stays
  * secondary.
  *
+ * H3-F3 CURE 1 — THE FALLBACK IS THE ANSWER TO EVERY NON-SERVING LOOKUP.
+ * Finding of record (Robert's member testing, August 15, 2026; reproduced by
+ * Fabio): a row carrying a display ticker whose lookup does not serve — KDDI,
+ * ticker 9433, a vouched Tokyo code with no FMP profile behind it, answering
+ * 404 — must show what a dash row shows, not an empty region and not a
+ * "Loading company…" that never ends. The lookup's outcome is now ONE state
+ * value with two terminal phases, so there is no pair of flags to fall out of
+ * step and no path that leaves the panel mid-flight: see the Lookup type
+ * below. Nothing retries — the endpoint is cache-only, so asking twice has
+ * the same answer and costs the member's rate ceiling.
+ *
  * Destination: client/src/components/HoldingCompanyPanel.tsx
  */
 
@@ -71,9 +82,37 @@ function isOverTheCounterVenue(exchange: string | null): boolean {
   return exchange !== null && OTC_VENUES.has(exchange.trim().toUpperCase());
 }
 
+/**
+ * THE LOOKUP'S OUTCOME, AS ONE VALUE (H3-F3 cure 1).
+ *
+ * 'loading' is the only non-terminal phase and it is reachable only while a
+ * request is genuinely in flight. Everything else is 'done', carrying either
+ * the served profile or null — and null is the ruled fallback: filed name,
+ * "Filed under <sector>" where the row knows one, the Wikipedia door.
+ *
+ * EVERY non-serving answer the endpoint can give lands on `company: null`:
+ * 400 (a ticker outside the display-ticker shape, or a missing filed name —
+ * the guard failing closed), 404 (no cached profile, or the h6 serve-time
+ * guard refusing a pairing whose names disagree), a rate-limit wall, a 5xx, a
+ * network failure, a body that is not JSON. The member's screen is the same
+ * in all of them, because the truth is the same in all of them: there is no
+ * description this app is willing to stand behind for this row.
+ *
+ * Why one value and not two flags: the panel previously held `loading` and
+ * `company` separately, and the branch that skips the lookup returned without
+ * clearing `loading` — so a panel whose row lost its vouched ticker mid-flight
+ * (My Mix does exactly that whenever the ?all=1 lists go back to pending) sat
+ * on "Loading company…" with no request left to end it. A single value cannot
+ * hold that state.
+ */
+type Lookup =
+  | { phase: 'loading' }
+  | { phase: 'done'; company: CompanyPanel | null };
+
 export function HoldingCompanyPanel({ holding }: { holding: CompanyPanelSubject }) {
-  const [company, setCompany] = useState<CompanyPanel | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Opens on the fallback, not on a spinner: a row with no vouched ticker is
+  // answered without touching the network, on the first paint.
+  const [lookup, setLookup] = useState<Lookup>({ phase: 'done', company: null });
 
   // H1-F2 followup, honored: the panel keys on VALIDATED display tickers
   // only. holdings_cache.ticker carries the vouched display value or null,
@@ -84,23 +123,35 @@ export function HoldingCompanyPanel({ holding }: { holding: CompanyPanelSubject 
 
   useEffect(() => {
     if (!lookupTicker) {
-      setCompany(null);
+      // Nothing to ask, so the answer is already final — including when this
+      // run replaces one whose request is still in flight.
+      setLookup({ phase: 'done', company: null });
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setCompany(null);
+    setLookup({ phase: 'loading' });
     // The filed name rides along: the server re-checks the h6 name-agreement
     // guard against it and fails closed without it.
-    fetchHoldingCompany(lookupTicker, holding.name).then(res => {
-      if (cancelled) return;
-      setCompany(res.data?.company ?? null);
-      setLoading(false);
-    });
+    fetchHoldingCompany(lookupTicker, holding.name)
+      .then(res => {
+        if (cancelled) return;
+        // apiFetch resolves for every HTTP status — a 400 or 404 arrives here
+        // as data:null with the server's own message in `error` — so this one
+        // line settles the serving and the non-serving cases alike.
+        setLookup({ phase: 'done', company: res.data?.company ?? null });
+      })
+      .catch(() => {
+        // apiFetch is written never to reject. If that ever changes, the panel
+        // still settles on the fallback rather than waiting forever.
+        if (!cancelled) setLookup({ phase: 'done', company: null });
+      });
     return () => {
       cancelled = true;
     };
   }, [lookupTicker, holding.name]);
+
+  const loading = lookup.phase === 'loading';
+  const company = lookup.phase === 'done' ? lookup.company : null;
 
   // F4 convention: a literal 'N/A' filing name is not a name. With no company
   // name either, there is nothing to search for and no link is offered.
@@ -186,9 +237,13 @@ export function HoldingCompanyPanel({ holding }: { holding: CompanyPanelSubject 
           )}
         </>
       ) : (
-        /* Fallback: no cached profile, or the h6 guard declined this pairing.
-           The member gets what the filing itself says, plus the second door —
-           never another company's description. */
+        /* THE FALLBACK, and the answer to every non-serving lookup (H3-F3):
+           no vouched ticker to ask about, no cached profile behind the one we
+           asked about (KDDI's 9433 — a 404), the h6 guard declining the
+           pairing (also a 404), a 400, a wall, a failed request, or a profile
+           that carries no description. The member gets what the filing itself
+           says, plus the second door — never another company's description,
+           and never a blank space where an answer should be. */
         <>
           <p style={{ fontSize: 12, color: theme.colors.textMuted, lineHeight: 1.6, margin: 0 }}>
             {holding.sector
