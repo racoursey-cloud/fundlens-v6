@@ -278,6 +278,57 @@ export function ReferenceMyMix() {
   const totalOk = Math.abs(total - 100) <= 0.05;
   const canSave = entries.length > 0 && everyEntryValid && totalOk && !saving && !deleting;
 
+  // ── M1 m2: unsaved-changes state ────────────────────────────────────────
+  // Dirty means the editor differs from what is actually on file. Compared
+  // as NUMBERS, not as text: the saved mix comes back as String(pct), so
+  // "10" and "10.0" are the same mix and neither should raise the notice.
+  // A blank input and an absent saved line are likewise the same thing —
+  // the fund is not in the mix either way.
+
+  const savedPctById = useMemo(() => {
+    const map = new Map<string, number>();
+    if (savedRow) {
+      const menuIds = new Set(funds.map(f => f.id));
+      for (const a of savedRow.allocations) {
+        if (menuIds.has(a.fund_id)) map.set(a.fund_id, a.pct);
+      }
+    }
+    return map;
+  }, [savedRow, funds]);
+
+  const isDirty = useMemo(() => {
+    for (const f of funds) {
+      const text = (pctText[f.id] ?? '').trim();
+      const savedPct = savedPctById.get(f.id);
+      if (text === '') {
+        if (savedPct !== undefined) return true;
+        continue;
+      }
+      // Text that does not parse is a change by definition — there is no
+      // saved value it could equal.
+      const typed = Number(text);
+      if (!Number.isFinite(typed)) return true;
+      if (savedPct === undefined || Math.abs(typed - savedPct) > 1e-9) return true;
+    }
+    return false;
+  }, [funds, pctText, savedPctById]);
+
+  // The browser's own warning on close, reload, or leaving the site. It does
+  // NOT cover moving between tabs inside the app: this app mounts a plain
+  // BrowserRouter, so React Router's useBlocker — which needs a data router
+  // — is unavailable, and migrating the routing tree is not polish (ruled
+  // August 15, 2026). The badge below is what warns in that case.
+  useEffect(() => {
+    if (!isDirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Legacy browsers act on the assignment rather than preventDefault.
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isDirty]);
+
   const result = useMemo(
     () => computeExampleMix(funds, refFunds, entries),
     [funds, refFunds, entries],
@@ -553,6 +604,22 @@ export function ReferenceMyMix() {
         {savedRow && (
           <span style={{ fontSize: 12, color: theme.colors.textDim }}>
             Saved mix on file — last saved {savedRow.updated_at.slice(0, 10)}
+          </span>
+        )}
+        {/* M1 m2: the inline notice, present exactly while the editor
+            differs from what is on file. Factual, not evaluative — it
+            reports a state and names the control that clears it. */}
+        {isDirty && (
+          <span
+            style={{
+              fontSize: 12,
+              color: theme.colors.textMuted,
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radii.sm,
+              padding: '4px 10px',
+            }}
+          >
+            Unsaved changes — click Save to keep them
           </span>
         )}
       </div>
