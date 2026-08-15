@@ -1,5 +1,5 @@
 /**
- * FundLens — Profile Context (M1 m9)
+ * FundLens — Profile Context (M1 m9; corrected by M1-F1b)
  *
  * ONE /api/profile request per page load, for every account and every tab.
  *
@@ -8,6 +8,24 @@
  * setup_completed, and then whichever page had mounted, for weights, risk,
  * or the admin flag. Three identical requests, three copies of one truth,
  * and no way for them to disagree usefully. This is the one place that asks.
+ *
+ * M1-F1b — AND ONE PLACE IS NOT THE SAME AS ONE REQUEST. m9 collapsed the
+ * three CALLERS into this file and the ledger recorded the job done, but
+ * production went on serving three requests per load on both tiers, because
+ * the effect below was keyed on the user OBJECT and objects are compared by
+ * reference. supabase-js publishes a brand-new user object three times on an
+ * ordinary load — once when getSession() resolves, once for INITIAL_SESSION,
+ * and once more for the SIGNED_IN that _recoverAndRefresh() emits for a
+ * perfectly valid stored session — so one call site fired three times.
+ *
+ * The dependency is now the user's ID. Three announcements of the same person
+ * are one person, and one fetch. The same change ends a second, costlier
+ * symptom: each re-run flipped `loading` back to true, and TierRouter blanks
+ * the whole route tree while that is true, so every redundant fetch tore the
+ * app down and rebuilt it — which is also why returning to a backgrounded tab
+ * silently refetched the entire page. Diagnosed M1-F1 against the Railway HTTP
+ * log and the shipped @supabase/auth-js 2.101.1 source; ratified August 15,
+ * 2026.
  *
  * WHY ITS OWN CONTEXT, not a field on AuthContext (ruled August 15, 2026):
  * identity and entitlement are different concerns. AuthContext answers "who
@@ -54,12 +72,16 @@ const ProfileContext = createContext<ProfileContextValue | undefined>(undefined)
 
 export function ProfileProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  /** M1-F1b: the identity, not the object. This is the effect's whole
+   *  dependency — a re-announced session carries a new object for the same
+   *  person, and the same person needs no second request. */
+  const userId = user?.id ?? null;
   const [profile, setProfileState] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       setProfileState(null);
       setError(null);
       setLoading(false);
@@ -80,7 +102,10 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+    // M1-F1b: [userId], never [user]. A different person still refetches
+    // (their id differs) and a sign-out still clears (it goes null); only the
+    // duplicate announcements of one unchanged person are absorbed.
+  }, [userId]);
 
   const setProfile = useCallback((next: UserProfile) => {
     setProfileState(next);
