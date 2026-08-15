@@ -38,6 +38,15 @@
  * loading line; the cost, sector, and concentration panels never do.
  * Dust floor: computed mix percentages below 0.05% print "<0.1%", never
  * "0.0%".
+ *
+ * H3 t7/t8: the page reads as two labeled regions rather than one run-on
+ * column — "Build your mix" (the list, the inputs, Total, Save, the badge)
+ * and "What this mix holds" (the holdings search scoped to the mix, the
+ * combined cost, the sector panel, the overlap and holdings lists, the
+ * concentration cell), the second opening with the sentence that says what
+ * the reader is looking at. Presentation only: no new tab, no new logic,
+ * and every M1 behaviour — the column sort, the unsaved-changes badge, the
+ * save gate — is the code it was.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -536,400 +545,437 @@ export function ReferenceMyMix() {
         you click Save.
       </p>
 
-      {droppedFromMenu > 0 && (
-        <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: `0 0 ${theme.spacing.md}` }}>
-          {droppedFromMenu === 1
-            ? 'One line of your saved mix references a fund that is no longer in the plan menu, so it is not shown here.'
-            : `${droppedFromMenu} lines of your saved mix reference funds that are no longer in the plan menu, so they are not shown here.`}
-        </p>
-      )}
+      {/* ═══ REGION 1 — "Build your mix" (h3-3, ruling 5) ═══════════════
+          Everything the member DOES: the sortable list, the percentage
+          inputs, the running total, Save, the clear control and the
+          unsaved-changes badge. Markup and a heading only — m1's sorting
+          and m2's badge lifecycle are the same code they were. */}
+      <div>
+        <h2 style={{ fontSize: 16, fontWeight: 700, color: theme.colors.text, margin: '0 0 12px' }}>
+          Build your mix
+        </h2>
 
-      {/* ── Editor: one row per plan fund, inputs starting blank ── */}
-      <div style={{ overflowX: 'auto', marginBottom: theme.spacing.lg }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr>
-              {MIX_COLUMNS.map((col, i) => (
-                <th
-                  key={col.label}
-                  onClick={col.key ? () => handleSort(col.key!) : undefined}
-                  style={{
-                    textAlign: i === 2 ? 'right' : 'left',
-                    padding: '10px 12px',
-                    color: theme.colors.textMuted,
-                    fontWeight: 600,
-                    fontSize: 12,
-                    letterSpacing: '0.04em',
-                    textTransform: 'uppercase',
-                    borderBottom: `1px solid ${theme.colors.border}`,
-                    whiteSpace: 'nowrap',
-                    cursor: col.key ? 'pointer' : 'default',
-                    userSelect: col.key ? 'none' : 'auto',
-                  }}
-                >
-                  {col.label}
-                  {col.key && sortKey === col.key ? (sortDir === 1 ? ' ▲' : ' ▼') : ''}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sortedFunds.map(f => {
-              const text = pctText[f.id] ?? '';
-              const rowInvalid = text.trim() !== '' && !isValidPctText(text);
-              return (
-                <tr key={f.id}>
-                  <td style={{ ...cellStyle, fontFamily: theme.fonts.mono, color: theme.colors.text }}>
-                    {f.ticker}
-                  </td>
-                  <td style={{ ...cellStyle, color: theme.colors.text }}>{f.name}</td>
-                  <td style={{ ...cellStyle, textAlign: 'right' }}>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={text}
-                      onChange={e =>
-                        setPctText(prev => ({ ...prev, [f.id]: e.target.value }))
-                      }
-                      aria-label={`Percent of mix for ${f.ticker}`}
-                      style={{
-                        width: 72,
-                        padding: '5px 8px',
-                        textAlign: 'right',
-                        fontFamily: theme.fonts.mono,
-                        fontSize: 13,
-                        color: theme.colors.text,
-                        background: theme.colors.surface,
-                        border: `1px solid ${rowInvalid ? theme.colors.error : theme.colors.border}`,
-                        borderRadius: theme.radii.sm,
-                      }}
-                    />
-                    {rowInvalid && (
-                      <div style={{ fontSize: 11, color: theme.colors.error, marginTop: 3 }}>
-                        A number of at least 0, one decimal place at most
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* ── Running total + Save / clear controls ── */}
-      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14, marginBottom: theme.spacing.md }}>
-        <span style={{ fontSize: 14, color: theme.colors.text }}>
-          Total:{' '}
-          <span style={{ fontFamily: theme.fonts.mono, fontWeight: 700 }}>
-            {total.toFixed(1)}%
-          </span>
-        </span>
-        {!totalOk && entries.length > 0 && (
-          <span style={{ fontSize: 12, color: theme.colors.textMuted }}>
-            must equal 100% to save
-          </span>
+        {droppedFromMenu > 0 && (
+          <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: `0 0 ${theme.spacing.md}` }}>
+            {droppedFromMenu === 1
+              ? 'One line of your saved mix references a fund that is no longer in the plan menu, so it is not shown here.'
+              : `${droppedFromMenu} lines of your saved mix reference funds that are no longer in the plan menu, so they are not shown here.`}
+          </p>
         )}
-        <button
-          onClick={() => void handleSave()}
-          disabled={!canSave}
-          style={{
-            padding: '8px 18px',
-            borderRadius: theme.radii.md,
-            border: `1px solid ${canSave ? theme.colors.accentBlue : theme.colors.border}`,
-            background: canSave ? theme.colors.accentBlue : 'transparent',
-            color: canSave ? '#fff' : theme.colors.textDim,
-            fontSize: 13,
-            fontWeight: 600,
-            fontFamily: theme.fonts.body,
-            cursor: canSave ? 'pointer' : 'default',
-          }}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        {savedRow && (
-          <button
-            onClick={() => void handleClearSaved()}
-            disabled={saving || deleting}
-            style={{
-              padding: '8px 14px',
-              borderRadius: theme.radii.md,
-              border: `1px solid ${theme.colors.border}`,
-              background: 'transparent',
-              color: theme.colors.textMuted,
-              fontSize: 13,
-              fontFamily: theme.fonts.body,
-              cursor: saving || deleting ? 'default' : 'pointer',
-            }}
-          >
-            {deleting ? 'Clearing…' : 'Clear saved mix'}
-          </button>
-        )}
-        {savedRow && (
-          <span style={{ fontSize: 12, color: theme.colors.textDim }}>
-            Saved mix on file — last saved {savedRow.updated_at.slice(0, 10)}
-          </span>
-        )}
-        {/* M1 m2: the inline notice, present exactly while the editor
-            differs from what is on file. Factual, not evaluative — it
-            reports a state and names the control that clears it. */}
-        {isDirty && (
-          <span
-            style={{
-              fontSize: 12,
-              color: theme.colors.textMuted,
-              border: `1px solid ${theme.colors.border}`,
-              borderRadius: theme.radii.sm,
-              padding: '4px 10px',
-            }}
-          >
-            Unsaved changes — click Save to keep them
-          </span>
-        )}
-      </div>
 
-      {saveError && (
-        <div
-          style={{
-            marginBottom: theme.spacing.lg,
-            padding: '10px 14px',
-            background: 'rgba(239,68,68,0.1)',
-            border: '1px solid rgba(239,68,68,0.3)',
-            borderRadius: theme.radii.md,
-            color: theme.colors.error,
-            fontSize: 13,
-          }}
-        >
-          {saveError}
-        </div>
-      )}
-
-      {/* ── H3 t7: the search's second home (ruling 2, the mix half) ──
-          "If I have this, do I have any of X Y Z company?" — asked of the
-          funds on screen, whether they are a saved mix, an edited one, or a
-          hypothetical that was never saved. The scope is exactly the funds
-          carrying a nonzero allocation right now (§7-d: client-side, over
-          the all-funds answer), so it follows every keystroke of the editor
-          above without the server holding any mix state.
-
-          It renders whether or not there is a mix: with nothing entered it
-          is the disabled box and the §6 zero-allocation line, which is the
-          state the order asks for and the one the results card below cannot
-          show, because it does not exist yet. */}
-      <div style={{ marginBottom: theme.spacing.lg }}>
-        <HoldingsSearch scope={{ funds: chosenTickers }} />
-      </div>
-
-      {/* ── Results: the factual composite of the current entries ── */}
-      {hasMix && (
-        <div
-          style={{
-            background: theme.colors.surfaceAlt,
-            border: `1px solid ${theme.colors.border}`,
-            borderRadius: theme.radii.md,
-            padding: '16px 20px',
-          }}
-        >
-          {/* Blended cost, both registers (detail-page format) */}
-          <div style={{ marginBottom: 14 }}>
-            <SectionLabel text="Combined expense ratio" />
-            {result.blended_expense_ratio_pct !== null && result.blended_expense_dollars_per_10k !== null ? (
-              <p style={{ fontSize: 13, color: theme.colors.text, margin: 0 }}>
-                {result.blended_expense_ratio_pct.toFixed(2)}%{' '}
-                (≈ ${Math.round(result.blended_expense_dollars_per_10k)} per year per $10,000 invested)
-                {result.expense_ratio_known_mix_pct < 100 - 1e-9 && (
-                  <span style={{ color: theme.colors.textMuted }}>
-                    {' '}— this figure covers the {fmtMixPct(result.expense_ratio_known_mix_pct)}
-                    {' '}of the mix with a known expense ratio
-                  </span>
-                )}
-              </p>
-            ) : (
-              <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
-                — no chosen fund has a known expense ratio
-              </p>
-            )}
-          </div>
-
-          {/* Sector donut + legend (composition facts, categorical colors) */}
-          <div style={{ marginBottom: 14 }}>
-            <SectionLabel text="Sectors across the mix" />
-            {slices.length > 0 ? (
-              <FundExposurePanel
-                sectors={sectorBars}
-                holdings={panelHoldings}
-                selectedSector={selectedSector}
-                onSelectSector={setSelectedSector}
-                isMobile={isMobile}
-                sectorLimit={null}
-                /* H3 t1: the rows may be looked up only once they ARE the
-                   ?all=1 holdings — holdings_cache.ticker, the H1-F2 vouched
-                   display column. Until those fetches land the list is built
-                   from the stored top-holdings blob, whose tickers the display
-                   validation never vouched for, so the panel opens on the
-                   filed-name-plus-Wikipedia fallback instead of looking up a
-                   code the app declined to stand behind. */
-                tickersAreDisplayValidated={resultFull !== null}
-                center={
-                  <DonutChart
-                    slices={slices}
-                    size={200}
-                    onSliceClick={slice =>
-                      setSelectedSector(prev => (prev === slice.id ? null : slice.id))
-                    }
-                  />
-                }
-              />
-            ) : (
-              <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
-                — nothing to chart yet
-              </p>
-            )}
-          </div>
-
-          {/* Overlap: holdings appearing in two or more chosen funds —
-              B9 c11: computed from the funds' complete lists, so overlap
-              below any fund's top ten now surfaces. Waits on the ?all=1
-              fetches with a plain loading line. */}
-          <div style={{ marginBottom: 14 }}>
-            <SectionLabel text="Held through more than one fund" />
-            {holdingsFetchError ? (
-              <p style={{ fontSize: 13, color: theme.colors.error, margin: 0 }}>{holdingsFetchError}</p>
-            ) : resultFull === null ? (
-              <p style={{ fontSize: 13, color: theme.colors.textDim, margin: 0 }}>
-                Loading the funds&apos; full holdings lists…
-              </p>
-            ) : resultFull.overlaps.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {resultFull.overlaps.map(o => (
-                  <div key={o.key} style={{ fontSize: 13, color: theme.colors.text }}>
-                    {o.name ?? o.key}
-                    {o.ticker && (
-                      <span style={{ fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
-                        {' '}({o.ticker})
-                      </span>
-                    )}
-                    {' '}— {fmtMixPct(o.combined_weight_pct)} of the mix combined
-                    <div style={{ fontSize: 12, color: theme.colors.textMuted, marginTop: 2 }}>
-                      {o.appears_in.map((a, i) => (
-                        <span key={`${a.fund_ticker}-${i}`}>
-                          {i > 0 && ' · '}
-                          <span style={{ fontFamily: theme.fonts.mono }}>{a.fund_ticker}</span>
-                          {': '}{fmtMixPct(a.contribution_pct)} of the mix
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+        {/* ── Editor: one row per plan fund, inputs starting blank ── */}
+        <div style={{ overflowX: 'auto', marginBottom: theme.spacing.lg }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr>
+                {MIX_COLUMNS.map((col, i) => (
+                  <th
+                    key={col.label}
+                    onClick={col.key ? () => handleSort(col.key!) : undefined}
+                    style={{
+                      textAlign: i === 2 ? 'right' : 'left',
+                      padding: '10px 12px',
+                      color: theme.colors.textMuted,
+                      fontWeight: 600,
+                      fontSize: 12,
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                      borderBottom: `1px solid ${theme.colors.border}`,
+                      whiteSpace: 'nowrap',
+                      cursor: col.key ? 'pointer' : 'default',
+                      userSelect: col.key ? 'none' : 'auto',
+                    }}
+                  >
+                    {col.label}
+                    {col.key && sortKey === col.key ? (sortDir === 1 ? ' ▲' : ' ▼') : ''}
+                  </th>
                 ))}
-              </div>
-            ) : (
-              <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
-                No holding appears in more than one of the chosen funds.
-              </p>
-            )}
-          </div>
-
-          {/* B9 c11: the aggregated holdings list across the mix.
-              H1 h2: never claims "all" — a contributing fund past the B9
-              c5(a) 1,000-row ceiling (VFWAX: 3,918 filed) contributes its
-              largest 1,000, so the list is the largest holdings, not all. */}
-          <div style={{ marginBottom: 14 }}>
-            <SectionLabel text="Holdings across the mix" />
-            {holdingsFetchError ? (
-              <p style={{ fontSize: 13, color: theme.colors.error, margin: 0 }}>{holdingsFetchError}</p>
-            ) : resultFull === null ? (
-              <p style={{ fontSize: 13, color: theme.colors.textDim, margin: 0 }}>
-                Loading the funds&apos; full holdings lists…
-              </p>
-            ) : resultFull.holdings.length === 0 ? (
-              <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
-                — nothing to list yet
-              </p>
-            ) : (
-              <div>
-                <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '0 0 4px' }}>
-                  Small slivers are normal — a fund holds hundreds of
-                  positions, and your mix holds a slice of each.
-                </p>
-                <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '0 0 8px' }}>
-                  Showing the {resultFull.holdings.length} largest holdings
-                  across the mix, ranked by combined weight.
-                </p>
-                <div
-                  style={{
-                    maxHeight: 360,
-                    overflowY: 'auto',
-                    border: `1px solid ${theme.colors.border}`,
-                    borderRadius: theme.radii.sm,
-                  }}
-                >
-                  {resultFull.holdings.map((h, idx) => (
-                    <div
-                      key={h.key}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '5px 10px',
-                        borderBottom:
-                          idx < resultFull.holdings.length - 1
-                            ? `1px solid ${theme.colors.border}`
-                            : 'none',
-                      }}
-                    >
-                      <span
+              </tr>
+            </thead>
+            <tbody>
+              {sortedFunds.map(f => {
+                const text = pctText[f.id] ?? '';
+                const rowInvalid = text.trim() !== '' && !isValidPctText(text);
+                return (
+                  <tr key={f.id}>
+                    <td style={{ ...cellStyle, fontFamily: theme.fonts.mono, color: theme.colors.text }}>
+                      {f.ticker}
+                    </td>
+                    <td style={{ ...cellStyle, color: theme.colors.text }}>{f.name}</td>
+                    <td style={{ ...cellStyle, textAlign: 'right' }}>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={text}
+                        onChange={e =>
+                          setPctText(prev => ({ ...prev, [f.id]: e.target.value }))
+                        }
+                        aria-label={`Percent of mix for ${f.ticker}`}
                         style={{
-                          fontSize: 12,
+                          width: 72,
+                          padding: '5px 8px',
+                          textAlign: 'right',
+                          fontFamily: theme.fonts.mono,
+                          fontSize: 13,
                           color: theme.colors.text,
-                          flex: 1,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
+                          background: theme.colors.surface,
+                          border: `1px solid ${rowInvalid ? theme.colors.error : theme.colors.border}`,
+                          borderRadius: theme.radii.sm,
+                        }}
+                      />
+                      {rowInvalid && (
+                        <div style={{ fontSize: 11, color: theme.colors.error, marginTop: 3 }}>
+                          A number of at least 0, one decimal place at most
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── Running total + Save / clear controls ── */}
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14, marginBottom: theme.spacing.md }}>
+          <span style={{ fontSize: 14, color: theme.colors.text }}>
+            Total:{' '}
+            <span style={{ fontFamily: theme.fonts.mono, fontWeight: 700 }}>
+              {total.toFixed(1)}%
+            </span>
+          </span>
+          {!totalOk && entries.length > 0 && (
+            <span style={{ fontSize: 12, color: theme.colors.textMuted }}>
+              must equal 100% to save
+            </span>
+          )}
+          <button
+            onClick={() => void handleSave()}
+            disabled={!canSave}
+            style={{
+              padding: '8px 18px',
+              borderRadius: theme.radii.md,
+              border: `1px solid ${canSave ? theme.colors.accentBlue : theme.colors.border}`,
+              background: canSave ? theme.colors.accentBlue : 'transparent',
+              color: canSave ? '#fff' : theme.colors.textDim,
+              fontSize: 13,
+              fontWeight: 600,
+              fontFamily: theme.fonts.body,
+              cursor: canSave ? 'pointer' : 'default',
+            }}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          {savedRow && (
+            <button
+              onClick={() => void handleClearSaved()}
+              disabled={saving || deleting}
+              style={{
+                padding: '8px 14px',
+                borderRadius: theme.radii.md,
+                border: `1px solid ${theme.colors.border}`,
+                background: 'transparent',
+                color: theme.colors.textMuted,
+                fontSize: 13,
+                fontFamily: theme.fonts.body,
+                cursor: saving || deleting ? 'default' : 'pointer',
+              }}
+            >
+              {deleting ? 'Clearing…' : 'Clear saved mix'}
+            </button>
+          )}
+          {savedRow && (
+            <span style={{ fontSize: 12, color: theme.colors.textDim }}>
+              Saved mix on file — last saved {savedRow.updated_at.slice(0, 10)}
+            </span>
+          )}
+          {/* M1 m2: the inline notice, present exactly while the editor
+              differs from what is on file. Factual, not evaluative — it
+              reports a state and names the control that clears it. */}
+          {isDirty && (
+            <span
+              style={{
+                fontSize: 12,
+                color: theme.colors.textMuted,
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radii.sm,
+                padding: '4px 10px',
+              }}
+            >
+              Unsaved changes — click Save to keep them
+            </span>
+          )}
+        </div>
+
+        {saveError && (
+          <div
+            style={{
+              marginBottom: theme.spacing.lg,
+              padding: '10px 14px',
+              background: 'rgba(239,68,68,0.1)',
+              border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: theme.radii.md,
+              color: theme.colors.error,
+              fontSize: 13,
+            }}
+          >
+            {saveError}
+          </div>
+        )}
+      </div>
+
+      {/* ═══ REGION 2 — "What this mix holds" (h3-3, ruling 5) ══════════
+          Everything the mix IS, once entered. Robert, August 15: the move
+          from the list and Save straight into a combined expense ratio and
+          a donut was "a harsh jump… no explanation of what someone's
+          looking at… it all seems to kinda run together." No new tab and no
+          new logic — a rule, a heading, and one explaining sentence, so the
+          page reads as "here are the funds you can choose and enter what
+          percentages you want — and then: this is what that result looks
+          like." */}
+      <div
+        style={{
+          marginTop: theme.spacing.xl,
+          paddingTop: theme.spacing.lg,
+          borderTop: `1px solid ${theme.colors.border}`,
+        }}
+      >
+        <h2 style={{ fontSize: 16, fontWeight: 700, color: theme.colors.text, margin: '0 0 4px' }}>
+          What this mix holds
+        </h2>
+        <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: `0 0 ${theme.spacing.md}`, lineHeight: 1.6 }}>
+          Everything below is what the mix you&apos;ve entered above would
+          actually hold — its combined cost, sectors, and companies. It
+          updates as you change your percentages.
+        </p>
+
+        {/* ── H3 t7: the search's second home (ruling 2, the mix half) ──
+            "If I have this, do I have any of X Y Z company?" — asked of the
+            funds on screen, whether they are a saved mix, an edited one, or a
+            hypothetical that was never saved. The scope is exactly the funds
+            carrying a nonzero allocation right now (§7-d: client-side, over
+            the all-funds answer), so it follows every keystroke of the editor
+            above without the server holding any mix state.
+
+            It renders whether or not there is a mix: with nothing entered it
+            is the disabled box and the §6 zero-allocation line, which is the
+            state the order asks for and the one the results card below cannot
+            show, because it does not exist yet. */}
+        <div style={{ marginBottom: theme.spacing.lg }}>
+          <HoldingsSearch scope={{ funds: chosenTickers }} />
+        </div>
+
+        {/* ── Results: the factual composite of the current entries ── */}
+        {hasMix && (
+          <div
+            style={{
+              background: theme.colors.surfaceAlt,
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radii.md,
+              padding: '16px 20px',
+            }}
+          >
+            {/* Blended cost, both registers (detail-page format) */}
+            <div style={{ marginBottom: 14 }}>
+              <SectionLabel text="Combined expense ratio" />
+              {result.blended_expense_ratio_pct !== null && result.blended_expense_dollars_per_10k !== null ? (
+                <p style={{ fontSize: 13, color: theme.colors.text, margin: 0 }}>
+                  {result.blended_expense_ratio_pct.toFixed(2)}%{' '}
+                  (≈ ${Math.round(result.blended_expense_dollars_per_10k)} per year per $10,000 invested)
+                  {result.expense_ratio_known_mix_pct < 100 - 1e-9 && (
+                    <span style={{ color: theme.colors.textMuted }}>
+                      {' '}— this figure covers the {fmtMixPct(result.expense_ratio_known_mix_pct)}
+                      {' '}of the mix with a known expense ratio
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
+                  — no chosen fund has a known expense ratio
+                </p>
+              )}
+            </div>
+
+            {/* Sector donut + legend (composition facts, categorical colors) */}
+            <div style={{ marginBottom: 14 }}>
+              <SectionLabel text="Sectors across the mix" />
+              {slices.length > 0 ? (
+                <FundExposurePanel
+                  sectors={sectorBars}
+                  holdings={panelHoldings}
+                  selectedSector={selectedSector}
+                  onSelectSector={setSelectedSector}
+                  isMobile={isMobile}
+                  sectorLimit={null}
+                  /* H3 t1: the rows may be looked up only once they ARE the
+                     ?all=1 holdings — holdings_cache.ticker, the H1-F2 vouched
+                     display column. Until those fetches land the list is built
+                     from the stored top-holdings blob, whose tickers the display
+                     validation never vouched for, so the panel opens on the
+                     filed-name-plus-Wikipedia fallback instead of looking up a
+                     code the app declined to stand behind. */
+                  tickersAreDisplayValidated={resultFull !== null}
+                  center={
+                    <DonutChart
+                      slices={slices}
+                      size={200}
+                      onSliceClick={slice =>
+                        setSelectedSector(prev => (prev === slice.id ? null : slice.id))
+                      }
+                    />
+                  }
+                />
+              ) : (
+                <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
+                  — nothing to chart yet
+                </p>
+              )}
+            </div>
+
+            {/* Overlap: holdings appearing in two or more chosen funds —
+                B9 c11: computed from the funds' complete lists, so overlap
+                below any fund's top ten now surfaces. Waits on the ?all=1
+                fetches with a plain loading line. */}
+            <div style={{ marginBottom: 14 }}>
+              <SectionLabel text="Held through more than one fund" />
+              {holdingsFetchError ? (
+                <p style={{ fontSize: 13, color: theme.colors.error, margin: 0 }}>{holdingsFetchError}</p>
+              ) : resultFull === null ? (
+                <p style={{ fontSize: 13, color: theme.colors.textDim, margin: 0 }}>
+                  Loading the funds&apos; full holdings lists…
+                </p>
+              ) : resultFull.overlaps.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {resultFull.overlaps.map(o => (
+                    <div key={o.key} style={{ fontSize: 13, color: theme.colors.text }}>
+                      {o.name ?? o.key}
+                      {o.ticker && (
+                        <span style={{ fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
+                          {' '}({o.ticker})
+                        </span>
+                      )}
+                      {' '}— {fmtMixPct(o.combined_weight_pct)} of the mix combined
+                      <div style={{ fontSize: 12, color: theme.colors.textMuted, marginTop: 2 }}>
+                        {o.appears_in.map((a, i) => (
+                          <span key={`${a.fund_ticker}-${i}`}>
+                            {i > 0 && ' · '}
+                            <span style={{ fontFamily: theme.fonts.mono }}>{a.fund_ticker}</span>
+                            {': '}{fmtMixPct(a.contribution_pct)} of the mix
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
+                  No holding appears in more than one of the chosen funds.
+                </p>
+              )}
+            </div>
+
+            {/* B9 c11: the aggregated holdings list across the mix.
+                H1 h2: never claims "all" — a contributing fund past the B9
+                c5(a) 1,000-row ceiling (VFWAX: 3,918 filed) contributes its
+                largest 1,000, so the list is the largest holdings, not all. */}
+            <div style={{ marginBottom: 14 }}>
+              <SectionLabel text="Holdings across the mix" />
+              {holdingsFetchError ? (
+                <p style={{ fontSize: 13, color: theme.colors.error, margin: 0 }}>{holdingsFetchError}</p>
+              ) : resultFull === null ? (
+                <p style={{ fontSize: 13, color: theme.colors.textDim, margin: 0 }}>
+                  Loading the funds&apos; full holdings lists…
+                </p>
+              ) : resultFull.holdings.length === 0 ? (
+                <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
+                  — nothing to list yet
+                </p>
+              ) : (
+                <div>
+                  <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '0 0 4px' }}>
+                    Small slivers are normal — a fund holds hundreds of
+                    positions, and your mix holds a slice of each.
+                  </p>
+                  <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '0 0 8px' }}>
+                    Showing the {resultFull.holdings.length} largest holdings
+                    across the mix, ranked by combined weight.
+                  </p>
+                  <div
+                    style={{
+                      maxHeight: 360,
+                      overflowY: 'auto',
+                      border: `1px solid ${theme.colors.border}`,
+                      borderRadius: theme.radii.sm,
+                    }}
+                  >
+                    {resultFull.holdings.map((h, idx) => (
+                      <div
+                        key={h.key}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '5px 10px',
+                          borderBottom:
+                            idx < resultFull.holdings.length - 1
+                              ? `1px solid ${theme.colors.border}`
+                              : 'none',
                         }}
                       >
-                        {h.name ?? h.key}
-                      </span>
-                      {h.ticker && (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: theme.colors.text,
+                            flex: 1,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {h.name ?? h.key}
+                        </span>
+                        {h.ticker && (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontFamily: theme.fonts.mono,
+                              color: theme.colors.textDim,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {h.ticker}
+                          </span>
+                        )}
                         <span
                           style={{
                             fontSize: 11,
                             fontFamily: theme.fonts.mono,
-                            color: theme.colors.textDim,
+                            color: theme.colors.textMuted,
                             flexShrink: 0,
+                            minWidth: 52,
+                            textAlign: 'right',
                           }}
                         >
-                          {h.ticker}
+                          {fmtMixPct(h.combined_weight_pct)}
                         </span>
-                      )}
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontFamily: theme.fonts.mono,
-                          color: theme.colors.textMuted,
-                          flexShrink: 0,
-                          minWidth: 52,
-                          textAlign: 'right',
-                        }}
-                      >
-                        {fmtMixPct(h.combined_weight_pct)}
-                      </span>
-                    </div>
-                  ))}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* Concentration cell — plain text in the page's normal text
-              color; the display color hhiLabel ships is never used. */}
-          <div>
-            <SectionLabel text="Concentration" />
-            <p style={{ fontSize: 13, color: theme.colors.text, margin: 0 }}>
-              {concentrationCell(entries, tickerById, result)}
-            </p>
+            {/* Concentration cell — plain text in the page's normal text
+                color; the display color hhiLabel ships is never used. */}
+            <div>
+              <SectionLabel text="Concentration" />
+              <p style={{ fontSize: 13, color: theme.colors.text, margin: 0 }}>
+                {concentrationCell(entries, tickerById, result)}
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
