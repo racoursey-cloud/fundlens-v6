@@ -1451,22 +1451,35 @@ async function generateBriefAsync(
  * GET /api/thesis/latest
  * Returns the most recent macro thesis.
  * This is shared context — the same thesis for all users.
+ *
+ * M1 m6 (ruled August 15, 2026): the read takes TWO rows instead of one so
+ * Research can say what changed since the last run. The server does no
+ * comparing — it hands over the prior row exactly as stored and the client
+ * diffs them, per the ruling that the tidier computed previous-state object
+ * is not built.
+ *
+ * `thesis` keeps its exact shape and meaning: the newest row, as before.
+ * `previous` is additive and null when only one run exists. Nothing that
+ * reads `thesis` today sees any change.
+ *
+ * This is the wave's one server line, pre-flagged at the Evidence Gate and
+ * ruled as the disciplined exception. The route is requireFullTier, so the
+ * member payload is untouched — no reference-shaped surface reads it.
  */
 router.get('/api/thesis/latest', requireAuth, requireFullTier, async (req: Request, res: Response) => {
-  const { data, error } = await supaFetch('thesis_cache', {
+  const { data, error } = await supaFetch<Record<string, unknown>[]>('thesis_cache', {
     params: {
       order: 'generated_at.desc',
-      limit: '1',
+      limit: '2',
     },
-    single: true,
   });
 
-  if (error || !data) {
+  if (error || !data || data.length === 0) {
     res.status(404).json({ error: 'No thesis available yet' });
     return;
   }
 
-  res.json({ thesis: data });
+  res.json({ thesis: data[0], previous: data[1] ?? null });
 });
 
 
