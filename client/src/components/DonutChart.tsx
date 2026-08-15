@@ -9,7 +9,10 @@
  *   - Configurable inner radius and size
  *
  * Used by: Research.tsx (dual donuts with drill-in + BarBreakdown),
- * FundLens.tsx and YourBrief.tsx (allocation donuts, no drill).
+ * YourBrief.tsx and reference/MyMix.tsx (donuts handed to
+ * FundExposurePanel as its centre), and reference/FundDetail.tsx (the
+ * sector donut, likewise as the panel's centre, plus its own holdings
+ * donut).
  *
  * Session 11 deliverable. Destination: client/src/components/DonutChart.tsx
  * References: Spec §6.7 (SVG-only charts, no canvas, no third-party libraries)
