@@ -11,8 +11,13 @@
  * Used by: Research.tsx (dual donuts with drill-in + BarBreakdown),
  * YourBrief.tsx and reference/MyMix.tsx (donuts handed to
  * FundExposurePanel as its centre), and reference/FundDetail.tsx (the
- * sector donut, likewise as the panel's centre, plus its own holdings
- * donut).
+ * sector donut, likewise as the panel's centre).
+ *
+ * D1 (Robert's ruling, August 15, 2026): every consumer above draws SECTORS
+ * or FUND ALLOCATIONS. FundDetail's holdings donut was the one chart whose
+ * slices were individual companies, and it is gone — "sectors get donuts;
+ * holdings do not." Nothing in this component changed; it never knew what
+ * its slices meant, which is why the ruling lives at the call sites.
  *
  * Session 11 deliverable. Destination: client/src/components/DonutChart.tsx
  * References: Spec §6.7 (SVG-only charts, no canvas, no third-party libraries)
