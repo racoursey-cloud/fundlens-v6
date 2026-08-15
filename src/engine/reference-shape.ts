@@ -7,14 +7,18 @@
  * tier by omission: a field not explicitly shaped in this file is not sent,
  * period.
  *
- * TWO SURFACES are enumerated below, each with its own allowlist:
+ * THREE SURFACES are enumerated below, each with its own allowlist:
  *   1. The scores API (B2) — REFERENCE_ALLOWLIST, the fund list and detail.
  *   2. The holding company panel (H2) — COMPANY_PANEL_ALLOWLIST, the FMP
  *      company profile served behind GET /api/holdings/company.
+ *   3. The cross-fund holdings search (H3) — HOLDINGS_SEARCH_ALLOWLIST, the
+ *      response behind GET /api/holdings/search.
  * The second was added by the ratified H2 assignment (August 2, 2026), which
  * records that U1's "reference-shape.ts untouched" scope guard bound the U1
  * waves only, and that an explicit allowlist addition is the ratified path
- * under B2 law. Same discipline, one more surface.
+ * under B2 law. The third is the same ratified path, taken again by the H3
+ * assignment (August 15, 2026, ruling 4). Same discipline, one more surface
+ * each time.
  *
  * What reference accounts receive — facts only:
  *   - fund identity (ticker, name) and its expense ratio
@@ -480,4 +484,178 @@ export function shapeCompanyPanel(profile: CompanyProfileSource): CompanyPanelVi
     ipoDate: asTrimmedStringOrNull(profile.ipoDate),
     source: 'fmp',
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// H3 — THE CROSS-FUND HOLDINGS SEARCH
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The third allowlist (H3 ruling 4, ratified August 15, 2026). Everything the
+ * search response may ever contain, field by field, exactly as §5 t2 of the
+ * assignment enumerates it.
+ *
+ * WHY THIS LIST IS LOAD-BEARING: the source rows are holdings_cache rows, and
+ * a holdings_cache row carries a great deal this response must never ship —
+ * cusip, value_usd, sector, industry, country, accession_number,
+ * is_look_through, asset_category, parent_fund_name, exchange, average_volume,
+ * momentum_eligible, is_adr, industry_source. The assignment names the first
+ * seven as excluded forever unless separately ruled; the rest are excluded by
+ * the same principle that governs this whole file — a field not shaped here is
+ * not sent.
+ *
+ * Enforcement is a PICK, never a spread: shapeHoldingsSearch below names every
+ * key it emits, one at a time, so a column added to holdings_cache tomorrow
+ * cannot reach a member without an edit to this file.
+ */
+export const HOLDINGS_SEARCH_ALLOWLIST = [
+  // The search string, echoed back trimmed
+  'query',
+  // One entry per company matched
+  'companies[].companyName',
+  'companies[].displayTicker',
+  // The funds in the plan that file that company, largest position first
+  'companies[].funds[].fundTicker',
+  'companies[].funds[].fundName',
+  'companies[].funds[].pctOfNav',
+  'companies[].funds[].reportDate',
+] as const;
+
+/** At most this many companies ship in one response (assignment §5 t3). */
+export const HOLDINGS_SEARCH_COMPANY_CAP = 20;
+
+/**
+ * One matched holdings_cache row with its fund joined on, as the search route
+ * reads it. `funds` is the embedded to-one relation — PostgREST joins it in
+ * SQL, which is the v17 law; this file never matches rows to funds itself.
+ */
+export interface HoldingsSearchRowSource {
+  /** The holding name as filed */
+  name: string;
+  /** holdings_cache.ticker — the H1-F2 VOUCHED display ticker, or null */
+  ticker: string | null;
+  /** Percent of the fund's NAV, whole-percent units (0.1442 = 0.1442%) */
+  pct_of_nav: number;
+  report_date: string | null;
+  funds: { ticker: string; name: string } | null;
+}
+
+export interface HoldingsSearchFundView {
+  fundTicker: string;
+  fundName: string;
+  pctOfNav: number;
+  reportDate: string | null;
+}
+
+export interface HoldingsSearchCompanyView {
+  companyName: string;
+  /** Nullable by design: a third of filed rows carry no vouched ticker */
+  displayTicker: string | null;
+  funds: HoldingsSearchFundView[];
+}
+
+export interface HoldingsSearchView {
+  query: string;
+  companies: HoldingsSearchCompanyView[];
+}
+
+/**
+ * Shape the matched rows into the search response.
+ *
+ * Pure shaping — no API calls, no database access, no vendor round trips.
+ * The route reads and joins; this decides what a member sees.
+ *
+ * GROUPING (assignment §7-c, forced by the evidence): the key is the display
+ * ticker where there is one, else the exact filed name. Dollar General is the
+ * case that ruled it — VADFX files "Dollar General Corp." and FXAIX files
+ * "DOLLAR GEN CORP NEW", both under DG, and a member asking "do I own any
+ * Dollar General" is owed one answer, not two. The cost, accepted and honest
+ * to the filings: a company with no vouched ticker filed under two spellings
+ * shows as two results.
+ *
+ * THREE THINGS THE ORDER LEFT OPEN, DECIDED HERE AND DISCLOSED:
+ *
+ *   1. The name shown for a group is the one filed by its LARGEST holder.
+ *      Grouping on a ticker can gather two spellings; something has to be
+ *      displayed, and the biggest position's filed name is deterministic and
+ *      real. It is also the name that rides to the company panel, where the
+ *      server's h6 guard checks it against the vendor profile — so it must be
+ *      a name a fund actually filed, never a synthesis of several.
+ *
+ *   2. A fund that files one company across SEVERAL rows contributes ONE
+ *      line, at the sum of those rows. MWTSX files eight separate Oracle
+ *      bonds; eight identical-looking lines would read as a bug and answer a
+ *      question nobody asked. The sum is that fund's own filed exposure to
+ *      that company — the same arithmetic My Mix already does when it adds a
+ *      holding's contributions across funds. Short rows are summed as filed,
+ *      sign included; nothing is dropped for being negative.
+ *
+ *   3. Companies are ordered by their largest single position, descending —
+ *      the order the rows already arrive in. Within a company, its funds are
+ *      ordered the same way, which §5 t3 does rule.
+ *
+ * A row whose fund did not join is skipped: without the fund there is nothing
+ * truthful to say about where the company is held.
+ */
+export function shapeHoldingsSearch(
+  query: string,
+  rows: HoldingsSearchRowSource[],
+): HoldingsSearchView {
+  interface Group {
+    companyName: string;
+    displayTicker: string | null;
+    /** Largest single filed row in the group — sets the name and the order */
+    topRowPct: number;
+    /** fund ticker → the accumulating line for that fund */
+    byFund: Map<string, HoldingsSearchFundView>;
+  }
+
+  const groups = new Map<string, Group>();
+
+  for (const row of rows) {
+    if (!row.funds) continue;
+
+    const displayTicker = row.ticker ? row.ticker.trim().toUpperCase() : null;
+    // §7-c: the display ticker where there is one, else the exact filed name.
+    // The prefix keeps a ticker group and a name group from ever colliding.
+    const key = displayTicker ? `T:${displayTicker}` : `N:${row.name}`;
+
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        companyName: row.name,
+        displayTicker,
+        topRowPct: row.pct_of_nav,
+        byFund: new Map(),
+      };
+      groups.set(key, group);
+    } else if (row.pct_of_nav > group.topRowPct) {
+      // A bigger position renames the group — decision 1 above.
+      group.companyName = row.name;
+      group.topRowPct = row.pct_of_nav;
+    }
+
+    const line = group.byFund.get(row.funds.ticker);
+    if (line) {
+      line.pctOfNav += row.pct_of_nav; // decision 2 above
+    } else {
+      group.byFund.set(row.funds.ticker, {
+        fundTicker: row.funds.ticker,
+        fundName: row.funds.name,
+        pctOfNav: row.pct_of_nav,
+        reportDate: row.report_date,
+      });
+    }
+  }
+
+  const companies: HoldingsSearchCompanyView[] = [...groups.values()]
+    .sort((a, b) => b.topRowPct - a.topRowPct)
+    .slice(0, HOLDINGS_SEARCH_COMPANY_CAP)
+    .map(group => ({
+      companyName: group.companyName,
+      displayTicker: group.displayTicker,
+      funds: [...group.byFund.values()].sort((a, b) => b.pctOfNav - a.pctOfNav),
+    }));
+
+  return { query, companies };
 }
