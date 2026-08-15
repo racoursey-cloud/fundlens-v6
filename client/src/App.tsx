@@ -143,9 +143,9 @@ function FullScreenNotice({ title, body, email }: { title: string; body: string;
 
 // ─── Tier router (B3; one shell since U1-A) ────────────────────────────────
 // One profile fetch decides the tree AND the capability set the shell renders
-// from. Full-tier accounts then proceed into the protected structure
-// (ProtectedRoute performs its own fetch as it always has — one small extra
-// request, no behavior change).
+// from. Full-tier accounts then proceed into the protected structure, which
+// reads that same fetch — ProtectedRoute has taken its setup_completed check
+// from the shared ProfileContext since M1 m9 and makes no request of its own.
 
 function TierRouter() {
   const { user, loading: authLoading } = useAuth();
