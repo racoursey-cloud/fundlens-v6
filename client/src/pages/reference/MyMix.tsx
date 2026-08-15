@@ -67,6 +67,7 @@ import {
   type ExposureHolding,
   type ExposureSector,
 } from '../../components/FundExposurePanel';
+import { HoldingsSearch } from '../../components/HoldingsSearch';
 import {
   MONEY_MARKET_TICKERS,
   REFERENCE_SECTOR_COLORS,
@@ -702,6 +703,22 @@ export function ReferenceMyMix() {
           {saveError}
         </div>
       )}
+
+      {/* ── H3 t7: the search's second home (ruling 2, the mix half) ──
+          "If I have this, do I have any of X Y Z company?" — asked of the
+          funds on screen, whether they are a saved mix, an edited one, or a
+          hypothetical that was never saved. The scope is exactly the funds
+          carrying a nonzero allocation right now (§7-d: client-side, over
+          the all-funds answer), so it follows every keystroke of the editor
+          above without the server holding any mix state.
+
+          It renders whether or not there is a mix: with nothing entered it
+          is the disabled box and the §6 zero-allocation line, which is the
+          state the order asks for and the one the results card below cannot
+          show, because it does not exist yet. */}
+      <div style={{ marginBottom: theme.spacing.lg }}>
+        <HoldingsSearch scope={{ funds: chosenTickers }} />
+      </div>
 
       {/* ── Results: the factual composite of the current entries ── */}
       {hasMix && (
