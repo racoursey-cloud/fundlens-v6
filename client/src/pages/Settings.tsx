@@ -27,10 +27,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
-  fetchProfile,
   updateProfile,
   type UserProfile,
 } from '../api';
+import { useProfile } from '../context/ProfileContext';
 import { theme } from '../theme';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -93,24 +93,39 @@ export function Settings() {
   });
   const [riskTolerance, setRiskTolerance] = useState<number>(4.0);
 
+  // U1-B: the /api/funds call went with the Fund List section — this page
+  // no longer lists funds, so it no longer asks for them.
+  // M1 m9: and it no longer asks for the profile either — it reads the one
+  // the provider fetched, and fills the form from it whenever it lands.
+  const { profile: sharedProfile, loading: profileLoading, setProfile: setSharedProfile } = useProfile();
+
   useEffect(() => {
-    // U1-B: the /api/funds call went with the Fund List section — this page
-    // no longer lists funds, so it no longer asks for them.
-    fetchProfile().then(pRes => {
-      if (pRes.data?.profile) {
-        setProfile(pRes.data.profile);
-        setDisplayName(pRes.data.profile.display_name ?? '');
-        setFactorWeights({
-          cost: pRes.data.profile.weight_cost,
-          quality: pRes.data.profile.weight_quality,
-          positioning: pRes.data.profile.weight_positioning,
-          momentum: pRes.data.profile.weight_momentum,
-        });
-        setRiskTolerance(pRes.data.profile.risk_tolerance);
-      }
-      setLoading(false);
-    });
-  }, []);
+    if (sharedProfile) {
+      setProfile(sharedProfile);
+      setDisplayName(sharedProfile.display_name ?? '');
+      setFactorWeights({
+        cost: sharedProfile.weight_cost,
+        quality: sharedProfile.weight_quality,
+        positioning: sharedProfile.weight_positioning,
+        momentum: sharedProfile.weight_momentum,
+      });
+      setRiskTolerance(sharedProfile.risk_tolerance);
+    }
+    setLoading(profileLoading);
+  }, [sharedProfile, profileLoading]);
+
+  // M1 m9: EVERY write on this page goes through here. With one cached
+  // profile instead of a refetch per page, a write that does not push the
+  // server's answer back leaves the next tab reading stale values. Routing
+  // all four writes through one helper means no future write can forget.
+  const saveProfile = useCallback(async (updates: Partial<UserProfile>) => {
+    const res = await updateProfile(updates);
+    if (res.data?.profile) {
+      setProfile(res.data.profile);
+      setSharedProfile(res.data.profile);
+    }
+    return res;
+  }, [setSharedProfile]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -140,8 +155,7 @@ export function Settings() {
     const trimmed = displayName.trim();
     if (trimmed === (profile?.display_name ?? '')) return;
     setNameSaving(true);
-    const res = await updateProfile({ display_name: trimmed } as Partial<UserProfile>);
-    if (res.data?.profile) setProfile(res.data.profile);
+    await saveProfile({ display_name: trimmed } as Partial<UserProfile>);
     setNameSaving(false);
     showToast('Display name updated');
   };
@@ -272,7 +286,7 @@ export function Settings() {
                 <button
                   onClick={() => {
                     setFactorWeights({ cost: 0.25, quality: 0.30, positioning: 0.20, momentum: 0.25 });
-                    updateProfile({ weight_cost: 0.25, weight_quality: 0.30, weight_positioning: 0.20, weight_momentum: 0.25 });
+                    void saveProfile({ weight_cost: 0.25, weight_quality: 0.30, weight_positioning: 0.20, weight_momentum: 0.25 });
                     showToast('Weights reset to defaults');
                   }}
                   style={{
@@ -284,7 +298,7 @@ export function Settings() {
                 >Reset to Defaults</button>
                 <button
                   onClick={() => {
-                    updateProfile({
+                    void saveProfile({
                       weight_cost: factorWeights.cost,
                       weight_quality: factorWeights.quality,
                       weight_positioning: factorWeights.positioning,
@@ -324,7 +338,7 @@ export function Settings() {
                 onChange={(e) => {
                   const val = Math.round(Number(e.target.value) * 10) / 10;
                   setRiskTolerance(val);
-                  updateProfile({ risk_tolerance: val });
+                  void saveProfile({ risk_tolerance: val });
                 }}
                 style={{
                   width: '100%', height: 4,
