@@ -39,6 +39,16 @@
  * Dust floor: computed mix percentages below 0.05% print "<0.1%", never
  * "0.0%".
  *
+ * H3-F3 cure 2: the two MIX-LEVEL lists — "Held through more than one fund"
+ * and "Holdings across the mix" — drill in to the company panel exactly as
+ * every other holding row in the app does. They were inert, including on rows
+ * carrying vouched tickers (LINDE, LIN), because the H3 order named the two
+ * lists the shared exposure panel owns and this page renders four. Both lists
+ * render only from the ?all=1 result (resultFull), whose rows carry
+ * holdings_cache.ticker — the H1-F2 vouched display column — so a ticker here
+ * may be looked up and a dash opens the filed-name-plus-Wikipedia fallback,
+ * with the server's h6 name-guard the last word in either case.
+ *
  * H3 t7/t8: the page reads as two labeled regions rather than one run-on
  * column — "Build your mix" (the list, the inputs, Total, Save, the badge)
  * and "What this mix holds" (the holdings search scoped to the mix, the
@@ -49,7 +59,7 @@
  * save gate — is the code it was.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   fetchFunds,
   fetchReferenceScores,
@@ -77,6 +87,7 @@ import {
   type ExposureSector,
 } from '../../components/FundExposurePanel';
 import { HoldingsSearch } from '../../components/HoldingsSearch';
+import { HoldingCompanyPanel } from '../../components/HoldingCompanyPanel';
 import {
   MONEY_MARKET_TICKERS,
   REFERENCE_SECTOR_COLORS,
@@ -473,6 +484,14 @@ export function ReferenceMyMix() {
     [resultFull, result],
   );
 
+  // ── H3-F3 cure 2: which row of each mix-level list is drilled in ────────
+  // One open row per list, click toggles — the pattern the Holdings tab and
+  // the shared exposure panel already use, one level out. The lists are keyed
+  // by the engine's own grouping key (ticker, else the exact filed name), so a
+  // key identifies exactly the row the member clicked.
+  const [expandedOverlapKey, setExpandedOverlapKey] = useState<string | null>(null);
+  const [expandedHoldingKey, setExpandedHoldingKey] = useState<string | null>(null);
+
   const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
@@ -846,26 +865,64 @@ export function ReferenceMyMix() {
                 </p>
               ) : resultFull.overlaps.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {resultFull.overlaps.map(o => (
-                    <div key={o.key} style={{ fontSize: 13, color: theme.colors.text }}>
-                      {o.name ?? o.key}
-                      {o.ticker && (
-                        <span style={{ fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
-                          {' '}({o.ticker})
-                        </span>
-                      )}
-                      {' '}— {fmtMixPct(o.combined_weight_pct)} of the mix combined
-                      <div style={{ fontSize: 12, color: theme.colors.textMuted, marginTop: 2 }}>
-                        {o.appears_in.map((a, i) => (
-                          <span key={`${a.fund_ticker}-${i}`}>
-                            {i > 0 && ' · '}
-                            <span style={{ fontFamily: theme.fonts.mono }}>{a.fund_ticker}</span>
-                            {': '}{fmtMixPct(a.contribution_pct)} of the mix
-                          </span>
-                        ))}
+                  {/* H3-F3: every row is a door, same as every other holding
+                      row in the app. The ticker is the vouched display value
+                      (these rows exist only inside the resultFull branch, whose
+                      holdings come from the ?all=1 lists), and a row without
+                      one opens the filed-name-plus-Wikipedia fallback with no
+                      network call at all. */}
+                  {resultFull.overlaps.map(o => {
+                    const isExpanded = expandedOverlapKey === o.key;
+                    return (
+                      <div key={o.key}>
+                        <div
+                          onClick={() =>
+                            setExpandedOverlapKey(prev => (prev === o.key ? null : o.key))
+                          }
+                          style={{ fontSize: 13, color: theme.colors.text, cursor: 'pointer' }}
+                        >
+                          <DrillCaret expanded={isExpanded} />
+                          {o.name ?? o.key}
+                          {o.ticker && (
+                            <span style={{ fontFamily: theme.fonts.mono, color: theme.colors.textMuted }}>
+                              {' '}({o.ticker})
+                            </span>
+                          )}
+                          {' '}— {fmtMixPct(o.combined_weight_pct)} of the mix combined
+                          <div style={{ fontSize: 12, color: theme.colors.textMuted, marginTop: 2 }}>
+                            {o.appears_in.map((a, i) => (
+                              <span key={`${a.fund_ticker}-${i}`}>
+                                {i > 0 && ' · '}
+                                <span style={{ fontFamily: theme.fonts.mono }}>{a.fund_ticker}</span>
+                                {': '}{fmtMixPct(a.contribution_pct)} of the mix
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        {isExpanded && (
+                          <div
+                            style={{
+                              border: `1px solid ${theme.colors.border}`,
+                              borderRadius: theme.radii.sm,
+                              overflow: 'hidden',
+                              margin: '6px 0 2px',
+                            }}
+                          >
+                            <HoldingCompanyPanel
+                              holding={{
+                                // The name exactly as the row displays it — the
+                                // pair the server's h6 guard checks — and the
+                                // filed sector, not the donut's folded bucket.
+                                name: o.name ?? o.key,
+                                ticker: o.ticker,
+                                sector: o.sector,
+                              }}
+                            />
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p style={{ fontSize: 13, color: theme.colors.textMuted, margin: 0 }}>
@@ -908,58 +965,79 @@ export function ReferenceMyMix() {
                       borderRadius: theme.radii.sm,
                     }}
                   >
-                    {resultFull.holdings.map((h, idx) => (
-                      <div
-                        key={h.key}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          padding: '5px 10px',
-                          borderBottom:
-                            idx < resultFull.holdings.length - 1
-                              ? `1px solid ${theme.colors.border}`
-                              : 'none',
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: 12,
-                            color: theme.colors.text,
-                            flex: 1,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {h.name ?? h.key}
-                        </span>
-                        {h.ticker && (
-                          <span
+                    {/* H3-F3: same door as the overlap list above and as every
+                        holding row elsewhere — vouched ticker looks the company
+                        up, anything else opens the fallback. */}
+                    {resultFull.holdings.map((h, idx) => {
+                      const isExpanded = expandedHoldingKey === h.key;
+                      return (
+                        <Fragment key={h.key}>
+                          <div
+                            onClick={() =>
+                              setExpandedHoldingKey(prev => (prev === h.key ? null : h.key))
+                            }
                             style={{
-                              fontSize: 11,
-                              fontFamily: theme.fonts.mono,
-                              color: theme.colors.textDim,
-                              flexShrink: 0,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '5px 10px',
+                              cursor: 'pointer',
+                              borderBottom:
+                                idx < resultFull.holdings.length - 1
+                                  ? `1px solid ${theme.colors.border}`
+                                  : 'none',
                             }}
                           >
-                            {h.ticker}
-                          </span>
-                        )}
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontFamily: theme.fonts.mono,
-                            color: theme.colors.textMuted,
-                            flexShrink: 0,
-                            minWidth: 52,
-                            textAlign: 'right',
-                          }}
-                        >
-                          {fmtMixPct(h.combined_weight_pct)}
-                        </span>
-                      </div>
-                    ))}
+                            <DrillCaret expanded={isExpanded} />
+                            <span
+                              style={{
+                                fontSize: 12,
+                                color: theme.colors.text,
+                                flex: 1,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {h.name ?? h.key}
+                            </span>
+                            {h.ticker && (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontFamily: theme.fonts.mono,
+                                  color: theme.colors.textDim,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {h.ticker}
+                              </span>
+                            )}
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontFamily: theme.fonts.mono,
+                                color: theme.colors.textMuted,
+                                flexShrink: 0,
+                                minWidth: 52,
+                                textAlign: 'right',
+                              }}
+                            >
+                              {fmtMixPct(h.combined_weight_pct)}
+                            </span>
+                          </div>
+                          {isExpanded && (
+                            <HoldingCompanyPanel
+                              holding={{
+                                name: h.name ?? h.key,
+                                ticker: h.ticker,
+                                sector: h.sector,
+                              }}
+                            />
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -981,6 +1059,29 @@ export function ReferenceMyMix() {
 }
 
 // ─── Small shared bits ─────────────────────────────────────────────────────
+
+/** H2-F1's lesson, carried to this page's two mix-level lists: the door has
+ *  to be visible to be a door. Every row opens — including the ones with no
+ *  ticker, which open the Wikipedia fallback. */
+function DrillCaret({ expanded }: { expanded: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-block',
+        width: 10,
+        marginRight: 6,
+        fontSize: 9,
+        color: theme.colors.textDim,
+        flexShrink: 0,
+        transform: expanded ? 'rotate(90deg)' : 'none',
+        transition: 'transform 0.15s',
+      }}
+    >
+      ▸
+    </span>
+  );
+}
 
 function SectionLabel({ text }: { text: string }) {
   return (
