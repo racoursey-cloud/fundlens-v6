@@ -50,6 +50,7 @@ import {
   shapeHoldingForReference,
   shapeCompanyPanel,
   shapeHoldingsSearch,
+  HOLDINGS_SEARCH_COMPANY_CAP,
   type CompanyProfileSource,
   type HoldingsSearchRowSource,
   type ReferenceDossierSource,
@@ -1988,6 +1989,58 @@ function quoteFilterValue(value: string): string {
   return `"${value.replace(/"/g, '\\"')}"`;
 }
 
+/** The five columns a search reads, with the fund joined on the foreign key
+ *  by the database (the v17 law). Both reads below use exactly this list —
+ *  the expansion may not widen what the match query is allowed to see. */
+const HOLDINGS_SEARCH_SELECT = 'name,ticker,pct_of_nav,report_date,funds!inner(ticker,name)';
+
+/**
+ * H3-F1: above this many distinct display tickers, the expansion read stops
+ * naming them one by one and asks for every tickered row instead, filtering
+ * to the matched set in memory. The two paths return the SAME rows — the
+ * second is a superset narrowed by the same set — so this is a size
+ * decision, never a behaviour one.
+ *
+ * Why it exists: a real company search names a handful of tickers ("dollar
+ * general" one, "oracle" three), but a two-letter term does not. Measured
+ * read-only August 15, 2026: '%co%' matches 2,375 distinct tickers and
+ * '%in%' 2,270. Naming those in a URL would build one tens of kilobytes
+ * long and eventually break on a limit nobody chose deliberately; reading
+ * the 6,394 tickered rows instead is bounded, exact, and needs no
+ * chunking rule.
+ */
+const EXPANSION_TICKER_LIST_MAX = 200;
+
+/**
+ * The expansion's ticker filter, in the SAME grammar the match query above
+ * uses — an `or` list of quoted `ticker.ilike` terms, which S-H3 leg 4 has
+ * now exercised live against production. `in.()` would read more neatly and
+ * is equally documented, but it is a construct this route has never sent,
+ * and the cheapest way to not find that out on a member's screen is to reuse
+ * the one that works. `ilike` with no wildcard is case-insensitive equality,
+ * so it also carries no assumption about how the column is cased.
+ */
+function tickerOrFilter(tickers: string[]): string {
+  return `(${tickers.map(t => `ticker.ilike.${quoteFilterValue(t)}`).join(',')})`;
+}
+
+/** Never silent: if a read reaches the ceiling, the record says so even
+ *  though the member's payload has no allowlisted field to admit it in. */
+function warnIfRowCeilingHit(rowCount: number, term: string, which: string): void {
+  if (rowCount < HOLDINGS_SEARCH_ROW_CEILING) return;
+  console.warn(
+    `[routes] holdings search ${which} read hit the ${HOLDINGS_SEARCH_ROW_CEILING}-row ceiling ` +
+    `for "${term}" — fund lists in this response may be short; raise the ceiling.`
+  );
+}
+
+/** The vouched display ticker of a row, normalized, or null. The grouping key
+ *  in reference-shape.ts is derived the same way, so a ticker that groups two
+ *  rows together there is the same ticker that expands them together here. */
+function normalizedTicker(row: HoldingsSearchRowSource): string | null {
+  return row.ticker ? row.ticker.trim().toUpperCase() : null;
+}
+
 /**
  * GET /api/holdings/search?q=
  *
@@ -2002,18 +2055,44 @@ function quoteFilterValue(value: string): string {
  * the holdings they file are the same truth for everyone, and nothing
  * full-tier enters the payload — the t2 allowlist is the proof.
  *
- * ONE READ, JOINED IN SQL (the v17 law): holdings_cache with funds embedded
- * on the foreign key, so the fund a holding belongs to is established by the
- * database and never by matching rows in JavaScript. Matching is on the filed
- * name (case-insensitive substring) OR the display ticker (case-insensitive
- * exact) — the two ways a member names a company, and the reason "DG" and
- * "dollar" both find Dollar General. holdings_cache.ticker is the H1-F2
- * vouched display column, so the ticker branch never matches on a code the
- * app declined to stand behind.
+ * MATCH, THEN EXPAND — two reads, both joined in SQL (the v17 law):
+ * holdings_cache with funds embedded on the foreign key, so the fund a
+ * holding belongs to is established by the database and never by matching
+ * rows in JavaScript.
  *
- * Everything else — grouping, the 20-company cap, ordering — happens inside
- * shapeHoldingsSearch, where the allowlist is enforced by picking each field
- * by name.
+ *   1. THE MATCH reads rows whose filed name contains the term
+ *      (case-insensitive) or whose display ticker equals it — the two ways a
+ *      member names a company, and the reason "DG" and "dollar" both find
+ *      Dollar General. holdings_cache.ticker is the H1-F2 vouched display
+ *      column, so the ticker branch never matches a code the app declined to
+ *      stand behind.
+ *
+ *   2. THE EXPANSION (H3-F1, ratified August 15, 2026) reads every row that
+ *      shares a matched display ticker. WHY IT EXISTS: match-then-group
+ *      cannot answer for a company whose holders file it under different
+ *      names. S-H3 leg 4 caught it live — q="Dollar General" found VADFX's
+ *      "Dollar General Corp." and reported DG as held by one fund, while
+ *      FXAIX files the very same company as "DOLLAR GEN CORP NEW", never
+ *      matched the phrase, and silently vanished from its own company's fund
+ *      list. Under-reporting who holds a company is exactly the question
+ *      this endpoint exists to answer. Now a company found by ANY of its
+ *      filed names shows every fund that holds it.
+ *
+ *      Companies with no vouched ticker are NOT expanded: there is no
+ *      identifier to expand on, and two spellings of an untickered company
+ *      stay two results. That is the ratified §7-c cost, unchanged and
+ *      honest to the filings.
+ *
+ * ORDERING (H3-F1): a company whose display ticker IS the query comes first —
+ * a member typing "DG" is asking for DG, and it must survive the 20-company
+ * cap by rule rather than by luck. Everything after it is ordered by largest
+ * single position, and each company's funds stay largest-first, both as
+ * ratified.
+ *
+ * Grouping, summing and the field-by-field pick stay in shapeHoldingsSearch,
+ * where the allowlist is enforced. This route composes two shaped lists and
+ * re-applies the same cap; it never builds a company object of its own, so
+ * nothing can reach a member that the allowlist did not pick.
  */
 router.get('/api/holdings/search', requireAuth, holdingsSearchRateLimit, async (req: Request, res: Response) => {
   const q = String(req.query.q || '').trim();
@@ -2032,9 +2111,10 @@ router.get('/api/holdings/search', requireAuth, holdingsSearchRateLimit, async (
     return;
   }
 
+  // ── 1. THE MATCH ────────────────────────────────────────────────────────
   const { data: rows, error } = await supaFetch<HoldingsSearchRowSource[]>('holdings_cache', {
     params: {
-      select: 'name,ticker,pct_of_nav,report_date,funds!inner(ticker,name)',
+      select: HOLDINGS_SEARCH_SELECT,
       or: `(name.ilike.${quoteFilterValue(`%${term}%`)},ticker.ilike.${quoteFilterValue(term)})`,
       order: 'pct_of_nav.desc',
       limit: String(HOLDINGS_SEARCH_ROW_CEILING),
@@ -2048,16 +2128,65 @@ router.get('/api/holdings/search', requireAuth, holdingsSearchRateLimit, async (
   }
 
   const matched = rows || [];
-  if (matched.length >= HOLDINGS_SEARCH_ROW_CEILING) {
-    // Never silent: if the ceiling ever bites, the record says so even though
-    // the member's payload has no field in which to admit it.
-    console.warn(
-      `[routes] holdings search hit the ${HOLDINGS_SEARCH_ROW_CEILING}-row ceiling for "${term}" — ` +
-      'fund lists in this response may be short; raise the ceiling.'
-    );
+  warnIfRowCeilingHit(matched.length, term, 'match');
+
+  // ── 2. THE EXPANSION (H3-F1) ────────────────────────────────────────────
+  // Every row sharing a matched display ticker, so a company found by one of
+  // its filed names arrives with all of its holders.
+  const matchedTickers = [...new Set(
+    matched.map(normalizedTicker).filter((t): t is string => t !== null)
+  )];
+
+  let expanded: HoldingsSearchRowSource[] = [];
+  if (matchedTickers.length > 0) {
+    const { data: expansionRows, error: expansionError } = await supaFetch<HoldingsSearchRowSource[]>('holdings_cache', {
+      params: {
+        select: HOLDINGS_SEARCH_SELECT,
+        ...(matchedTickers.length <= EXPANSION_TICKER_LIST_MAX
+          ? { or: tickerOrFilter(matchedTickers) }
+          : { ticker: 'not.is.null' }),
+        order: 'pct_of_nav.desc',
+        limit: String(HOLDINGS_SEARCH_ROW_CEILING),
+      },
+    });
+
+    if (expansionError) {
+      // Fail the search rather than serve the short fund lists this cure
+      // exists to prevent. A wrong answer is worse than an error message.
+      console.error('[routes] holdings search expansion failed:', expansionError);
+      res.status(500).json({ error: 'Could not search the holdings. Please try again later.' });
+      return;
+    }
+
+    warnIfRowCeilingHit((expansionRows || []).length, term, 'expansion');
+
+    const wanted = new Set(matchedTickers);
+    expanded = (expansionRows || []).filter(r => {
+      const t = normalizedTicker(r);
+      return t !== null && wanted.has(t);
+    });
   }
 
-  res.json(shapeHoldingsSearch(q, matched));
+  // Matched rows WITHOUT a ticker keep their name grouping and are carried as
+  // they are. Matched rows WITH one are dropped here and arrive through the
+  // expansion instead, which is a strict superset of them — so every row is
+  // present exactly once and no fund's percentage is counted twice.
+  const allRows = [...matched.filter(r => normalizedTicker(r) === null), ...expanded];
+
+  // ── 3. ORDERING (H3-F1): the ticker the member typed comes first ────────
+  // Split before shaping, because the cap is applied inside the shaper: a
+  // company sorted purely by position size can fall off the end of a busy
+  // result set, and the one the member named by its ticker must not.
+  const termAsTicker = term.trim().toUpperCase();
+  const isExactTickerRow = (r: HoldingsSearchRowSource) => normalizedTicker(r) === termAsTicker;
+
+  const exact = shapeHoldingsSearch(q, allRows.filter(isExactTickerRow));
+  const others = shapeHoldingsSearch(q, allRows.filter(r => !isExactTickerRow(r)));
+
+  res.json({
+    query: exact.query,
+    companies: [...exact.companies, ...others.companies].slice(0, HOLDINGS_SEARCH_COMPANY_CAP),
+  });
 });
 
 /**
