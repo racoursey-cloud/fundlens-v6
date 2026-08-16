@@ -163,6 +163,13 @@ export interface ReferenceHolding {
   ticker: string | null;
   pct: number;
   sector: string | null;
+  /** H4 ruling 2: the VENDOR's industry, or null. A row whose industry came
+   *  from our own classifier arrives null here — the server's gate decides,
+   *  not the screen, so there is nothing for a caller to get wrong.
+   *  Optional because rows served before H4 carry no such key. */
+  industry?: string | null;
+  /** H4: country of issuer as filed with the SEC */
+  country?: string | null;
 }
 
 // ─── Holding company panel (H2) ────────────────────────────────────────────
@@ -224,6 +231,13 @@ export interface HoldingsSearchCompany {
   /** The H1-F2 vouched display ticker, or null — a third of filed rows
    *  carry none, and those open the panel's Wikipedia fallback */
   displayTicker: string | null;
+  /** H4 ruling 3 — the same three facts a holding row's card carries, taken
+   *  from the largest filed row in the group (the one that names it).
+   *  industry is vendor-sourced only, gated server-side. Optional: a
+   *  response served before H4 carries none of them. */
+  sector?: string | null;
+  industry?: string | null;
+  country?: string | null;
   /** The plan funds that file this company, largest position first */
   funds: HoldingsSearchFund[];
 }
