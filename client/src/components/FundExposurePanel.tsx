@@ -529,6 +529,35 @@ function HoldingsList({
                 borderRadius: theme.radii.sm,
                 overflow: 'hidden',
                 margin: '2px 0 6px',
+                // H4-F1 — THE GRAY LINE, AND WHY IT WAS NEVER A STUB.
+                //
+                // With a sector selected this list is a 300px flex column, and
+                // a flex column shrinks its children to fit before it will let
+                // itself scroll. A row cannot shrink past its own text — that is
+                // the browser's default floor for a flex item. This wrapper can,
+                // because the `overflow: hidden` above (put there so the border
+                // radius clips the card's corners) also removes that floor: an
+                // item that clips its own content is allowed to go to zero. So
+                // the whole overflow of a long sector was charged to the one
+                // item permitted to absorb it, and the card was crushed out of
+                // existence while every row around it stayed legible.
+                //
+                // Measured on the deployed build, VFWAX Industrials in the
+                // Brief: 123px of card at 8 rows, 40px at 14, 2px from 18 rows
+                // up. That sector carries 69. Two pixels of a bordered box is
+                // exactly what Robert reported — a gray line — and the card
+                // behind it was rendering in full the whole time, 121px tall,
+                // every fact on it, with nowhere to draw.
+                //
+                // CARD_MIN_HEIGHT in HoldingCompanyPanel could not save it: that
+                // minimum sits on the card, which is this wrapper's CHILD. The
+                // flex item is the wrapper, and it carried no minimum of its own.
+                //
+                // flexShrink 0 is the whole cure. The card keeps its height, the
+                // list overflows honestly and scrolls, and useDrillScroll above
+                // goes on doing what it always did — pin the clicked row to the
+                // top of the window, which now has a card under it worth showing.
+                flexShrink: 0,
               }}>
                 <HoldingCompanyPanel
                   holding={{
