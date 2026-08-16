@@ -81,8 +81,22 @@ export interface Capabilities {
    *  shell makes no /api/pipeline/* call of any kind, which is what B3 built
    *  and what this merge must not quietly drop. */
   pipelineControls: boolean;
-  /** The "Reference" wordmark tag beside the logo */
-  referenceTag: boolean;
+  /**
+   * The tier name beside the wordmark — U2 R2-b (ruled by Robert, August 16,
+   * 2026): "One app, two rooms." BOTH tiers carry one now, in the same plain
+   * text form, so the lockup is identical either side of the fence:
+   * `FundLens REFERENCE` and `FundLens ANALYST`.
+   *
+   * It replaces the boolean that used to gate a reference-only tag. The U2
+   * recon found the full tier had no tier badge at all — its `● LIVE` chip is
+   * the data-freshness INSTRUMENT (three states, a 2s poll, and a guard so a
+   * failed run never flashes LIVE), not a name. So ANALYST is created here
+   * rather than renamed from that chip, and the chip is untouched (R2-a).
+   *
+   * The value is the string as written, not as displayed: Shell upper-cases it
+   * in CSS, which is why a sweep for "REFERENCE" never found the old tag.
+   */
+  tierTag: 'Reference' | 'Analyst';
   /** The educational/not-advice footer (B3, placeholder copy pending
    *  Robert's approved legal text) */
   disclaimerFooter: boolean;
@@ -105,7 +119,7 @@ export function deriveCapabilities(profile: UserProfile | null): Capabilities {
       globalChat: false,
       dataFreshness: false,
       pipelineControls: false,
-      referenceTag: true,
+      tierTag: 'Reference',
       disclaimerFooter: true,
     };
   }
@@ -122,7 +136,7 @@ export function deriveCapabilities(profile: UserProfile | null): Capabilities {
     globalChat: true,
     dataFreshness: true,
     pipelineControls: isAdmin,
-    referenceTag: false,
+    tierTag: 'Analyst',
     disclaimerFooter: false,
   };
 }

@@ -10,15 +10,16 @@
  *
  * What each capability lights up:
  *   tabs             — the nav list, desktop bar and mobile bottom bar
- *   dataFreshness    — the LIVE / SEED DATA badge and the one status read
- *                      that sets it (full tier, admin or not — unchanged
- *                      from AppShell)
+ *   dataFreshness    — the source-status chip and the one status read that
+ *                      sets it (full tier, admin or not — unchanged from
+ *                      AppShell). U2 R3-a: the chip draws only when it has
+ *                      news — ANALYZING… or SEED DATA. Healthy is silent.
  *   pipelineControls — Refresh Analysis, its progress polling, and the run
  *                      overlay (admin). With both flags off this shell makes
  *                      ZERO /api/pipeline/* calls, which is the property B3
  *                      gave the reference shell and this merge preserves.
  *   globalChat       — the header chat icon and its modal (U1 ruling 1)
- *   referenceTag     — the "Reference" wordmark tag
+ *   tierTag          — the tier name beside the wordmark (U2: both tiers)
  *   disclaimerFooter — the B3 educational/not-advice footer
  *
  * U1-B: the capability set is also handed to the page tree through the
@@ -145,7 +146,7 @@ export function Shell({ capabilities }: { capabilities: Capabilities }) {
   const location = useLocation();
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
-  const { tabs, dataFreshness, pipelineControls, globalChat, referenceTag, disclaimerFooter } =
+  const { tabs, dataFreshness, pipelineControls, globalChat, tierTag, disclaimerFooter } =
     capabilities;
 
   // U1 ruling 1: the global chat lives in the shell, not on a page — one
@@ -336,28 +337,65 @@ export function Shell({ capabilities }: { capabilities: Capabilities }) {
         display: 'flex', alignItems: 'center',
         padding: '0 20px', gap: 16, flexShrink: 0,
       }}>
-        {/* Logo */}
-        <div style={{
-          fontSize: 18, fontWeight: 700,
-          letterSpacing: '-0.01em', flexShrink: 0, userSelect: 'none',
-        }}>
-          <span style={{ color: '#f9fafb' }}>Fund</span>
-          <span style={{ color: '#3b82f6' }}>Lens</span>
-        </div>
+        {/* ═══ THE LOCKUP — wordmark + tier name (U2 §2, R2-b/R2-c) ═════════
+            One group, BASELINE-aligned, and that is the whole alignment cure.
+            The header itself centers its children, which centers BOXES: the
+            18px wordmark and the 12px tag got centered against each other, so
+            the tag's baseline floated 2px above the wordmark's while its
+            cap-top sat 2px below — anchored to neither line, which is what
+            Robert's eye caught. Measured against this file's own styles:
+            centered = −2.00px baseline delta, baseline-aligned = 0.00px.
 
-        {/* Reference wordmark tag (carried from ReferenceShell) */}
-        {referenceTag && (
+            The group's own gap is 8, replacing the marginLeft:-8 that used to
+            claw back half of the header's 16px gap. Same spacing, said once.
+
+            R2-c, the standing law this encodes: BASELINE GOVERNS TYPE, THE BAND
+            CENTERS CONTROLS. The status chip below is deliberately NOT in this
+            group — it is a control, not type, and it keeps its centered
+            position in the header band. */}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexShrink: 0 }}>
+          <div style={{
+            fontSize: 18, fontWeight: 700,
+            letterSpacing: '-0.01em', flexShrink: 0, userSelect: 'none',
+          }}>
+            <span style={{ color: '#f9fafb' }}>Fund</span>
+            <span style={{ color: '#3b82f6' }}>Lens</span>
+          </div>
+
+          {/* The tier name. BOTH rooms carry one since U2 — REFERENCE as it
+              always read, ANALYST newly created for the full tier, which had
+              no tier badge at all before this order. Upper-cased in CSS, which
+              is why the source says 'Reference' and the screen says
+              REFERENCE. */}
           <span style={{
             color: theme.colors.textMuted, fontSize: 12, fontWeight: 500,
             letterSpacing: '0.04em', textTransform: 'uppercase',
-            flexShrink: 0, marginLeft: -8,
+            flexShrink: 0,
           }}>
-            Reference
+            {tierTag}
           </span>
-        )}
+        </div>
 
-        {/* Source badge */}
-        {dataFreshness && (
+        {/* ═══ THE STATUS CHIP — U2 R3-a: QUIET WHEN HEALTHY ═══════════════
+            Robert on seeing `FundLens ANALYST ● LIVE`: "I don't think that's
+            necessary." Ruled R3-a, August 16, 2026 — the chip draws only when
+            it has news:
+
+              ANALYZING…  a run is in flight
+              SEED DATA   the last run did not complete
+              (nothing)   healthy — the header reads FundLens ANALYST
+
+            ABSENCE MEANS HEALTHY, and that is only honest because the two
+            states that protect a member from stale numbers still draw. A
+            cancelled or failed run falls to SEED DATA (see the guard at the
+            poll above), never to a silence that would look like health. The
+            one reading this hides is the reassuring one.
+
+            R2-a stands whole: the instrument itself is untouched. All three
+            states, the mount read and the 2s poll are exactly as shipped —
+            `source` still holds 'live' here, it simply has nothing to say. Put
+            the condition back and LIVE returns with no other change. */}
+        {dataFreshness && source !== 'live' && (
           <div style={{ flexShrink: 0 }}>
             <SourceBadge source={source} />
           </div>

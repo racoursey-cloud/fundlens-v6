@@ -374,7 +374,7 @@ export function Settings() {
         <SectionHeader>About</SectionHeader>
         <div style={{ fontSize: 13, color: theme.colors.textMuted, lineHeight: 1.6 }}>
           <p style={{ margin: 0 }}>
-            FundLens v6 — 401(k) Fund Scoring & Allocation Platform
+            FundLens — 401(k) Fund Scoring & Allocation Platform
           </p>
         </div>
       </section>
