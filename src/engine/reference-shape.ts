@@ -90,6 +90,13 @@ export const REFERENCE_ALLOWLIST = [
   'holdings[].ticker',
   'holdings[].pct',
   'holdings[].sector',
+  // H4 ruling 1 (Robert, August 15, 2026): the honest card's two new facts.
+  // industry is VENDOR-SOURCED ONLY — see vendorIndustry below; country is
+  // the country of issuer as filed with the SEC. Nothing else moved: cusip,
+  // value_usd, accession_number, is_look_through and every scoring field
+  // stay excluded.
+  'holdings[].industry',
+  'holdings[].country',
   // Counts
   'holdings_count',
   'fallback_count',
@@ -171,6 +178,14 @@ export interface ReferenceHoldingSource {
   ticker: string | null;
   pct_of_nav: number;
   sector: string | null;
+  /** H4: the enrichment industry, which may be the vendor's or our own
+   *  classifier's — never emitted without reading industry_source below. */
+  industry?: string | null;
+  /** 'fmp' (the vendor said so), 'haiku' (our nightly classifier decided),
+   *  or null/absent (unclassified). persist.ts writes it per row. */
+  industry_source?: string | null;
+  /** Country of issuer, as filed with the SEC (persist.ts: countryOfIssuer) */
+  country?: string | null;
 }
 
 // ─── Output shapes ──────────────────────────────────────────────────────────
@@ -230,6 +245,10 @@ export interface ReferenceHoldingView {
   ticker: string | null;
   pct: number;
   sector: string | null;
+  /** H4: present only where the VENDOR supplied it (ruling 2) */
+  industry: string | null;
+  /** H4: as filed */
+  country: string | null;
 }
 
 // ─── Safe extraction from factor_details ────────────────────────────────────
@@ -389,8 +408,32 @@ export function shapeFundListForReference(
 }
 
 /**
+ * THE INDUSTRY GATE (H4 ruling 2, Robert, August 15, 2026).
+ *
+ * A holding's industry is not always something we were told. persist.ts
+ * stamps every row with where its industry came from: 'fmp' means the data
+ * vendor said so; 'haiku' means our own nightly classifier decided it
+ * (classify.ts sets that stamp); null means nobody classified it.
+ *
+ * The ruling: a member's card prints an industry line ONLY for 'fmp'.
+ * Model-classified rows show no industry line at all — not an unlabelled
+ * one, and not a labelled one either. So the gate lives HERE, at the
+ * serializer, and a model's guess never leaves the building rather than
+ * being filtered on the way to the screen.
+ */
+function vendorIndustry(row: {
+  industry?: string | null;
+  industry_source?: string | null;
+}): string | null {
+  return row.industry_source === 'fmp' ? row.industry ?? null : null;
+}
+
+/**
  * Shape one holdings_cache row for the reference fund-detail response:
- * name, ticker, percent of fund, sector. Nothing else from the row.
+ * name, ticker, percent of fund, sector, and — since H4 — the vendor's
+ * industry where there is one and the filed country. Nothing else from the
+ * row; the route reads the whole row (supaSelect defaults to every column)
+ * and this function is what decides what a member sees.
  */
 export function shapeHoldingForReference(row: ReferenceHoldingSource): ReferenceHoldingView {
   return {
@@ -398,6 +441,8 @@ export function shapeHoldingForReference(row: ReferenceHoldingSource): Reference
     ticker: row.ticker,
     pct: row.pct_of_nav,
     sector: row.sector,
+    industry: vendorIndustry(row),
+    country: row.country ?? null,
   };
 }
 
@@ -497,12 +542,18 @@ export function shapeCompanyPanel(profile: CompanyProfileSource): CompanyPanelVi
  *
  * WHY THIS LIST IS LOAD-BEARING: the source rows are holdings_cache rows, and
  * a holdings_cache row carries a great deal this response must never ship —
- * cusip, value_usd, sector, industry, country, accession_number,
- * is_look_through, asset_category, parent_fund_name, exchange, average_volume,
- * momentum_eligible, is_adr, industry_source. The assignment names the first
- * seven as excluded forever unless separately ruled; the rest are excluded by
- * the same principle that governs this whole file — a field not shaped here is
- * not sent.
+ * cusip, value_usd, accession_number, is_look_through, asset_category,
+ * parent_fund_name, exchange, average_volume, momentum_eligible, is_adr,
+ * industry_source. Every one of them stays out, by the principle that governs
+ * this whole file: a field not shaped here is not sent.
+ *
+ * H4 ruling 3 (Robert, August 15, 2026) — SEARCH PARITY. H3 §5 t2 excluded
+ * sector, industry and country "forever unless separately ruled." This is
+ * that separate ruling, and only that: those three join the list so a card
+ * opened from a search result carries what a card opened from a holding row
+ * carries. The other four names H3 excluded — cusip, value_usd,
+ * accession_number, is_look_through — are untouched by it and remain out.
+ * industry ships through the same vendor-only gate as everywhere else.
  *
  * Enforcement is a PICK, never a spread: shapeHoldingsSearch below names every
  * key it emits, one at a time, so a column added to holdings_cache tomorrow
@@ -514,6 +565,11 @@ export const HOLDINGS_SEARCH_ALLOWLIST = [
   // One entry per company matched
   'companies[].companyName',
   'companies[].displayTicker',
+  // H4 ruling 3: the honest card's facts, taken from the same largest filed
+  // row that names the group. industry is vendor-sourced only (ruling 2).
+  'companies[].sector',
+  'companies[].industry',
+  'companies[].country',
   // The funds in the plan that file that company, largest position first
   'companies[].funds[].fundTicker',
   'companies[].funds[].fundName',
@@ -537,6 +593,12 @@ export interface HoldingsSearchRowSource {
   /** Percent of the fund's NAV, whole-percent units (0.1442 = 0.1442%) */
   pct_of_nav: number;
   report_date: string | null;
+  /** H4 ruling 3: the card's facts. industry_source is read to enforce the
+   *  vendor-only gate and is never emitted. */
+  sector?: string | null;
+  industry?: string | null;
+  industry_source?: string | null;
+  country?: string | null;
   funds: { ticker: string; name: string } | null;
 }
 
@@ -551,6 +613,11 @@ export interface HoldingsSearchCompanyView {
   companyName: string;
   /** Nullable by design: a third of filed rows carry no vouched ticker */
   displayTicker: string | null;
+  /** H4 ruling 3 — from the largest filed row in the group, the same row
+   *  that gives the group its name. industry is vendor-sourced only. */
+  sector: string | null;
+  industry: string | null;
+  country: string | null;
   funds: HoldingsSearchFundView[];
 }
 
@@ -604,6 +671,15 @@ export function shapeHoldingsSearch(
   interface Group {
     companyName: string;
     displayTicker: string | null;
+    /** H4: the card's facts, carried from whichever row currently names the
+     *  group. Grouping can gather rows from several funds that disagree —
+     *  vendor and filing noise is ordinary — and decision 1 already settles
+     *  that class of tie in favour of the largest filed position. These
+     *  three travel with the name so the card and the heading can never
+     *  describe two different rows. */
+    sector: string | null;
+    industry: string | null;
+    country: string | null;
     /** Largest single filed row in the group — sets the name and the order */
     topRowPct: number;
     /** fund ticker → the accumulating line for that fund */
@@ -625,13 +701,20 @@ export function shapeHoldingsSearch(
       group = {
         companyName: row.name,
         displayTicker,
+        sector: row.sector ?? null,
+        industry: vendorIndustry(row),
+        country: row.country ?? null,
         topRowPct: row.pct_of_nav,
         byFund: new Map(),
       };
       groups.set(key, group);
     } else if (row.pct_of_nav > group.topRowPct) {
-      // A bigger position renames the group — decision 1 above.
+      // A bigger position renames the group — decision 1 above — and brings
+      // its own three facts with it (H4).
       group.companyName = row.name;
+      group.sector = row.sector ?? null;
+      group.industry = vendorIndustry(row);
+      group.country = row.country ?? null;
       group.topRowPct = row.pct_of_nav;
     }
 
@@ -654,6 +737,9 @@ export function shapeHoldingsSearch(
     .map(group => ({
       companyName: group.companyName,
       displayTicker: group.displayTicker,
+      sector: group.sector,
+      industry: group.industry,
+      country: group.country,
       funds: [...group.byFund.values()].sort((a, b) => b.pctOfNav - a.pctOfNav),
     }));
 

@@ -68,6 +68,7 @@ import {
   type ExposureSector,
 } from '../../components/FundExposurePanel';
 import { HoldingCompanyPanel } from '../../components/HoldingCompanyPanel';
+import { useDrillScroll } from '../../components/drill-scroll';
 import { scoreBg, scoreColor, type FullTierScore } from '../../engine/full-tier-scores';
 import { SourceQuote, OurVoice } from '../../components/SourceQuote';
 import {
@@ -271,6 +272,7 @@ export function ReferenceFundDetail({
             holdings={holdings}
             showNegativeExplainer={hasNegativeRows}
             filedCount={fund.holdings_count}
+            fundTicker={fund.ticker}
           />
           <Provenance fund={fund} />
         </div>
@@ -280,6 +282,7 @@ export function ReferenceFundDetail({
             holdings={holdings}
             sectorExposure={fund.sector_exposure}
             hasNegativeRows={hasNegativeRows}
+            fundTicker={fund.ticker}
           />
           <Provenance fund={fund} />
         </div>
@@ -382,9 +385,12 @@ function HoldingsTable({
   holdings,
   showNegativeExplainer,
   filedCount,
+  fundTicker,
 }: {
   holdings: ReferenceHolding[];
   showNegativeExplainer: boolean;
+  /** H4: what each row's percentage is a percentage OF, for the card */
+  fundTicker: string;
   /** H1 h1: dossier holdings_total from the payload — when the filed count
    *  exceeds the rows served (the B9 c5(a) 1,000-row ceiling: VFWAX 3,918,
    *  MWTSX 1,512), the count line must not say "all". */
@@ -393,6 +399,12 @@ function HoldingsTable({
   // H2: which holding row is drilled in (one at a time; click toggles) —
   // the Funds grid's expansion pattern, one level down.
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+
+  // H4: this table lives in a 420px window (below) — about seventeen rows of
+  // a list that runs to hundreds. A card opened from a row past its fold used
+  // to render entirely below it, showing nothing but a border. The hook moves
+  // the window so the clicked row sits at its top.
+  const anchorRow = useDrillScroll(expandedRow === null ? null : String(expandedRow));
 
   return (
     <div>
@@ -433,6 +445,7 @@ function HoldingsTable({
               return (
                 <Fragment key={i}>
                   <tr
+                    ref={anchorRow(String(i))}
                     onClick={() => setExpandedRow(prev => (prev === i ? null : i))}
                     style={{ cursor: 'pointer', background: isExpanded ? theme.colors.surface : undefined }}
                   >
@@ -485,7 +498,20 @@ function HoldingsTable({
                   {isExpanded && (
                     <tr>
                       <td colSpan={4} style={{ padding: 0, borderBottom: `1px solid ${theme.colors.border}` }}>
-                        <HoldingCompanyPanel holding={h} />
+                        {/* H4: the row's own record — the ?all=1 payload
+                            carries the vendor industry and the filed country
+                            since this wave — plus what its percentage is a
+                            percentage of. */}
+                        <HoldingCompanyPanel
+                          holding={{
+                            name: h.name,
+                            ticker: h.ticker,
+                            sector: h.sector,
+                            industry: h.industry ?? null,
+                            country: h.country ?? null,
+                            weight: { text: `${h.pct.toFixed(2)}%`, of: fundTicker },
+                          }}
+                        />
                       </td>
                     </tr>
                   )}
@@ -543,10 +569,13 @@ function SectorsTab({
   holdings,
   sectorExposure,
   hasNegativeRows,
+  fundTicker,
 }: {
   holdings: ReferenceHolding[];
   sectorExposure: Record<string, number>;
   hasNegativeRows: boolean;
+  /** H4: what each row's percentage is a percentage OF, for the card */
+  fundTicker: string;
 }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
@@ -601,6 +630,13 @@ function SectorsTab({
           ticker: h.ticker,
           weight: h.pct,
           sector: h.sector === null ? null : sliceIdForSector(h.sector),
+          // H4: the card gets the row's own record. Note the sector above is
+          // the FOLDED slice id, because the list filters on it; the card is
+          // handed the same value the row displays, which is the one the
+          // member is looking at.
+          industry: h.industry ?? null,
+          country: h.country ?? null,
+          weightText: `${h.pct.toFixed(2)}%`,
         })),
     [holdings],
   );
@@ -631,6 +667,7 @@ function SectorsTab({
           /* H3 t1: these rows are the ?all=1 holdings — holdings_cache.ticker,
              the H1-F2 vouched display column — so the panel may look them up. */
           tickersAreDisplayValidated
+          weightOfLabel={fundTicker}
           center={
             <DonutChart
               slices={geometrySlices}

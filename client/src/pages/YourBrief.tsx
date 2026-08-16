@@ -1124,6 +1124,16 @@ export function YourBrief() {
                    vouched one by one against the recommendation's own vouched
                    tickers rather than trusted as a list. */
                 tickersAreDisplayValidated={vouchedTickers}
+                /* H4: what these percentages are percentages OF — the fund
+                   the donut currently has selected, which is the fund whose
+                   holdings the column is listing. Undefined before a fund is
+                   chosen, and the card omits the line rather than printing a
+                   percentage of nothing; the panels are dimmed and unclickable
+                   in that state anyway. The Brief's rows are the stored
+                   snapshot, which carries no industry or country, so those
+                   two lines are simply absent here — the card prints what the
+                   row knows. */
+                weightOfLabel={selectedFundTicker ?? undefined}
                 center={
                   <>
                     <DonutChart

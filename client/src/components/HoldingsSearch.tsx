@@ -20,6 +20,12 @@
  * a company with no vouched ticker or no cached profile. That is the wave's
  * governing principle applied to search: no dead ends.
  *
+ * H4: the results are the ONE list in the app with no fixed-height window
+ * of its own, which is why they were never reported broken while every other
+ * surface was — and why they need no scroll anchoring now. The card they open
+ * carries the same facts as everywhere else (ruling 3 lifted H3's exclusion
+ * of sector, industry and country for exactly this purpose).
+ *
  * Copy is §6 of the ratified order, verbatim, and lives here so the two
  * homes cannot drift apart.
  *
@@ -279,9 +285,20 @@ export function HoldingsSearch({ scope }: { scope: HoldingsSearchScope }) {
                           // checks before it will serve any description.
                           name: company.companyName,
                           ticker: company.displayTicker,
-                          // Sector is not in the search allowlist, so the
-                          // fallback says only what it can stand behind.
-                          sector: null,
+                          // H4 ruling 3 lifted the H3 exclusion for exactly
+                          // these three, so a card opened from a search result
+                          // now says what a card opened from a holding row
+                          // says. They come from the same largest filed row
+                          // that gives the group its name, and industry is
+                          // vendor-sourced only, gated server-side.
+                          sector: company.sector ?? null,
+                          industry: company.industry ?? null,
+                          country: company.country ?? null,
+                          // No weight line and no held-through line: a search
+                          // result has no single fund to be a percentage of,
+                          // and the row directly above the card already lists
+                          // every fund that holds it, with each percentage.
+                          // Repeating that inside the card would be noise.
                         }}
                       />
                     )}

@@ -48,6 +48,7 @@
 
 import { Fragment, useState, type ReactNode } from 'react';
 import { HoldingCompanyPanel } from './HoldingCompanyPanel';
+import { useDrillScroll } from './drill-scroll';
 import { theme } from '../theme';
 
 // ─── Inputs ────────────────────────────────────────────────────────────────
@@ -66,6 +67,20 @@ export interface ExposureHolding {
   /** Percent on the 0–100 scale */
   weight: number;
   sector: string | null;
+  /** H4: the VENDOR's industry where the caller's rows carry one (the
+   *  ?all=1 holdings do; the Brief's stored snapshot does not) */
+  industry?: string | null;
+  /** H4: country of issuer as filed, same provenance rule */
+  country?: string | null;
+  /**
+   * H4: the row's weight as the CARD should print it. The list prints its
+   * own one-decimal figure as it always has; a caller whose page rules a
+   * different convention — My Mix's dust floor, which prints "<0.1%" where
+   * one decimal would print a false "0.0%" — passes it here so the card
+   * never contradicts the row it opened from. Absent: the card formats the
+   * weight above at one decimal, matching the row.
+   */
+  weightText?: string;
 }
 
 interface FundExposurePanelProps {
@@ -138,6 +153,14 @@ interface FundExposurePanelProps {
    * absent = none · a Set = these tickers, compared upper-cased.
    */
   tickersAreDisplayValidated?: boolean | ReadonlySet<string>;
+  /**
+   * H4 — WHAT THE ROW'S PERCENTAGE IS A PERCENTAGE OF, in the member's
+   * words: a fund's ticker on a fund page ("0.12% of FXAIX"), "the mix" on
+   * My Mix. The card states it because a number with no denominator is not
+   * a fact. Absent: the card omits the weight line rather than printing an
+   * unanchored percentage.
+   */
+  weightOfLabel?: string;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
@@ -154,6 +177,7 @@ export function FundExposurePanel({
   holdingsLimit,
   footnotes,
   tickersAreDisplayValidated = false,
+  weightOfLabel,
 }: FundExposurePanelProps) {
   const defaultLimit = isMobile ? 6 : 8;
   const sectorCap = sectorLimit === undefined ? defaultLimit : sectorLimit;
@@ -242,6 +266,7 @@ export function FundExposurePanel({
                   holdings={filteredHoldings}
                   scrolling={!!selectedSector}
                   tickersAreDisplayValidated={tickersAreDisplayValidated}
+                  weightOfLabel={weightOfLabel}
                 />
                 ) : (
                   <span style={{ fontSize: 11, color: theme.colors.textDim, fontStyle: 'italic' }}>
@@ -289,6 +314,7 @@ export function FundExposurePanel({
                 holdings={filteredHoldings}
                 scrolling={!!selectedSector}
                 tickersAreDisplayValidated={tickersAreDisplayValidated}
+                weightOfLabel={weightOfLabel}
               />
             </div>
           ) : selectedSector ? (
@@ -424,10 +450,12 @@ function HoldingsList({
   holdings,
   scrolling,
   tickersAreDisplayValidated,
+  weightOfLabel,
 }: {
   holdings: ExposureHolding[];
   scrolling: boolean;
   tickersAreDisplayValidated: boolean | ReadonlySet<string>;
+  weightOfLabel?: string;
 }) {
   // H3 t1: which row is drilled in (one at a time; click toggles) — the
   // Holdings tab's pattern, one level in. The key carries the row's position
@@ -435,6 +463,12 @@ function HoldingsList({
   // positions — closes the panel instead of reopening it under a different
   // company.
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  // H4: with a sector filter on, this list becomes a 300px window (below),
+  // and a card opened from a row past its fold used to show nothing but its
+  // top border. The hook moves the window so the clicked row sits at the top
+  // of it, giving the card the rest.
+  const anchorRow = useDrillScroll(expandedKey);
 
   return (
     <div style={{
@@ -447,6 +481,7 @@ function HoldingsList({
         return (
           <Fragment key={idx}>
             <div
+              ref={anchorRow(rowKey)}
               onClick={() => setExpandedKey(prev => (prev === rowKey ? null : rowKey))}
               style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -501,6 +536,15 @@ function HoldingsList({
                     // Fail closed: an unvouched code is never looked up.
                     ticker: mayLookUpTicker(h.ticker, tickersAreDisplayValidated) ? h.ticker : null,
                     sector: h.sector,
+                    // H4: whatever this caller's rows carry. The ?all=1
+                    // holdings carry both; the Brief's stored snapshot
+                    // carries neither, and its card simply prints one line
+                    // fewer rather than an apology.
+                    industry: h.industry ?? null,
+                    country: h.country ?? null,
+                    weight: weightOfLabel
+                      ? { text: h.weightText ?? `${h.weight.toFixed(1)}%`, of: weightOfLabel }
+                      : null,
                   }}
                 />
               </div>

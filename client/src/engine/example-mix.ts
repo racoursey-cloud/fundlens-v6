@@ -70,6 +70,15 @@ export interface ExampleMixHolding {
    * the walk order over entries is stable.
    */
   sector: string | null;
+  /**
+   * H4: the VENDOR's industry and the filed country, carried from the same
+   * appearance that wins the sector above — the largest-contributing one
+   * that has a value, per field. They reach the mix only from the ?all=1
+   * lists (the stored top-ten snapshot carries neither), which is exactly
+   * when this page shows these lists at all.
+   */
+  industry: string | null;
+  country: string | null;
   /** Percent of the whole mix (0–100 scale): sum over the funds that hold
    *  it of (fund's mix pct ÷ 100) × the holding's weight in that fund */
   combined_weight_pct: number;
@@ -168,6 +177,10 @@ export function computeExampleMix(
   /** M1 m3: the contribution behind each holding's currently-held sector,
    *  so a larger appearance can take the sector from a smaller one. */
   const sectorHeldByContribution = new Map<string, number>();
+  /** H4: the same rule, per field — a row that carries the value can take it
+   *  from a smaller appearance, and a row without one never displaces it. */
+  const industryHeldByContribution = new Map<string, number>();
+  const countryHeldByContribution = new Map<string, number>();
 
   for (const { fund_id, pct } of entries) {
     const ticker = tickerById.get(fund_id);
@@ -215,9 +228,19 @@ export function computeExampleMix(
         ticker: string | null;
         weight: number | null;
         sector: string | null;
+        industry?: string | null;
+        country?: string | null;
       }> =
         fullList !== undefined
-          ? fullList.map(h => ({ name: h.name, ticker: h.ticker, weight: h.pct, sector: h.sector }))
+          ? fullList.map(h => ({
+              name: h.name,
+              ticker: h.ticker,
+              weight: h.pct,
+              sector: h.sector,
+              // H4: present on the ?all=1 rows only; the snapshot has neither.
+              industry: h.industry ?? null,
+              country: h.country ?? null,
+            }))
           : view.top_holdings;
       for (const h of rows) {
         const key = h.ticker ?? h.name;
@@ -231,6 +254,8 @@ export function computeExampleMix(
             name: h.name,
             ticker: h.ticker,
             sector: null,
+            industry: null,
+            country: null,
             combined_weight_pct: 0,
             appears_in: [],
           };
@@ -244,6 +269,22 @@ export function computeExampleMix(
           if (heldBy === undefined || contribution > heldBy) {
             agg.sector = h.sector;
             sectorHeldByContribution.set(key, contribution);
+          }
+        }
+        // H4: industry and country follow the same rule, tracked per field so
+        // a row carrying one but not the other cannot blank the other.
+        if (h.industry != null) {
+          const heldBy = industryHeldByContribution.get(key);
+          if (heldBy === undefined || contribution > heldBy) {
+            agg.industry = h.industry;
+            industryHeldByContribution.set(key, contribution);
+          }
+        }
+        if (h.country != null) {
+          const heldBy = countryHeldByContribution.get(key);
+          if (heldBy === undefined || contribution > heldBy) {
+            agg.country = h.country;
+            countryHeldByContribution.set(key, contribution);
           }
         }
         agg.combined_weight_pct += contribution;
