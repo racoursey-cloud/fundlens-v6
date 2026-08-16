@@ -1,28 +1,51 @@
 /**
- * FundLens — The Holding Company Panel (H2 p3, made shared by H3 t1)
+ * FundLens — The Holding Company Card (H2 p3 · shared by H3 t1 · rebuilt by H4)
  *
- * THE SAME PANEL, MOVED — not a second one. Every line below arrived here
- * verbatim from client/src/pages/reference/FundDetail.tsx, where H2 built
- * it: the same /api/holdings/company call, the same h6 serve-time
- * name-guard behaviour (the filed name rides along and the server fails
- * closed without it), the same dash/no-ticker fallback of filed name plus
- * Wikipedia with zero network calls, the same m8 OTC wording. Only the
- * docblock and the subject type are new.
+ * ONE CARD, EVERY SURFACE. Wherever a company's name appears in this app —
+ * a fund's Holdings tab, a sector drill, the top-holdings column, My Mix's
+ * two mix-level lists, the Brief's allocation card, a search result — the
+ * same click opens this same card. Robert's standard, verbatim: "the same
+ * click gives the same kind of answer in every place a company's name
+ * appears."
  *
- * WHY IT MOVED (H3 t1, "company panel everywhere"). The panel has to open
- * from the shared FundExposurePanel's holding rows and from the H3 search
- * results, and it lived inside a PAGE that imports FundExposurePanel. A
- * component cannot import from a page that imports it — the module graph
- * forbids it — so the only way to reuse this panel rather than write a
- * second one was to give it its own file. The assignment's "no new
- * component" is honoured in the sense that matters: there is exactly one
- * company panel in the app, and this is it. Three surfaces now open it.
+ * THE H4 RULING (Robert, August 15, 2026): "Display an honest depiction of
+ * what you have — a thin gray line only looks like the app is broken." The
+ * card is no longer a vendor description with a fallback sentence when the
+ * vendor has nothing. It is what OUR OWN records hold about this row —
+ * filed name, its weight, sector, industry, country, and where the surface
+ * already knows it, which funds hold it — with the vendor's description
+ * added WHEN the cache has one, and the Wikipedia door ALWAYS. A row with no
+ * profile is no longer a near-empty box; it is a card with four true things
+ * on it.
  *
- * Information, never evaluation — the same posture as the About tab one
- * level up. FMP's description serves verbatim in a quote block under
- * attribution; the facts are the non-moving ones only (no price, no market
- * cap, no ratings). Wikipedia is the independent second door and stays
- * secondary.
+ * WHAT IS NEVER PRINTED: a placeholder. An absent fact is absent — no em
+ * dashes, no "not available" lines apologising for a field. The card says
+ * what it knows and stops.
+ *
+ * THE INDUSTRY LINE IS VENDOR-ONLY (H4 ruling 2). A holding's industry can
+ * be the vendor's or our own nightly classifier's. The server's
+ * vendorIndustry gate (reference-shape.ts) serves it only when the vendor
+ * said so, so by the time a row reaches this file a present industry is a
+ * vendor fact and there is no judgment left here to get wrong.
+ *
+ * FROZEN AND EMPTY ARE IMPOSSIBLE SCREEN STATES, BY CONSTRUCTION. The lookup
+ * is ONE value with two phases (see Lookup below): 'loading' exists only
+ * while a request is genuinely in flight, and every other outcome — served,
+ * 400, 404, rate-limited, 5xx, dead connection, a body that isn't JSON, or a
+ * row with no vouched ticker to ask about — is 'done' and renders the card.
+ * The panel previously held two flags and the branch that skips the lookup
+ * returned without clearing the waiting one, which is how a card could sit
+ * on "Loading company…" with no request left to end it.
+ *
+ * VISIBILITY IS A SEPARATE PROBLEM, SOLVED SEPARATELY. This card is opaque
+ * and has a real minimum height, so a partial view reads as a card rather
+ * than as a hairline; the scrolling that brings it into view lives in
+ * drill-scroll.ts, at the lists.
+ *
+ * Information, never evaluation. The vendor description serves verbatim in a
+ * quote block under attribution; the facts are the non-moving ones only (no
+ * price, no market cap, no ratings). Wikipedia is the independent second
+ * door and stays secondary.
  *
  * Destination: client/src/components/HoldingCompanyPanel.tsx
  */
@@ -33,11 +56,13 @@ import { VendorQuote } from './SourceQuote';
 import { theme } from '../theme';
 
 /**
- * What the panel needs to know about the row that opened it. Deliberately
- * the three fields it actually reads, so every caller can satisfy it: a
- * ReferenceHolding (the fund detail's Holdings tab), an ExposureHolding
- * (the shared exposure panel's holdings list), and a search result all
- * carry these and nothing narrower is required.
+ * What the card needs to know about the row that opened it.
+ *
+ * Only the first three are required, because only the first three are
+ * knowable on every surface. Everything else is what THIS surface happens to
+ * know: a fund page knows the weight in that fund, My Mix knows the weight
+ * in the mix and which funds it came through, a search result knows neither.
+ * The card prints what it is given and never invents the rest.
  */
 export interface CompanyPanelSubject {
   /** The name as filed, exactly as the row displays it */
@@ -46,6 +71,26 @@ export interface CompanyPanelSubject {
   ticker: string | null;
   /** The sector as the row shows it, or null where none is shown */
   sector: string | null;
+  /** H4: the VENDOR's industry (the server gates it), or null/absent */
+  industry?: string | null;
+  /** H4: country of issuer as filed, or null/absent */
+  country?: string | null;
+  /**
+   * H4: this row's weight, and what it is a weight OF — "0.12%" of "FXAIX",
+   * "<0.1%" of "the mix". The text is pre-formatted BY THE SURFACE on
+   * purpose: each list has its own ruled convention (My Mix's dust floor
+   * prints "<0.1%" where two decimals would print a false zero), and the
+   * card must not quietly re-round a number a page already ruled on.
+   */
+  weight?: { text: string; of: string } | null;
+  /**
+   * H4: the funds this row is held through, where the surface knows it AND
+   * the row itself does not already list them. Only My Mix's
+   * across-the-mix list passes this — the overlap list and the search
+   * results print their funds in the row, and a card that repeats the line
+   * above it is noise, not information.
+   */
+  heldBy?: Array<{ fundTicker: string; text: string }> | null;
 }
 
 /** Wikipedia name search — lands on a search page for obscure names, which
@@ -71,11 +116,36 @@ function isOverTheCounterVenue(exchange: string | null): boolean {
   return exchange !== null && OTC_VENUES.has(exchange.trim().toUpperCase());
 }
 
-export function HoldingCompanyPanel({ holding }: { holding: CompanyPanelSubject }) {
-  const [company, setCompany] = useState<CompanyPanel | null>(null);
-  const [loading, setLoading] = useState(false);
+/**
+ * THE LOOKUP'S OUTCOME, AS ONE VALUE (H4; first written at H3-F3).
+ *
+ * 'loading' is the only non-terminal phase and it is reachable only while a
+ * request is genuinely in flight. Everything else is 'done', carrying the
+ * served profile or null — and null costs the card nothing now: it loses the
+ * description and keeps every fact our own records hold.
+ *
+ * EVERY non-serving answer lands on `company: null`: 400 (a ticker outside
+ * the display-ticker shape, or a missing filed name — the h6 guard failing
+ * closed), 404 (no cached profile, or the guard refusing a pairing whose
+ * names disagree), a rate-limit wall, a 5xx, a network failure, a body that
+ * is not JSON. One screen for all of them, because they are one truth: no
+ * description this app is willing to stand behind for this row.
+ */
+type Lookup =
+  | { phase: 'loading' }
+  | { phase: 'done'; company: CompanyPanel | null };
 
-  // H1-F2 followup, honored: the panel keys on VALIDATED display tickers
+/** The card is opaque and never shorter than this, so a partially scrolled
+ *  view reads as a card. The failure this replaces was a 1px border of an
+ *  empty box, which read as a broken app. */
+const CARD_MIN_HEIGHT = 92;
+
+export function HoldingCompanyPanel({ holding }: { holding: CompanyPanelSubject }) {
+  // Opens on the card, not on a spinner: a row with no vouched ticker is
+  // answered without touching the network, on the first paint.
+  const [lookup, setLookup] = useState<Lookup>({ phase: 'done', company: null });
+
+  // H1-F2 followup, honored: the card keys on VALIDATED display tickers
   // only. holdings_cache.ticker carries the vouched display value or null,
   // so a dashed row asks the server nothing — there is no identifier the app
   // is willing to stand behind, and a lookup on an unvouched code is exactly
@@ -84,23 +154,35 @@ export function HoldingCompanyPanel({ holding }: { holding: CompanyPanelSubject 
 
   useEffect(() => {
     if (!lookupTicker) {
-      setCompany(null);
+      // Nothing to ask, so the answer is already final — including when this
+      // run replaces one whose request is still in flight.
+      setLookup({ phase: 'done', company: null });
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setCompany(null);
+    setLookup({ phase: 'loading' });
     // The filed name rides along: the server re-checks the h6 name-agreement
     // guard against it and fails closed without it.
-    fetchHoldingCompany(lookupTicker, holding.name).then(res => {
-      if (cancelled) return;
-      setCompany(res.data?.company ?? null);
-      setLoading(false);
-    });
+    fetchHoldingCompany(lookupTicker, holding.name)
+      .then(res => {
+        if (cancelled) return;
+        // apiFetch resolves for every HTTP status — a 400 or 404 arrives here
+        // as data:null with the server's own message in `error` — so this one
+        // line settles the serving and the non-serving cases alike.
+        setLookup({ phase: 'done', company: res.data?.company ?? null });
+      })
+      .catch(() => {
+        // apiFetch is written never to reject. If that ever changes, the card
+        // still settles rather than waiting forever.
+        if (!cancelled) setLookup({ phase: 'done', company: null });
+      });
     return () => {
       cancelled = true;
     };
   }, [lookupTicker, holding.name]);
+
+  const loading = lookup.phase === 'loading';
+  const company = lookup.phase === 'done' ? lookup.company : null;
 
   // F4 convention: a literal 'N/A' filing name is not a name. With no company
   // name either, there is nothing to search for and no link is offered.
@@ -118,87 +200,122 @@ export function HoldingCompanyPanel({ holding }: { holding: CompanyPanelSubject 
     </a>
   ) : null;
 
-  // The non-moving facts, each rendered only where FMP carries it.
+  /**
+   * ONE facts line, deduplicated by source precedence.
+   *
+   * Our own record goes first, because it describes THIS filed row: the
+   * sector the fund filed it under, the vendor industry our pipeline stamped
+   * on it, the country of issuer off the filing. The vendor profile then
+   * fills only what our row does not carry, and adds the things only it
+   * knows — city, exchange, when the listing or the OTC quote opened.
+   *
+   * Nothing is printed twice and nothing is printed as a placeholder.
+   */
   const facts: string[] = [];
-  if (company) {
-    const place = [company.city, company.country].filter(Boolean).join(', ');
-    if (place) facts.push(place);
-    const business = [company.sector, company.industry].filter(Boolean).join(' — ');
-    if (business) facts.push(business);
-    if (company.exchange) facts.push(company.exchange);
-    // M1 m8 (ruled August 15, 2026): on an over-the-counter venue the date
-    // FMP files is when that quote line opened, not when the company listed.
-    // TSMWF is the case that surfaced it — "Listed 2026-07-15" for Taiwan
-    // Semiconductor, public since 1997 and carrying that 1997 date on its
-    // NYSE line. The date is right; the word "Listed" was wrong. OTC and PNK
-    // (Pink) are both quote venues in this sense; NYSE, NASDAQ, AMEX and
-    // CBOE are listings and are untouched.
-    if (company.ipoDate) {
-      facts.push(
-        isOverTheCounterVenue(company.exchange)
-          ? `OTC quote since ${company.ipoDate}`
-          : `Listed ${company.ipoDate}`
-      );
-    }
+  if (holding.sector) facts.push(holding.sector);
+  else if (company?.sector) facts.push(company.sector);
+  if (holding.industry) facts.push(holding.industry);
+  else if (company?.industry) facts.push(company.industry);
+  if (company?.city) facts.push(company.city);
+  if (holding.country) facts.push(holding.country);
+  else if (company?.country) facts.push(company.country);
+  if (company?.exchange) facts.push(company.exchange);
+  // M1 m8 (ruled August 15, 2026): on an over-the-counter venue the date FMP
+  // files is when that quote line opened, not when the company listed. TSMWF
+  // is the case that surfaced it — "Listed 2026-07-15" for Taiwan
+  // Semiconductor, public since 1997 and carrying that 1997 date on its NYSE
+  // line. The date is right; the word "Listed" was wrong. OTC and PNK (Pink)
+  // are both quote venues in this sense; NYSE, NASDAQ, AMEX and CBOE are
+  // listings and are untouched.
+  if (company?.ipoDate) {
+    facts.push(
+      isOverTheCounterVenue(company.exchange)
+        ? `OTC quote since ${company.ipoDate}`
+        : `Listed ${company.ipoDate}`
+    );
   }
 
   return (
     <div
       style={{
-        background: theme.colors.bg,
+        background: theme.colors.surface,
         borderTop: `1px solid ${theme.colors.border}`,
         padding: '14px 16px',
+        minHeight: CARD_MIN_HEIGHT,
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 600, color: theme.colors.text, marginBottom: 10 }}>
-        {company?.companyName ?? filedName ?? '—'}
+      {/* Identity: the company as we can best name it, and the vouched
+          ticker beside it where there is one. */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: theme.colors.text, flex: 1, minWidth: 0 }}>
+          {company?.companyName ?? filedName ?? '—'}
+        </span>
+        {holding.ticker && (
+          <span style={{ fontSize: 11, fontFamily: theme.fonts.mono, color: theme.colors.textDim, flexShrink: 0 }}>
+            {holding.ticker}
+          </span>
+        )}
       </div>
 
+      {/* The member's own question first: how much of this do I have here? */}
+      {holding.weight && (
+        <p style={{ fontSize: 12, color: theme.colors.text, margin: '0 0 6px' }}>
+          <span style={{ fontFamily: theme.fonts.mono, fontWeight: 600 }}>{holding.weight.text}</span>
+          {' of '}
+          {holding.weight.of}
+        </p>
+      )}
+
+      {facts.length > 0 && (
+        <p style={{ fontSize: 12, color: theme.colors.textMuted, lineHeight: 1.6, margin: '0 0 6px' }}>
+          {facts.join(' · ')}
+        </p>
+      )}
+
+      {/* Held through — only where the surface knows it and the row above
+          does not already say it. */}
+      {holding.heldBy && holding.heldBy.length > 0 && (
+        <p style={{ fontSize: 12, color: theme.colors.textMuted, lineHeight: 1.6, margin: '0 0 6px' }}>
+          Held through{' '}
+          {holding.heldBy.map((f, i) => (
+            <span key={`${f.fundTicker}-${i}`}>
+              {i > 0 && ' · '}
+              <span style={{ fontFamily: theme.fonts.mono, color: theme.colors.text }}>{f.fundTicker}</span>
+              {' '}{f.text}
+            </span>
+          ))}
+        </p>
+      )}
+
+      {/* The vendor's description, when the cache has one. Its absence costs
+          the card a paragraph, never its existence — which is the whole H4
+          ruling in one line. */}
       {loading ? (
-        <p style={{ fontSize: 12, color: theme.colors.textDim, margin: 0 }}>Loading company…</p>
+        <p style={{ fontSize: 12, color: theme.colors.textDim, margin: '8px 0 0' }}>
+          Looking up the company description…
+        </p>
       ) : company && company.description ? (
-        <>
+        <div style={{ marginTop: 8 }}>
           <VendorQuote attribution="Company data: Financial Modeling Prep">
             {company.description}
           </VendorQuote>
-
-          {facts.length > 0 && (
-            <p style={{ fontSize: 12, color: theme.colors.textMuted, lineHeight: 1.6, margin: '12px 0 0' }}>
-              {facts.join(' · ')}
-              {company.website && (
-                <>
-                  {' · '}
-                  <a
-                    href={company.website}
-                    target="_blank"
-                    rel="noopener"
-                    style={{ color: theme.colors.textMuted, textDecoration: 'underline' }}
-                  >
-                    {company.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
-                  </a>
-                </>
-              )}
+          {company.website && (
+            <p style={{ fontSize: 12, color: theme.colors.textMuted, margin: '8px 0 0' }}>
+              <a
+                href={company.website}
+                target="_blank"
+                rel="noopener"
+                style={{ color: theme.colors.textMuted, textDecoration: 'underline' }}
+              >
+                {company.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+              </a>
             </p>
           )}
+        </div>
+      ) : null}
 
-          {wikipediaLink && (
-            <p style={{ fontSize: 11, color: theme.colors.textDim, margin: '10px 0 0' }}>{wikipediaLink}</p>
-          )}
-        </>
-      ) : (
-        /* Fallback: no cached profile, or the h6 guard declined this pairing.
-           The member gets what the filing itself says, plus the second door —
-           never another company's description. */
-        <>
-          <p style={{ fontSize: 12, color: theme.colors.textMuted, lineHeight: 1.6, margin: 0 }}>
-            {holding.sector
-              ? `Filed under ${holding.sector}. No company description is available for this holding.`
-              : 'No company description is available for this holding.'}
-          </p>
-          {wikipediaLink && (
-            <p style={{ fontSize: 11, color: theme.colors.textDim, margin: '10px 0 0' }}>{wikipediaLink}</p>
-          )}
-        </>
+      {wikipediaLink && (
+        <p style={{ fontSize: 11, color: theme.colors.textDim, margin: '10px 0 0' }}>{wikipediaLink}</p>
       )}
     </div>
   );
