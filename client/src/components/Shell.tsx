@@ -10,9 +10,10 @@
  *
  * What each capability lights up:
  *   tabs             — the nav list, desktop bar and mobile bottom bar
- *   dataFreshness    — the LIVE / SEED DATA badge and the one status read
- *                      that sets it (full tier, admin or not — unchanged
- *                      from AppShell)
+ *   dataFreshness    — the source-status chip and the one status read that
+ *                      sets it (full tier, admin or not — unchanged from
+ *                      AppShell). U2 R3-a: the chip draws only when it has
+ *                      news — ANALYZING… or SEED DATA. Healthy is silent.
  *   pipelineControls — Refresh Analysis, its progress polling, and the run
  *                      overlay (admin). With both flags off this shell makes
  *                      ZERO /api/pipeline/* calls, which is the property B3
@@ -375,8 +376,26 @@ export function Shell({ capabilities }: { capabilities: Capabilities }) {
           </span>
         </div>
 
-        {/* Source badge */}
-        {dataFreshness && (
+        {/* ═══ THE STATUS CHIP — U2 R3-a: QUIET WHEN HEALTHY ═══════════════
+            Robert on seeing `FundLens ANALYST ● LIVE`: "I don't think that's
+            necessary." Ruled R3-a, August 16, 2026 — the chip draws only when
+            it has news:
+
+              ANALYZING…  a run is in flight
+              SEED DATA   the last run did not complete
+              (nothing)   healthy — the header reads FundLens ANALYST
+
+            ABSENCE MEANS HEALTHY, and that is only honest because the two
+            states that protect a member from stale numbers still draw. A
+            cancelled or failed run falls to SEED DATA (see the guard at the
+            poll above), never to a silence that would look like health. The
+            one reading this hides is the reassuring one.
+
+            R2-a stands whole: the instrument itself is untouched. All three
+            states, the mount read and the 2s poll are exactly as shipped —
+            `source` still holds 'live' here, it simply has nothing to say. Put
+            the condition back and LIVE returns with no other change. */}
+        {dataFreshness && source !== 'live' && (
           <div style={{ flexShrink: 0 }}>
             <SourceBadge source={source} />
           </div>
