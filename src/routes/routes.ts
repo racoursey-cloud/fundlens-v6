@@ -1989,10 +1989,20 @@ function quoteFilterValue(value: string): string {
   return `"${value.replace(/"/g, '\\"')}"`;
 }
 
-/** The five columns a search reads, with the fund joined on the foreign key
- *  by the database (the v17 law). Both reads below use exactly this list —
- *  the expansion may not widen what the match query is allowed to see. */
-const HOLDINGS_SEARCH_SELECT = 'name,ticker,pct_of_nav,report_date,funds!inner(ticker,name)';
+/** The columns a search reads, with the fund joined on the foreign key by the
+ *  database (the v17 law). Both reads below use exactly this list — the
+ *  expansion may not widen what the match query is allowed to see.
+ *
+ *  H4 ruling 3 added the honest card's three facts — sector, industry,
+ *  country — plus industry_source, which is FOUR columns for THREE served
+ *  fields. industry_source is machinery, never a field: reference-shape's
+ *  vendorIndustry gate reads it to decide whether an industry may be served
+ *  at all (ruling 2, vendor-sourced only) and the shaper never emits it. It
+ *  is read here because the gate cannot run on a column the query did not
+ *  fetch. Everything else in a holdings_cache row — cusip, value_usd,
+ *  accession_number, is_look_through and the rest — is still unread. */
+const HOLDINGS_SEARCH_SELECT =
+  'name,ticker,pct_of_nav,report_date,sector,industry,industry_source,country,funds!inner(ticker,name)';
 
 /**
  * H3-F1: above this many distinct display tickers, the expansion read stops
