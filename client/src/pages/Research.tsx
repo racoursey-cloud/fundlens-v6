@@ -24,6 +24,7 @@ import {
 } from '../api';
 import { useProfile } from '../context/ProfileContext';
 import { theme } from '../theme';
+import { SECTOR_COLORS } from '../sectorColors';
 
 /** Render inline markdown bold/italic within narrative text */
 function inlineMarkdown(text: string): string {
@@ -91,23 +92,6 @@ function computeClientTier(
   return { tier: 'Weak', tierColor: '#EF4444' };
 }
 
-const SECTOR_COLORS: Record<string, string> = {
-  Technology:               '#3b82f6',
-  Healthcare:               '#06b6d4',
-  Financials:               '#8b5cf6',
-  'Consumer Discretionary': '#f59e0b',
-  'Consumer Staples':       '#22c55e',
-  Energy:                   '#ef4444',
-  Industrials:              '#f97316',
-  Materials:                '#14b8a6',
-  'Real Estate':            '#ec4899',
-  Utilities:                '#6366f1',
-  'Communication Services': '#a855f7',
-  'Precious Metals':        '#eab308',
-  'Fixed Income':           '#64748b',
-  'Cash & Equivalents':     '#94a3b8',
-  Other:                    '#71717a',
-};
 
 const FUND_PALETTE = [
   '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6',
