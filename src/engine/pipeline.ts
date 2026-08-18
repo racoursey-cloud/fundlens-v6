@@ -30,7 +30,7 @@
  * Session 3 updated, Session 10 cache layer added. References: Spec §4.6, §5.4.
  */
 
-import { PIPELINE, CLAUDE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS, MM_SCORING, MM_FUND_DATA } from './constants.js';
+import { PIPELINE, DEFAULT_FACTOR_WEIGHTS, MONEY_MARKET_TICKERS, MM_SCORING, MM_FUND_DATA } from './constants.js';
 import { delay, ResolvedHolding, FundRow, NmfpFundData, HoldingsPipelineResult } from './types.js';
 import { computeDossier } from './dossier.js';
 import type { FundDossier, DossierInput } from './dossier.js';
@@ -1106,7 +1106,16 @@ export async function runFullPipeline(
       macroStance: 'mixed' as const,
       riskFactors: [],
       generatedAt: new Date().toISOString(),
-      model: CLAUDE.THESIS_MODEL,
+      // THESIS-F1: no model produced this row, so it names none. It used to
+      // stamp CLAUDE.THESIS_MODEL ('claude-sonnet-4-6'), a model the thesis
+      // has not run on since A5 Task 5 (July 5, 2026) — the real call is on
+      // PROSE_MODEL. That stamp made 83 stored failures name a model that
+      // did not generate them, and made the table read "sonnet-4-6 fails,
+      // sonnet-5 works", which is false and is the first thing any reader
+      // concludes. 'none' is the truth: the call threw, nothing was written
+      // by any model. The column is NOT NULL, so a literal is the way to
+      // say it (Robert's ruling, August 18, 2026).
+      model: 'none',
     };
     errors.push({ fund: 'ALL', step: 'thesis', error: msg });
   }
