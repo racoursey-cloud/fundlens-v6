@@ -38,13 +38,16 @@
  *     — the page that does its job — for the full tier. Reference accounts
  *     reached that path through their catch-all before and still do.
  *
- * B3 notes (carried, still true):
+ * B3 notes (carried):
  *   - Reference routing ignores setup_completed entirely (ruled July 27,
- *     2026: the DB trigger stays untouched, so reference profiles are born
- *     setup_completed=false — ProtectedRoute would bounce them into the
- *     wizard, which is why the reference tree never mounts ProtectedRoute).
- *   - The full-tier tree is still wrapped in ProtectedRoute; its own profile
- *     fetch and setup redirect behave exactly as before.
+ *     2026). Since b3_birth_state.sql rewrote the birth function in place —
+ *     the trigger binding itself untouched — reference profiles are born
+ *     setup_completed=true and briefs_enabled=false, so nothing is pending
+ *     and there is no wizard to bounce them into. The reference tree mounts
+ *     Shell directly and never mounts ProtectedRoute.
+ *   - The full-tier tree is still wrapped in ProtectedRoute, which keeps its
+ *     setup redirect but reads the shared ProfileContext for it — since
+ *     M1 m9 it makes no profile request of its own.
  *
  * Destination: client/src/App.tsx
  */
