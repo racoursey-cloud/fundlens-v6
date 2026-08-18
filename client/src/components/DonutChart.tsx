@@ -229,6 +229,15 @@ function DrillInPanel({ items, note, emptyMessage, sliceLabel, sliceColor, onClo
       border: `1px solid ${theme.colors.border}`,
       borderRadius: theme.radii.md,
       overflow: 'hidden',
+      // H4-F1 twin (FOLLOWUPS 2026-08-16). This div is a DIRECT child of the
+      // chart's flex column, and it clips its own content — the two conditions
+      // that let the sector drill card be crushed to a gray line. An item that
+      // clips is allowed past its content height, so a height cap anywhere up
+      // the tree would charge this box the whole overflow. No ancestor caps
+      // height today; flexShrink 0 means none ever can. Measured in Chromium:
+      // this shape loses 150px of content down to the cap without it, and
+      // holds full height with it.
+      flexShrink: 0,
     }}>
       {/* Header */}
       <div style={{
