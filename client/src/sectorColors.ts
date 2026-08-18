@@ -17,9 +17,11 @@
  * The reason for holding it — no 'Other' key, and a different fallback gray
  * (#6b7280) — was real but unreachable: its other fourteen keys are
  * value-identical to this map, and the thesis engine has produced only those
- * fourteen sectors across all 230 cached runs, never 'Other'. The one key
- * that could have painted differently never arrives. Its #6b7280 fallback
- * stays its own; it is the component's, not the palette's.
+ * fourteen sectors across the 146 cached runs that carry sector data, never
+ * 'Other' (thesis_cache holds 230 rows; the other 84 carry empty arrays and
+ * render no scorecard at all). The one key that could have painted
+ * differently never arrives. Its #6b7280 fallback stays its own; it is the
+ * component's, not the palette's.
  *
  * Destination: client/src/sectorColors.ts
  */
