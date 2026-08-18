@@ -53,9 +53,26 @@ function isCancelledRun(run: PipelineRun | null | undefined): boolean {
   return run?.status === 'failed' && run?.error_message === 'Cancelled by user';
 }
 
-function StatusDot({ status, cancelled }: { status: PipelineRun['status']; cancelled?: boolean }) {
+// THESIS-F1 Finding 1: a run that finished every step but recorded a failure
+// in one of them is not the same thing as a clean run. pipeline_runs.errors has
+// carried {fund, step, error} for each fallback since the column existed —
+// including the thesis fallback that serves neutral positioning — and nothing
+// read it, so 84 degraded runs showed a green dot. Ruled August 18, 2026:
+// surface what is already written. status keeps its three values; only the
+// reading of them changes.
+function isDegradedRun(run: PipelineRun | null | undefined): boolean {
+  return run?.status === 'completed' && (run?.errors?.length ?? 0) > 0;
+}
+
+/** The distinct steps a run recorded a failure in, in first-seen order. */
+function failedSteps(run: PipelineRun | null | undefined): string[] {
+  return [...new Set((run?.errors ?? []).map(e => e.step).filter(Boolean))];
+}
+
+function StatusDot({ status, cancelled, degraded }: { status: PipelineRun['status']; cancelled?: boolean; degraded?: boolean }) {
   const color =
     cancelled ? theme.colors.textDim :
+    degraded ? theme.colors.accentBlue :
     status === 'completed' ? theme.colors.success :
     status === 'running' ? theme.colors.warning :
     theme.colors.error;
@@ -798,11 +815,16 @@ export function Pipeline() {
                   (e.currentTarget as HTMLElement).style.background = 'transparent';
                 }}
               >
-                <StatusDot status={run.status} cancelled={isCancelledRun(run)} />
+                <StatusDot status={run.status} cancelled={isCancelledRun(run)} degraded={isDegradedRun(run)} />
                 <span>
                   {fmtDateTime(run.started_at)}
                   {isCancelledRun(run) && (
                     <span style={{ color: theme.colors.textDim, fontSize: '12px' }}> · cancelled by user</span>
+                  )}
+                  {isDegradedRun(run) && (
+                    <span style={{ color: theme.colors.accentBlue, fontSize: '12px' }}>
+                      {' '}· completed with {failedSteps(run).join(', ')} failed
+                    </span>
                   )}
                 </span>
                 <span style={{ fontFamily: theme.fonts.mono }}>
