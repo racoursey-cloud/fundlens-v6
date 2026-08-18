@@ -5,33 +5,62 @@
  * Every route that returns user-specific data requires authentication
  * (the requireAuth middleware checks the user's JWT token).
  *
- * Route overview:
+ * Route overview (complete; guard shown per route):
+ *   auth  = requireAuth only          FULL = requireAuth + requireFullTier
+ *   ADMIN = requireAuth + requireAdmin
  *
  *   PUBLIC (no auth):
- *     GET  /health                    — server health check
+ *     GET    /health                          — server health check
  *
- *   AUTHENTICATED (require valid JWT):
- *     GET  /api/funds                 — list active 401(k) funds
- *     GET  /api/funds/:ticker         — single fund detail
- *     GET  /api/scores                — latest raw scores for all funds
- *     GET  /api/scores/:ticker        — scores for a specific fund
- *     GET  /api/profile               — current user's profile
- *     PUT  /api/profile               — update user's profile (weights, risk, etc.)
- *     POST /api/profile/setup         — complete setup wizard
- *     GET  /api/example-allocation    — the caller's saved example mix
- *     PUT  /api/example-allocation    — save or replace the caller's example mix
- *     DELETE /api/example-allocation  — delete the caller's example mix
- *     GET  /api/pipeline/status       — latest pipeline run status
- *     POST /api/pipeline/run          — trigger a fresh pipeline run
- *     POST /api/pipeline/retry        — retry a failed pipeline run
- *     GET  /api/pipeline/history      — pipeline run history
- *     GET  /api/briefs                — user's Investment Brief history
- *     GET  /api/briefs/:id            — specific Brief by ID
- *     POST /api/briefs/generate       — trigger on-demand Brief generation
- *     GET  /api/thesis/latest         — latest macro thesis
- *     GET  /api/monitor/health        — system health report
- *     GET  /api/monitor/data-quality  — data quality metrics
- *     GET  /api/monitor/cron          — cron job status
+ *   FUNDS + SCORES:
+ *     GET    /api/funds                       auth   list active 401(k) funds
+ *     GET    /api/funds/:ticker               auth   single fund detail
+ *     GET    /api/scores                      auth   latest scores, all funds
+ *     GET    /api/scores/:ticker              auth   scores for one fund
+ *
+ *   PROFILE + MIX:
+ *     GET    /api/profile                     auth   current user's profile
+ *     PUT    /api/profile                     auth   update profile
+ *     POST   /api/profile/setup               FULL   complete setup wizard
+ *     GET    /api/example-allocation          auth   caller's saved example mix
+ *     PUT    /api/example-allocation          auth   save or replace it
+ *     DELETE /api/example-allocation          auth   delete it
+ *
+ *   HOLDINGS (H2, H3):
+ *     GET    /api/holdings/company            auth   company panel for a holding
+ *     GET    /api/holdings/search             auth   holdings search across funds
+ *
+ *   PIPELINE:
+ *     GET    /api/pipeline/status             auth   latest run status
+ *     POST   /api/pipeline/run                ADMIN  trigger a fresh run
+ *     POST   /api/pipeline/abort              ADMIN  abort the running pipeline
+ *     POST   /api/pipeline/retry              ADMIN  retry a failed run
+ *     GET    /api/pipeline/log/:runId         ADMIN  one run's log
+ *     GET    /api/pipeline/history            ADMIN  run history
+ *
+ *   BRIEFS + THESIS:
+ *     GET    /api/briefs                      FULL   Brief history
+ *     GET    /api/briefs/:id                  FULL   specific Brief
+ *     POST   /api/briefs/generate             FULL   on-demand generation
+ *     GET    /api/thesis/latest               FULL   latest macro thesis
+ *
+ *   HELP:
+ *     POST   /api/help/chat                   FULL   full-tier help agent
+ *     POST   /api/reference-help/ask          auth   reference help
+ *     POST   /api/help/reload                 ADMIN  reload help corpus
+ *     POST   /api/help-entries/generate       ADMIN  draft help entries
+ *
+ *   REFERENCE CONTENT:
+ *     POST   /api/reference-summaries/generate      ADMIN  (B7; see note below)
+ *     POST   /api/reference-translations/generate   ADMIN  translations
+ *
+ *   MONITORING + BENCHMARK:
+ *     GET    /api/monitor/health              ADMIN  system health report
+ *     GET    /api/monitor/data-quality        ADMIN  data quality metrics
+ *     GET    /api/monitor/cron                ADMIN  cron job status
+ *     GET    /api/dossiers/latest             ADMIN  latest dossiers
+ *     POST   /api/benchmark/classification    ADMIN  run classification benchmark
+ *     GET    /api/benchmark/status            ADMIN  benchmark status
  *
  * Session 5 deliverable. Updated in Session 6 (Brief engine wiring).
  * Updated in Session 7 (monitoring + retry + cron status endpoints).
