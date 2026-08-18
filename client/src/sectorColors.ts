@@ -3,8 +3,8 @@
  *
  * The single home for the sector composition palette. Before this file the
  * same map was written out four times: Research.tsx, YourBrief.tsx,
- * components/SectorScorecard.tsx, and pages/reference/constants.ts. Three of
- * those were value-identical; unifying them is FOLLOWUPS #24 (2026-08-15).
+ * components/SectorScorecard.tsx, and pages/reference/constants.ts. All four
+ * now read from here — FOLLOWUPS #24 (2026-08-15), closed in two passes.
  *
  * COMPOSITION COLORS ONLY. A sector's color says what the fund HOLDS, never
  * whether that is good or bad. Nothing here encodes a score, a tier or a
@@ -13,10 +13,15 @@
  * Any sector missing from this map renders the house gray (#71717a, the
  * theme's textDim) and legends as "Other" at the call site.
  *
- * NOT unified here, deliberately: components/SectorScorecard.tsx keeps its
- * own copy. It carries no 'Other' key and falls back to a different gray
- * (#6b7280), so folding it in would change what a sector named "Other"
- * paints. That is a display decision, not a dedupe, and it stays logged.
+ * SectorScorecard.tsx was held back on the first pass and has since joined.
+ * The reason for holding it — no 'Other' key, and a different fallback gray
+ * (#6b7280) — was real but unreachable: its other fourteen keys are
+ * value-identical to this map, and the thesis engine has produced only those
+ * fourteen sectors across the 146 cached runs that carry sector data, never
+ * 'Other' (thesis_cache holds 230 rows; the other 84 carry empty arrays and
+ * render no scorecard at all). The one key that could have painted
+ * differently never arrives. Its #6b7280 fallback stays its own; it is the
+ * component's, not the palette's.
  *
  * Destination: client/src/sectorColors.ts
  */

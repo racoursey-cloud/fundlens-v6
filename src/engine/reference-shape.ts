@@ -50,8 +50,9 @@
  * behind a flag that shipped false and was never raised, so no reference
  * payload ever carried the key and no AI-generated text ever reached a
  * reference account through it. The allowlist below no longer names a summary
- * field, which is the contract saying the same thing. REFERENCE_SUMMARIES_ENABLED
- * remains in constants.ts, unreferenced, as the frozen constants do.
+ * field, which is the contract saying the same thing. The
+ * REFERENCE_SUMMARIES_ENABLED constant that gated it is gone from
+ * constants.ts too — removed once nothing read it any more.
  *
  * Pure shaping — no API calls, no database access, no stored state.
  * routes.ts calls these functions only when the requesting account's
