@@ -598,6 +598,12 @@ export async function getPipelineHistory(
     totalHoldings: r.total_holdings,
     errorMessage: r.error_message,
     errorCount: r.errors?.length || 0,
+    // THESIS-F1 Finding 1: the errors themselves, not just how many. The
+    // column has carried {fund, step, error} for every failed step since it
+    // existed — including the thesis fallback — and nothing has ever read it.
+    // A count cannot say WHICH step fell back, which is the whole question
+    // when a run reports completed.
+    errors: r.errors || [],
   }));
 }
 
@@ -691,4 +697,7 @@ export interface PipelineHistoryEntry {
   totalHoldings: number;
   errorMessage: string | null;
   errorCount: number;
+  /** THESIS-F1: the per-step failure records behind errorCount. Empty array
+   *  on a clean run, and on older rows that stored none. */
+  errors: Array<{ fund: string; step: string; error: string }>;
 }
