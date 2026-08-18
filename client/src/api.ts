@@ -91,6 +91,12 @@ export interface PipelineRun {
   /** UI Honesty item 3: set when a cancel has been requested; the run stops
    *  at its next checkpoint and writes "Cancelled by user". */
   cancel_requested_at?: string | null;
+  /** THESIS-F1 Finding 1: per-step failure records the pipeline has always
+   *  written and nothing has ever read — {fund, step, error} for each step
+   *  that fell back, the thesis fallback included. The status route has been
+   *  sending these to admins all along; only the type was missing.
+   *  Optional: older rows may hold an empty array or null. */
+  errors?: Array<{ fund: string; step: string; error: string }>;
 }
 
 export interface Brief {
