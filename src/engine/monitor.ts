@@ -259,6 +259,21 @@ export async function getSystemHealth(): Promise<SystemHealthReport> {
   // Check thesis freshness
   if (!latestThesis) {
     issues.push('No macro thesis generated yet');
+  } else if (
+    (latestThesis.key_themes?.length || 0) === 0 ||
+    (latestThesis.sector_preferences?.length || 0) === 0
+  ) {
+    // THESIS-F1: a fallback stub IS a row, so the existence test above passes
+    // on every thesis failure — 84 of them went unannounced, including sixty
+    // consecutive runs across May and June 2026. The stub is recognisable:
+    // pipeline.ts writes it with no themes and no sector preferences, while
+    // every real thesis carries 3 themes and 14 sectors. Named as DEGRADED,
+    // not missing: a thesis was written, it just has nothing in it, and
+    // members are being served neutral positioning meanwhile.
+    issues.push(
+      'Macro thesis is degraded — the latest run fell back to neutral ' +
+      'positioning (no themes, no sector preferences)'
+    );
   }
 
   // ── v8 A0 (Gap 1): alert-email path status ────────────────────────────
