@@ -149,8 +149,12 @@ export const CLAUDE = {
   BRIEF_MODEL: 'claude-opus-4-6',
   /** A5 Task 5 (ratified July 5, 2026): ALL user-facing prose — thesis, fund
    *  summaries, Investment Brief — moves to this model. NEW constant; the
-   *  frozen THESIS_MODEL/BRIEF_MODEL above stay in place, merely no longer
-   *  referenced. Classification stays on CLASSIFICATION_MODEL untouched.
+   *  frozen THESIS_MODEL/BRIEF_MODEL above stay in place, now genuinely
+   *  unreferenced. That claim was not true when first written: BRIEF_MODEL
+   *  had no reader, but pipeline.ts kept one reference to THESIS_MODEL in
+   *  the thesis fallback, where it stamped 83 failure rows with a model that
+   *  did not generate them (THESIS-F1, cured August 18, 2026 — the fallback
+   *  stamps 'none'). Classification stays on CLASSIFICATION_MODEL untouched.
    *  Sonnet 5 notes: thinking is on by default and counts against
    *  max_tokens (prose calls raise their ceilings accordingly), and the
    *  model rejects temperature-style sampling parameters. */
