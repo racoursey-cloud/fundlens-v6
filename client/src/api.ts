@@ -563,16 +563,9 @@ export const getBenchmarkStatus = () =>
 
 // Admin generate routes (B10-F1 f4) — thin wrappers over the three
 // existing admin-only endpoints, returning the per-item counts each route
-// already reports. Nothing generated here serves without review: summaries
-// and translations sit behind their false flags; help entries ground the
+// already reports. Nothing generated here serves without review:
+// translations sit behind their false flag; help entries ground the
 // agent only after Robert flips status to approved.
-
-/** B7 summaries route: { generated, rejected, total } */
-export interface SummariesGenerateResult {
-  generated: number;
-  rejected: Array<{ ticker: string; word: string }>;
-  total: number;
-}
 
 /** B9 translations route: per-fund outcome lists */
 export interface TranslationsGenerateResult {
@@ -589,9 +582,6 @@ export interface HelpEntriesGenerateResult {
   skipped: Array<{ slug: string; reason: string }>;
   total: number;
 }
-
-export const generateReferenceSummaries = () =>
-  apiFetch<SummariesGenerateResult>('/api/reference-summaries/generate', { method: 'POST' });
 
 export const generateReferenceTranslations = () =>
   apiFetch<TranslationsGenerateResult>('/api/reference-translations/generate', { method: 'POST' });
