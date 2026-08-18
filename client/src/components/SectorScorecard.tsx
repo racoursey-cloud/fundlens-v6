@@ -8,32 +8,21 @@
  *   - Progress bar (1–10 mapped to 0–100%)
  *   - One-line reasoning text
  *
- * Used by: Thesis.tsx (standalone), Briefs.tsx (inline in "Where We Stand")
+ * Used by: Research.tsx (Sector Outlook). Thesis.tsx and Briefs.tsx were
+ * the original consumers named here; both retired in U1-A/U1-B.
  *
  * Session 11 deliverable. Destination: client/src/components/SectorScorecard.tsx
  * References: Spec §2.6.1 (14 standard sectors, 1.0–10.0 scale)
  */
 
 import { theme } from '../theme';
+import { SECTOR_COLORS } from '../sectorColors';
 
 // ─── Sector Colors (GICS standard) ──────────────────────────────────────────
-
-const SECTOR_COLORS: Record<string, string> = {
-  Technology:             '#3b82f6',
-  Healthcare:             '#06b6d4',
-  Financials:             '#8b5cf6',
-  'Consumer Discretionary': '#f59e0b',
-  'Consumer Staples':     '#22c55e',
-  Energy:                 '#ef4444',
-  Industrials:            '#f97316',
-  Materials:              '#14b8a6',
-  'Real Estate':          '#ec4899',
-  Utilities:              '#6366f1',
-  'Communication Services': '#a855f7',
-  'Precious Metals':      '#eab308',
-  'Fixed Income':         '#64748b',
-  'Cash & Equivalents':   '#94a3b8',
-};
+// The palette is the shared one (client/src/sectorColors.ts). The fourteen
+// keys this file used to carry were value-identical to it, so nothing here
+// paints differently. The '#6b7280' fallback is this component's own and is
+// kept exactly: it applies to any sector the map does not name.
 
 function getSectorColor(sector: string): string {
   return SECTOR_COLORS[sector] ?? '#6b7280';
