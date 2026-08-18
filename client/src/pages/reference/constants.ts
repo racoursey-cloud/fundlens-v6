@@ -6,6 +6,8 @@
  * duplicated into another file (B4 assignment, gate proposal 4).
  */
 
+import { SECTOR_COLORS } from '../../sectorColors';
+
 // ─── Money market funds ────────────────────────────────────────────────────
 // The reference payload deliberately ships NO money-market flag — the B2
 // allowlist excludes everything not explicitly enumerated, and the flag
@@ -55,13 +57,13 @@ export function isCashSweepHolding(name: string): boolean {
 }
 
 // ─── Sector palette (gate amendment 2, approved July 28, 2026) ─────────────
-// Values copied VERBATIM from the full-tier module-private SECTOR_COLORS
-// maps so both tiers paint sectors identically. The two files this note
-// originally named are gone — FundLens.tsx retired in U1-B and the
-// unimported components/FundDetail.tsx in M1 m10 — but the duplication is
-// real and still stands: Research.tsx and YourBrief.tsx each carry their
-// own unexported copy of the same palette. Unifying the three into one
-// shared export remains logged in FOLLOWUPS.md.
+// Both tiers paint sectors identically because they now read the same map:
+// this one extends the shared SECTOR_COLORS rather than restating it.
+// FOLLOWUPS #24 closed here — Research.tsx and YourBrief.tsx import the
+// shared export too, and the verbatim copy this file used to carry is gone.
+// components/SectorScorecard.tsx still keeps its own, on purpose: it has no
+// 'Other' key and a different fallback gray, so folding it in would change
+// what it paints. That one is a ruling, not a dedupe.
 //
 // Composition colors only: a sector's color says what the fund HOLDS,
 // never whether that is good or bad. Any sector missing from this map
@@ -69,26 +71,12 @@ export function isCashSweepHolding(name: string): boolean {
 //
 // 'Money market' and 'No sector data' are reference-only mix-level buckets
 // added in B6 (produced by client/src/engine/example-mix.ts, never present
-// in fund-level sector maps) and are not part of the full-tier copy.
+// in fund-level sector maps) and are the only two keys this tier adds.
 
 export const REFERENCE_SECTOR_COLORS: Record<string, string> = {
-  Technology: '#3b82f6',
-  Healthcare: '#06b6d4',
-  Financials: '#8b5cf6',
-  'Consumer Discretionary': '#f59e0b',
-  'Consumer Staples': '#22c55e',
-  Energy: '#ef4444',
-  Industrials: '#f97316',
-  Materials: '#14b8a6',
-  'Real Estate': '#ec4899',
-  Utilities: '#6366f1',
-  'Communication Services': '#a855f7',
-  'Precious Metals': '#eab308',
-  'Fixed Income': '#64748b',
-  'Cash & Equivalents': '#94a3b8',
-  'Money market': '#38bdf8',
+  ...SECTOR_COLORS,
+  'Money market':   '#38bdf8',
   'No sector data': '#c4b5fd',
-  Other: '#71717a',
 };
 
 /** The house gray for sectors outside the map */

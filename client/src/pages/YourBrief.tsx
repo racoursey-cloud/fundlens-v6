@@ -45,6 +45,7 @@ import {
 } from '../api';
 import { useProfile } from '../context/ProfileContext';
 import { theme } from '../theme';
+import { SECTOR_COLORS } from '../sectorColors';
 import { DonutChart, type DonutSlice } from '../components/DonutChart';
 import { FundExposurePanel } from '../components/FundExposurePanel';
 import { computeClientAllocations, type ClientAllocationInput } from '../engine/allocation';
@@ -133,23 +134,6 @@ const FUND_PALETTE = [
   '#fb923c', '#84cc16',
 ];
 
-const SECTOR_COLORS: Record<string, string> = {
-  Technology:               '#3b82f6',
-  Healthcare:               '#06b6d4',
-  Financials:               '#8b5cf6',
-  'Consumer Discretionary': '#f59e0b',
-  'Consumer Staples':       '#22c55e',
-  Energy:                   '#ef4444',
-  Industrials:              '#f97316',
-  Materials:                '#14b8a6',
-  'Real Estate':            '#ec4899',
-  Utilities:                '#6366f1',
-  'Communication Services': '#a855f7',
-  'Precious Metals':        '#eab308',
-  'Fixed Income':           '#64748b',
-  'Cash & Equivalents':     '#94a3b8',
-  Other:                    '#71717a',
-};
 
 const RISK_ANCHORS: Array<{ level: number; label: string }> = [
   { level: 1, label: 'Very Conservative' },

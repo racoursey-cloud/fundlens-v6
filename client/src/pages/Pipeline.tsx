@@ -26,7 +26,6 @@ import {
   fetchLatestDossiers,
   runClassificationBenchmark,
   getBenchmarkStatus,
-  generateReferenceSummaries,
   generateReferenceTranslations,
   generateHelpEntries,
   type PipelineRun,
@@ -139,13 +138,15 @@ function StatCard({ label, value, color }: { label: string; value: string | numb
 }
 
 // ─── Generate panel (B10-F1 f5) ────────────────────────────────────────────
-// The browser-only operator's buttons for the three admin generate routes
+// The browser-only operator's buttons for the admin generate routes
 // (F1-d: the orders said "click the route"; nothing was clickable). Each
 // run reports the counts its route already returns. One run at a time —
-// pipelineRateLimit guards the server side (the three routes share it, so
+// pipelineRateLimit guards the server side (both routes share it, so
 // clicks inside the 5-minute cooldown answer with the cooldown message).
+//
+// The B7 summaries button was removed with its route (FOLLOWUPS #17).
 
-type GenerateKey = 'summaries' | 'translations' | 'help';
+type GenerateKey = 'translations' | 'help';
 
 interface GenerateOutcome {
   summary: string;
@@ -154,12 +155,6 @@ interface GenerateOutcome {
 }
 
 const GENERATE_BUTTONS: Array<{ key: GenerateKey; label: string; description: string }> = [
-  {
-    key: 'summaries',
-    label: 'B7 summaries',
-    description:
-      'Drafts one neutral summary per fund into reference_summaries. Nothing serves until you review them and the summaries flag is deliberately turned on.',
-  },
   {
     key: 'translations',
     label: 'B9 translations',
@@ -183,16 +178,7 @@ function GeneratePanel() {
     setInFlight(key);
     let outcome: GenerateOutcome;
 
-    if (key === 'summaries') {
-      const { data, error } = await generateReferenceSummaries();
-      outcome = !data
-        ? { summary: error ?? 'No response from the server.', details: [], isError: true }
-        : {
-            summary: `${data.generated} generated · ${data.rejected.length} rejected · ${data.total} funds`,
-            details: data.rejected.map(r => `${r.ticker}: rejected on "${r.word}"`),
-            isError: false,
-          };
-    } else if (key === 'translations') {
+    if (key === 'translations') {
       const { data, error } = await generateReferenceTranslations();
       outcome = !data
         ? { summary: error ?? 'No response from the server.', details: [], isError: true }

@@ -46,12 +46,12 @@
  *   - every evaluative string: reasoning text, rankings, percentile
  *     estimates, and the editorial fund summaries
  *
- * A neutral, Robert-reviewed summary field (summary_reference) is emitted by
- * this file behind the REFERENCE_SUMMARIES_ENABLED constant (constants.ts,
- * built in B7), which ships false. While the flag is false the key is absent
- * from every reference payload — not null, absent — and zero AI-generated
- * text reaches reference accounts. Emission begins only when Robert
- * deliberately flips the flag after HR sign-off.
+ * The B7 summary_reference field is gone (FOLLOWUPS #17, dismantled). It rode
+ * behind a flag that shipped false and was never raised, so no reference
+ * payload ever carried the key and no AI-generated text ever reached a
+ * reference account through it. The allowlist below no longer names a summary
+ * field, which is the contract saying the same thing. REFERENCE_SUMMARIES_ENABLED
+ * remains in constants.ts, unreferenced, as the frozen constants do.
  *
  * Pure shaping — no API calls, no database access, no stored state.
  * routes.ts calls these functions only when the requesting account's
@@ -59,7 +59,7 @@
  * this file and are byte-identical to their pre-B2 form.
  */
 
-import { REFERENCE_SUMMARIES_ENABLED, REFERENCE_TRANSLATIONS_ENABLED } from './constants.js';
+import { REFERENCE_TRANSLATIONS_ENABLED } from './constants.js';
 
 // ─── The allowlist ──────────────────────────────────────────────────────────
 // Every key path a reference payload may contain. This list and the shaping
@@ -108,9 +108,6 @@ export const REFERENCE_ALLOWLIST = [
   'as_of.report_date',
   'as_of.priced_as_of',
   'as_of.scored_at',
-  // Neutral, Robert-reviewed summary (B7) — emitted only while
-  // REFERENCE_SUMMARIES_ENABLED (constants.ts) is true
-  'summary_reference',
   // SEC-filed description (B9) — verbatim filed text, emitted whenever the
   // fund_descriptions row exists (no flag: their words, served live)
   'description.objective_text',
@@ -135,10 +132,6 @@ export interface ReferenceFundIdentity {
   ticker: string;
   name: string;
   expense_ratio: number | null;
-  /** B7: neutral summary text attached by routes.ts from the
-   *  reference_summaries table — only fetched while
-   *  REFERENCE_SUMMARIES_ENABLED is true; null when no row exists */
-  summary_reference?: string | null;
   /** B9: the fund_descriptions row attached by routes.ts — the SEC-filed
    *  verbatim text plus the flag-gated translation; null when no row */
   description?: ReferenceDescriptionSource | null;
@@ -223,9 +216,6 @@ export interface ReferenceFundView {
     priced_as_of: string;
     scored_at: string;
   };
-  /** B7: present (string or null) only while REFERENCE_SUMMARIES_ENABLED is
-   *  true; absent entirely — not null — while the flag is false */
-  summary_reference?: string | null;
   /** B9: the SEC-filed description, emitted whenever the row exists (their
    *  words serve live — no flag); null when the fund has no stored row.
    *  translation_text inside it appears only while
@@ -350,12 +340,6 @@ export function shapeFundForReference(
       priced_as_of: score.scored_at,
       scored_at: score.scored_at,
     },
-    // B7: conditional spread — flag true emits the key for every fund (null
-    // where no reference_summaries row exists); flag false leaves the key
-    // ABSENT from the object, not null (Fabio's ruling, July 30, 2026).
-    ...(REFERENCE_SUMMARIES_ENABLED
-      ? { summary_reference: fund.summary_reference ?? null }
-      : {}),
     // B9: the SEC-filed description emits whenever the row exists — the
     // verbatim text is not flag-gated (conduit principle; ruling 5). The
     // translation key rides inside it ONLY while

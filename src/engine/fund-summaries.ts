@@ -176,13 +176,16 @@ ${fundBlocks.join('\n\n')}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// REFERENCE SUMMARIES (B-series B7) — neutral, describe-never-evaluate
+// EVALUATIVE-VOCABULARY GUARD (from B-series B7)
 // ═══════════════════════════════════════════════════════════════════════════
-// Everything below is additive (B7 c3). The editorial machinery above is
-// untouched. These summaries are drafts for Robert's review, stored in the
-// reference_summaries table by the admin-only generate route (routes.ts),
-// and served to reference accounts only while the B7 feature flag
-// (constants.ts) is true.
+// The editorial machinery above is untouched by anything below.
+//
+// B7's reference-summary drafting was dismantled (FOLLOWUPS #17) — the
+// generate route, the neutral prompt and generateReferenceSummaries are all
+// gone. What survives it is the part that outlived its origin: the banned
+// list and its post-check, which reference-help.ts, help-drafts.ts and
+// translations.ts each rely on to keep evaluative words out of text bound
+// for reference accounts. It stays here, where those three already import it.
 
 // ─── Banned vocabulary (plan §B7) ───────────────────────────────────────────
 // Evaluative words that must never appear in a reference summary. The
@@ -196,28 +199,6 @@ export const BANNED_VOCABULARY = [
   'attractive', 'opportunity', 'avoid', 'top', 'laggard', 'winner',
   'should', 'recommend',
 ] as const;
-
-// ─── Neutral voice prompt ───────────────────────────────────────────────────
-
-const NEUTRAL_VOICE_PROMPT = `You write short, strictly NEUTRAL fund descriptions. Register: describe, never evaluate. You state only names, numbers, category, and what the fund holds. No judgment, no comparison, no advice — a reader must not be able to tell whether you think a fund is desirable.
-
-MAIN STREET LANGUAGE (mandatory):
-- Write for a smart coworker who does not work in finance.
-- Put dollar figures alongside percents: "an expense ratio of 0.45%, about $45 a year on a $10,000 balance."
-- Short sentences. Concrete nouns: company names, dollar amounts, plain verbs.
-- If a term would send a normal person to Google, drop it or explain it in the same breath, once.
-
-BANNED WORDS (never use these, in ANY form or inflection — no "cheaper", no "strongest", no "recommended", no "topped"):
-cheap, expensive, strong, weak, good, bad, best, worst, attractive, opportunity, avoid, top, laggard, winner, should, recommend
-
-NEUTRAL SUBSTITUTES (use these instead):
-- "largest holdings" — never "top holdings"
-- "consumer products" — never "consumer goods"
-- State returns as plain figures: "up 4.2% over six months" — never characterize them.
-
-NO ADVICE VERBS. Never tell the reader to do, consider, weigh, or watch anything.
-
-SPARSE DATA RULE: if a fund's data block carries only its name and expense ratio, write what is known — what kind of fund it is and what it costs — and nothing more. Never pad, never speculate.`;
 
 // ─── Post-check: banned-vocabulary rejection ────────────────────────────────
 
@@ -235,180 +216,4 @@ export function findBannedWord(summary: string): string | null {
     if (pattern.test(summary)) return word;
   }
   return null;
-}
-
-// ─── Reference summary generation ───────────────────────────────────────────
-
-/** Input: database row shapes — this runs outside a pipeline (B7 c3). */
-export interface ReferenceSummaryInput {
-  ticker: string;
-  name: string;
-  expense_ratio: number | null;
-  factor_details: Record<string, unknown>;
-}
-
-export interface ReferenceSummaryResult {
-  /** ticker → summary text, post-check passed */
-  summaries: FundSummaryMap;
-  /** summaries the post-check rejected — never enter `summaries` */
-  rejected: Array<{ ticker: string; word: string }>;
-}
-
-// Defensive guards — factor_details is raw database JSON.
-function asObj(v: unknown): Record<string, unknown> | null {
-  return v !== null && typeof v === 'object' && !Array.isArray(v)
-    ? (v as Record<string, unknown>)
-    : null;
-}
-
-function asNum(v: unknown): number | null {
-  return typeof v === 'number' && isFinite(v) ? v : null;
-}
-
-/**
- * Generate neutral reference summaries for the given funds.
- *
- * One batched call on CLAUDE.PROSE_MODEL (sequential-with-delays law does
- * not arise — there is exactly one call). Each fund's factual block is
- * built from ONLY: expense ratio; largest-holding names from
- * factor_details.holdingsQuality.holdingScores (up to five); the top three
- * sector exposures; trailing returns from factor_details.momentum.returns.
- * NEVER the positioning reasoning — it is evaluative and stays out.
- *
- * Every parsed summary passes through findBannedWord; matches land in
- * `rejected` and never in `summaries`.
- */
-export async function generateReferenceSummaries(
-  rows: ReferenceSummaryInput[],
-): Promise<ReferenceSummaryResult> {
-  const result: ReferenceSummaryResult = { summaries: {}, rejected: [] };
-
-  const fundBlocks = rows.map(row => {
-    const details = asObj(row.factor_details) ?? {};
-    const lines: string[] = [];
-
-    lines.push(`## ${row.name} (${row.ticker})`);
-
-    if (row.expense_ratio != null) {
-      lines.push(`- Expense ratio: ${(row.expense_ratio * 100).toFixed(2)}%`);
-    }
-
-    // Largest holdings — names only, up to five
-    const hq = asObj(details.holdingsQuality);
-    const holdingScores = hq && Array.isArray(hq.holdingScores) ? hq.holdingScores : [];
-    const largest = holdingScores
-      .slice(0, 5)
-      .map(h => {
-        const holding = asObj(h);
-        const name = holding && typeof holding.name === 'string' ? holding.name : null;
-        const ticker = holding && typeof holding.ticker === 'string' ? holding.ticker : null;
-        return name || ticker;
-      })
-      .filter((n): n is string => n !== null);
-    if (largest.length > 0) {
-      lines.push(`- Largest holdings: ${largest.join(', ')}`);
-    }
-
-    // Top three sector exposures. sectorExposure is stored on the 0-100
-    // percent scale, proven live July 30 — emit the stored value directly,
-    // no rescale (B7 c6; returns and expense ratio remain fractions).
-    const sectors = asObj(details.sectorExposure);
-    if (sectors) {
-      const top3 = Object.entries(sectors)
-        .map(([s, w]) => [s, asNum(w)] as const)
-        .filter((e): e is readonly [string, number] => e[1] !== null)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([s, w]) => `${s} ${w.toFixed(0)}%`);
-      if (top3.length > 0) lines.push(`- Largest sector exposures: ${top3.join(', ')}`);
-    }
-
-    // Trailing returns — figures only
-    const momentum = asObj(details.momentum);
-    const returns = momentum ? asObj(momentum.returns) : null;
-    if (returns) {
-      const retParts: string[] = [];
-      const threeMonth = asNum(returns.threeMonth);
-      const sixMonth = asNum(returns.sixMonth);
-      const twelveMonth = asNum(returns.twelveMonth);
-      if (threeMonth != null) retParts.push(`3-mo: ${(threeMonth * 100).toFixed(1)}%`);
-      if (sixMonth != null) retParts.push(`6-mo: ${(sixMonth * 100).toFixed(1)}%`);
-      if (twelveMonth != null) retParts.push(`12-mo: ${(twelveMonth * 100).toFixed(1)}%`);
-      if (retParts.length > 0) lines.push(`- Returns: ${retParts.join(', ')}`);
-    }
-
-    // NEVER: details.positioning.reasoning — evaluative, stays out.
-
-    return lines.join('\n');
-  });
-
-  const userPrompt = `Write a 2-3 sentence NEUTRAL description for each of the following funds. Return them in this exact format — one block per fund, no extra text:
-
-TICKER: description text here
-
-${fundBlocks.join('\n\n')}`;
-
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      console.warn('[fund-summaries] No ANTHROPIC_API_KEY — skipping reference summaries');
-      return result;
-    }
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: CLAUDE.PROSE_MODEL,
-      max_tokens: 12000,
-      system: NEUTRAL_VOICE_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
-
-    let text = '';
-    for (const block of response.content) {
-      if (block.type === 'text') text += block.text;
-    }
-
-    // Parse "TICKER: summary" blocks — same format as generateFundSummaries
-    const parsed: FundSummaryMap = {};
-    const lines = text.split('\n');
-    let currentTicker = '';
-    let currentSummary = '';
-
-    for (const line of lines) {
-      const match = line.match(/^([A-Z]{2,6}):\s*(.+)/);
-      if (match) {
-        if (currentTicker && currentSummary) {
-          parsed[currentTicker] = currentSummary.trim();
-        }
-        currentTicker = match[1];
-        currentSummary = match[2];
-      } else if (currentTicker && line.trim()) {
-        currentSummary += ' ' + line.trim();
-      }
-    }
-    if (currentTicker && currentSummary) {
-      parsed[currentTicker] = currentSummary.trim();
-    }
-
-    // Post-check: banned-vocabulary rejection. A rejected summary never
-    // appears in summaries — the caller leaves any existing row untouched.
-    for (const [ticker, summary] of Object.entries(parsed)) {
-      const word = findBannedWord(summary);
-      if (word !== null) {
-        result.rejected.push({ ticker, word });
-      } else {
-        result.summaries[ticker] = summary;
-      }
-    }
-
-    console.log(
-      `[fund-summaries] Reference summaries: ${Object.keys(result.summaries).length} accepted, ` +
-      `${result.rejected.length} rejected by banned-vocabulary check`
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[fund-summaries] Claude API error (reference summaries): ${msg}`);
-    // Non-fatal — return what we have; the generate route reports counts
-  }
-
-  return result;
 }
